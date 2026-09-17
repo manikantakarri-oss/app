@@ -1,0 +1,40 @@
+# Databricks App manifest for Agent Portal.
+#
+# The runtime injects DATABRICKS_HOST / DATABRICKS_CLIENT_ID /
+# DATABRICKS_CLIENT_SECRET (the app's service principal) and forwards each
+# signed-in user's OAuth token as X-Forwarded-Access-Token. The portal uses the
+# user token for every agent invocation, so Databricks enforces access itself.
+
+command:
+  - uvicorn
+  - app:app
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8000"
+
+# Scopes requested on behalf of the signed-in user.
+#
+# Two things to know, both verified on this workspace:
+#   1. app.yaml scopes are NOT reliably applied - apply them to the app record:
+#        databricks apps update agent-portal --json @update-scopes.json -p azure-prem
+#        databricks apps get agent-portal -o json   # -> effective_user_api_scopes
+#   2. scope names are <api-group>.<resource>. Bare names like "sql", "genie",
+#      "model-serving" or "unity-catalog" are rejected as invalid, and
+#      iam.current-user:read / iam.access-control:read are granted by default
+#      and cannot be requested here.
+#
+# Only serving.serving-endpoints is strictly required (the portal invokes agents
+# under the user's identity). The rest let data-backed agents reach Genie, SQL
+# and Unity Catalog as the signed-in user.
+user_api_scopes:
+  - serving.serving-endpoints
+  - sql.statement-execution
+  - sql.warehouses
+  - dashboards.genie
+  - catalog.catalogs
+  - catalog.schemas
+  - catalog.tables
+  - vectorsearch.vector-search-endpoints
+  - files.files
+  - workspace.workspace
