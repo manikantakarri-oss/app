@@ -1,16 +1,17 @@
 {
-  "name": "agent-portal",
-  "user_api_scopes": [
-    "model-serving",
-    "serving.serving-endpoints",
-    "sql.statement-execution",
-    "sql.warehouses",
-    "dashboards.genie",
-    "catalog.catalogs",
-    "catalog.schemas",
-    "catalog.tables",
-    "vectorsearch.vector-search-endpoints",
-    "files.files",
-    "workspace.workspace"
-  ]
+    "name": "agent-builder-platform",
+    "user_api_scopes": [
+      "sql",
+      "ai-gateway",
+      "serving.serving-endpoints",
+      "sql.statement-execution",
+      "sql.warehouses",
+      "dashboards.genie",
+      "catalog.catalogs",
+      "catalog.schemas",
+      "catalog.tables",
+      "vectorsearch.vector-search-endpoints",
+      "files.files",
+      "workspace.workspace"
+    ]
 }
