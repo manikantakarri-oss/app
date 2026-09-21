@@ -205,6 +205,14 @@ def _():
     )
     assert adapters.wrong_field(400, body) is True
     assert adapters.wrong_field(400, '{"message":"Missing required Chat parameter: \'messages\'"}')
+    # MLflow's own schema-enforcement phrasing for a ChatAgent-interface model.
+    mlflow_body = (
+        "Failed to enforce schema of data '{'input': [{'role': 'user', "
+        "'content': 'hi'}]}' with schema '['messages': Array(...) (required)...'. "
+        "Error: Model is missing inputs ['messages']. Note that there were "
+        "extra inputs: ['input']."
+    )
+    assert adapters.wrong_field(400, mlflow_body) is True
     # Unrelated failures must not trigger a pointless retry.
     assert adapters.wrong_field(400, '{"message":"rate limited"}') is False
     assert adapters.wrong_field(403, "forbidden") is False

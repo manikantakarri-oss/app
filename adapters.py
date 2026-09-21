@@ -81,6 +81,8 @@ def wrong_field(status: int, body: str) -> bool:
         "missing required parameter",
         "unexpected keyword",
         "field required",
+        "model is missing inputs",
+        "failed to enforce schema",
     )
     return any(h in b for h in hints) and ("input" in b or "messages" in b)
 
