@@ -79,7 +79,15 @@ def _cli(args: list[str]) -> dict:
 
 
 def _cli_user_token() -> str:
-    """Developer's own token, used for both roles in local-dev mode."""
+    """Developer's own token, used for both roles in local-dev mode.
+
+    A PAT in DATABRICKS_TOKEN skips the CLI subprocess entirely - useful when
+    the `databricks` binary isn't on this process's PATH, or OAuth login isn't
+    available (e.g. workspace SSO only offers a provider you don't have).
+    """
+    env_tok = os.environ.get("DATABRICKS_TOKEN")
+    if env_tok:
+        return env_tok
     global _cli_token
     if _cli_token and _cli_token[1] > time.time() + 60:
         return _cli_token[0]

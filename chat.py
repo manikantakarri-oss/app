@@ -45,6 +45,19 @@ def _post(endpoint: str, payload: dict, user_tok: str) -> httpx.Response:
         raise DbxError("could not reach the agent endpoint: " + str(exc), 504)
 
 
+def _body(resp: httpx.Response) -> dict | None:
+    """Parsed JSON body of a 2xx response, or None for SSE / non-JSON bodies."""
+    body = resp.text or ""
+    ctype = resp.headers.get("content-type", "")
+    if "text/event-stream" in ctype or body.lstrip().startswith(("event:", "data:")):
+        return None
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _read(resp: httpx.Response) -> dict:
     """Turn a 2xx response into a normalised reply, handling JSON and SSE."""
     body = resp.text or ""
@@ -65,6 +78,40 @@ def _read(resp: httpx.Response) -> dict:
         err = data["error"]
         raise DbxError(str(err.get("message") if isinstance(err, dict) else err), 502)
     return adapters.parse(data)
+
+
+# A Databricks MCP tool call needs one human/client decision before it runs.
+# The portal always approves - the agent's own ToolApprovalPlugin/governance
+# already decides what it may call; this is not a second consent gate the
+# user asked for, just the API round-trip Playground makes transparently.
+# Capped so a misbehaving endpoint that keeps re-requesting approval cannot
+# loop forever.
+MAX_APPROVAL_ROUNDS = 4
+
+
+def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str) -> dict:
+    """Re-POST with every pending mcp_approval_request auto-approved.
+
+    Only meaningful for the Responses API (`input`/`output`); other shapes
+    never produce an mcp_approval_request and pending_approvals() is a no-op
+    for them.
+    """
+    for _ in range(MAX_APPROVAL_ROUNDS):
+        approvals = adapters.pending_approvals(data)
+        if not approvals:
+            return data
+        payload = {
+            "input": adapters.build_approval_replay(payload.get("input") or [], data.get("output") or [], approvals)
+        }
+        resp = _post(endpoint, payload, user_tok)
+        if resp.status_code >= 400:
+            detail = _detail(resp.text, resp.text[:400])
+            raise DbxError("approving a tool call failed: " + detail, resp.status_code)
+        next_data = _body(resp)
+        if next_data is None:
+            return data
+        data = next_data
+    return data
 
 
 def ask(endpoint: str, task: str, history: list, user_tok: str, files: list | None = None) -> dict:
@@ -105,7 +152,12 @@ def ask(endpoint: str, task: str, history: list, user_tok: str, files: list | No
             )
         raise DbxError(detail, resp.status_code)
 
-    out = _read(resp)
+    data = _body(resp)
+    if data is not None and adapters.pending_approvals(data):
+        data = _resolve_approvals(endpoint, payload, data, user_tok)
+        out = adapters.parse(data)
+    else:
+        out = _read(resp)
     if not out["reply"] and not out["attachments"]:
         raise DbxError("the agent completed but returned no text", 502)
     return out

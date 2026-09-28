@@ -68,6 +68,47 @@ def learn(endpoint: str, field: str) -> None:
     _learned[endpoint] = field
 
 
+# --------------------------------------------------------------- mcp approval
+
+
+def pending_approvals(data) -> list:
+    """`mcp_approval_request` items in a Responses-API reply awaiting a decision.
+
+    A Databricks MCP tool is gated by an approval round-trip: the first reply
+    stops at "I'll call ping" with status "completed" and an
+    `mcp_approval_request` item - the tool has NOT run yet. Playground answers
+    the request transparently; a raw API caller (like this portal) must do the
+    same or the tool call silently never happens. Verified against this
+    workspace's mas-77773ac2-endpoint.
+    """
+    if not isinstance(data, dict):
+        return []
+    return [
+        item
+        for item in (data.get("output") or [])
+        if isinstance(item, dict) and item.get("type") == "mcp_approval_request"
+    ]
+
+
+def build_approval_replay(history_input: list, prior_output: list, approvals: list) -> list:
+    """The `input` for the follow-up call that actually runs the tool(s).
+
+    Verified by hand against this workspace: the endpoint is stateless
+    (`previous_response_id` is silently ignored), so the follow-up must replay
+    the full prior turn - the original input, every item from the prior
+    response's `output` (the assistant's message and the approval request
+    itself), then one `mcp_approval_response` per pending request. Sending only
+    the approval response, or only the approval response plus the original
+    user turn, both fail with "Invalid message sequence."
+    """
+    replay = list(history_input) + list(prior_output)
+    for req in approvals:
+        rid = req.get("id")
+        if rid:
+            replay.append({"type": "mcp_approval_response", "approval_request_id": rid, "approve": True})
+    return replay
+
+
 def wrong_field(status: int, body: str) -> bool:
     """True when a 4xx says we used the wrong request field, so a retry is worth it."""
     if status not in (400, 422):
@@ -139,6 +180,21 @@ def parse(data) -> dict:
         return {"reply": "", "tools": [], "citations": [], "attachments": []}
 
     # 1. Responses API (agent/v1/responses)
+    #
+    # A tool call and its result are two separate sibling items, linked by
+    # call_id: {"type": "function_call", ...} then later
+    # {"type": "function_call_output", "call_id": ..., "output": ...}. The
+    # portal only ever replays flattened reply text on the next turn (see
+    # Chat.tsx history()), so without folding the result into that text here,
+    # the agent has no way to know on the next turn whether its own tool call
+    # actually happened.
+    #
+    # An MCP tool approved via mcp_approval_response (see pending_approvals())
+    # never gets its own function_call item - the request was the approval
+    # item from the prior turn - so its function_call_output carries the name
+    # directly. Trust that name too, not just a sibling function_call.
+    call_names: dict = {}
+    call_results: list = []
     for item in data.get("output") or []:
         if not isinstance(item, dict):
             continue
@@ -149,8 +205,27 @@ def parse(data) -> dict:
             name = item.get("name") or (item.get("function") or {}).get("name")
             if name:
                 tools.append(str(name))
+                call_id = item.get("call_id") or item.get("id")
+                if call_id:
+                    call_names[call_id] = str(name)
+            continue
+        if kind == "function_call_output":
+            call_id = item.get("call_id")
+            if item.get("name") and call_id and call_id not in call_names:
+                call_names[call_id] = str(item["name"])
+                tools.append(str(item["name"]))
+            out = item.get("output")
+            if isinstance(out, dict):
+                out = out.get("output") or out.get("text") or json.dumps(out)
+            if call_id and out is not None:
+                call_results.append((call_id, str(out).strip()))
             continue
         _walk_content(item.get("content"), text, seen, cites)
+
+    for call_id, out in call_results:
+        name = call_names.get(call_id, "tool")
+        if out:
+            _push(seen, text, "Called " + name + " -> " + out[:500])
 
     # 2. ChatCompletions (llm/v1/chat) and some ChatAgent deployments
     for choice in data.get("choices") or []:

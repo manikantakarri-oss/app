@@ -67,6 +67,86 @@ def _():
     assert out["tools"] == ["sandbox"], out  # de-duplicated
 
 
+@case("responses agent's tool result is folded into the reply text")
+def _():
+    # Otherwise the next turn's history only shows the model's own "I'll call
+    # X" text, with no evidence it happened - see the mid-campaign ping bug.
+    data = {
+        "output": [
+            {"type": "function_call", "call_id": "c1", "name": "ping"},
+            {"type": "function_call_output", "call_id": "c1", "output": "pong"},
+            {"type": "message", "content": [{"type": "output_text", "text": "I'll call the ping tool."}]},
+        ]
+    }
+    out = adapters.parse(data)
+    assert out["tools"] == ["ping"], out
+    assert "I'll call the ping tool." in out["reply"], out
+    assert "Called ping -> pong" in out["reply"], out
+
+
+@case("an MCP tool approved via mcp_approval_response has no sibling function_call")
+def _():
+    # Real shape captured from mas-77773ac2-endpoint after an approval
+    # round-trip: the tool call itself was the (now-consumed)
+    # mcp_approval_request from the prior turn, so this function_call_output
+    # is the only item naming the tool at all.
+    data = {
+        "output": [
+            {"type": "function_call_output", "call_id": "c1", "name": "ping", "output": "pong"},
+            {"type": "message", "content": [{"type": "output_text", "text": "It returned pong."}]},
+        ]
+    }
+    out = adapters.parse(data)
+    assert out["tools"] == ["ping"], out
+    assert "Called ping -> pong" in out["reply"], out
+
+
+# --------------------------------------------------------------- mcp approval
+
+
+@case("mcp_approval_request is detected as a pending approval")
+def _():
+    # The real shape mas-77773ac2-endpoint returns for an MCP tool call before
+    # it has actually run: status "completed", but nothing executed yet.
+    data = {
+        "status": "completed",
+        "output": [
+            {"type": "message", "role": "assistant",
+             "content": [{"type": "output_text", "text": "I'll call the ping tool."}]},
+            {"type": "mcp_approval_request", "id": "toolu_1", "arguments": "{}",
+             "name": "ping", "server_label": "mcp-mid-campaign-ppt-generator"},
+        ],
+    }
+    approvals = adapters.pending_approvals(data)
+    assert [a["id"] for a in approvals] == ["toolu_1"], approvals
+
+
+@case("a response with no approval request has nothing pending")
+def _():
+    assert adapters.pending_approvals({"output": [{"type": "message", "content": "hi"}]}) == []
+    assert adapters.pending_approvals({}) == []
+    assert adapters.pending_approvals("not a dict") == []
+
+
+@case("approval replay resends the original turn, the prior output, and an approval response")
+def _():
+    # Verified by hand against mas-77773ac2-endpoint: sending only the
+    # approval response (or the response plus a fresh user turn) both fail
+    # with "Invalid message sequence" - the full prior output must be replayed.
+    history_input = [{"role": "user", "content": "Call the ping tool."}]
+    prior_output = [
+        {"type": "message", "role": "assistant",
+         "content": [{"type": "output_text", "text": "I'll call the ping tool."}]},
+        {"type": "mcp_approval_request", "id": "toolu_1", "arguments": "{}",
+         "name": "ping", "server_label": "mcp-mid-campaign-ppt-generator"},
+    ]
+    approvals = adapters.pending_approvals({"output": prior_output})
+    replay = adapters.build_approval_replay(history_input, prior_output, approvals)
+    assert replay == history_input + prior_output + [
+        {"type": "mcp_approval_response", "approval_request_id": "toolu_1", "approve": True}
+    ], replay
+
+
 # ------------------------------------------------------- shapes not yet deployed
 
 
