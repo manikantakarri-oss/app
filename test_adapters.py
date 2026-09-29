@@ -101,6 +101,52 @@ def _():
     assert "Called ping -> pong" in out["reply"], out
 
 
+@case("a file-generating tool's output_volume_path becomes a downloadable attachment")
+def _():
+    # Real shape captured from mas-77773ac2-endpoint calling
+    # get_mid_campaign_ppt_report after approval.
+    data = {
+        "output": [
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "name": "get_mid_campaign_ppt_report",
+                "output": {
+                    "file_name": "MidCampaign_abc123.pptx",
+                    "status": "Saved locally",
+                    "file_content_base64": "……huge……",
+                    "output_volume_path": "/Volumes/cat/schema/vol/output/MidCampaign_abc123.pptx",
+                },
+            },
+            {"type": "message", "content": [{"type": "output_text", "text": "Report generated."}]},
+        ]
+    }
+    out = adapters.parse(data)
+    assert out["attachments"] == [
+        {"name": "MidCampaign_abc123.pptx", "path": "/Volumes/cat/schema/vol/output/MidCampaign_abc123.pptx"}
+    ], out
+    assert out["tools"] == ["get_mid_campaign_ppt_report"], out
+
+
+@case("output_volume_path is found in plain reply text when no structured output[] exists")
+def _():
+    # An Agent Bricks final_response wrapper carries no tool-result data at
+    # all - this is the only place the generated file's path survives.
+    data = {
+        "final_response": (
+            "Saved the file to the output volume at: "
+            "/Volumes/mcp-test/mcp-test-schema/mcp-test-volume/output/MidCampaign_7d329a6f.pptx"
+        )
+    }
+    out = adapters.parse(data)
+    assert out["attachments"] == [
+        {
+            "name": "MidCampaign_7d329a6f.pptx",
+            "path": "/Volumes/mcp-test/mcp-test-schema/mcp-test-volume/output/MidCampaign_7d329a6f.pptx",
+        }
+    ], out
+
+
 # --------------------------------------------------------------- mcp approval
 
 

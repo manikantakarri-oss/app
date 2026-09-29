@@ -114,13 +114,26 @@ def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str) 
     return data
 
 
-def ask(endpoint: str, task: str, history: list, user_tok: str, files: list | None = None) -> dict:
+def ask(
+    endpoint: str,
+    task: str,
+    history: list,
+    user_tok: str,
+    files: list | None = None,
+    output_dir: str = "",
+) -> dict:
     """Send a conversation to an agent and return a normalised reply."""
     history = list(history or [])
     if files:
         # Agents cannot see a browser upload; they read the volume. Naming the
         # paths in the turn is what lets a file-driven agent find its input.
         note = "Uploaded file" + ("s" if len(files) > 1 else "") + ": " + ", ".join(files)
+        if output_dir:
+            # Stated every turn rather than relying on the agent's own
+            # Instructions to hardcode a destination - the portal computes
+            # this from the agent's output_volume tag, so it stays correct if
+            # that tag ever changes.
+            note += ". Save any generated output file to this directory: " + output_dir
         if history and history[-1].get("role") == "user":
             history[-1] = dict(history[-1], content=(history[-1]["content"] + "\n\n" + note).strip())
         else:

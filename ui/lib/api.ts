@@ -13,6 +13,7 @@ export type Agent = {
   ready: boolean;
   state: string;
   upload_volume: string;
+  output_volume: string;
   accepts: string[];
   supports_files: boolean;
   access_reason?: string;
@@ -126,4 +127,11 @@ export async function upload(endpoint: string, file: File) {
   }
   if (!res.ok) throw new Error(data.error || data.detail || "Upload failed");
   return data as { path: string; name: string; bytes: number };
+}
+
+// A plain GET link, not a fetch wrapper: letting the browser navigate lets it
+// honour the backend's Content-Disposition header and show its own native
+// download UI, rather than the app re-implementing a save-file flow.
+export function downloadUrl(endpoint: string, path: string) {
+  return "/api/download?" + new URLSearchParams({ endpoint, path }).toString();
 }

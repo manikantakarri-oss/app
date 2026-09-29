@@ -23,11 +23,18 @@ front an agent type that did not exist when this code was written.
 from __future__ import annotations
 
 import json
+import re
 
 # endpoint name -> request field ("input" | "messages") that worked
 _learned: dict[str, str] = {}
 
 TEXT_KEYS = ("output_text", "text", "summary_text")
+
+# Fallback for agents whose response shape isn't the Responses API output[]
+# (e.g. an Agent Bricks supervisor's final_response wrapper never carries
+# structured tool-call data at all) - the model itself tends to state the
+# generated file's Volume path in prose, so extract it from there instead.
+VOLUME_PATH_RE = re.compile(r"/Volumes/[\w.\-/]+?\.\w+")
 
 
 # --------------------------------------------------------------------- requests
@@ -215,6 +222,21 @@ def parse(data) -> dict:
                 call_names[call_id] = str(item["name"])
                 tools.append(str(item["name"]))
             out = item.get("output")
+            # A file-generating tool (e.g. get_mid_campaign_ppt_report) returns
+            # a result object with output_volume_path, not a plain string -
+            # surface that as a downloadable attachment before it gets
+            # flattened to JSON text below.
+            out_obj = out if isinstance(out, dict) else None
+            if out_obj is None and isinstance(out, str):
+                try:
+                    parsed = json.loads(out)
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    out_obj = parsed
+            if out_obj and out_obj.get("output_volume_path"):
+                vpath = str(out_obj["output_volume_path"])
+                files.append({"name": vpath.rsplit("/", 1)[-1], "path": vpath})
             if isinstance(out, dict):
                 out = out.get("output") or out.get("text") or json.dumps(out)
             if call_id and out is not None:
@@ -286,6 +308,18 @@ def parse(data) -> dict:
         inner = parse(custom)
         _push(seen, text, inner["reply"])
         cites.extend(inner["citations"])
+
+    # Fallback: no structured attachment was found (e.g. an Agent Bricks
+    # final_response wrapper, which carries no tool-result data at all), but
+    # the model's own reply names the generated file's Volume path anyway.
+    if not files:
+        reply_text = "\n\n".join(text)
+        seen_paths: set = set()
+        for m in VOLUME_PATH_RE.finditer(reply_text):
+            vpath = m.group(0).rstrip(").,;:\"'")
+            if vpath not in seen_paths:
+                seen_paths.add(vpath)
+                files.append({"name": vpath.rsplit("/", 1)[-1], "path": vpath})
 
     # de-dupe, preserving order
     tools = list(dict.fromkeys(tools))

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Agent, api, Reply, upload } from "@/lib/api";
+import { Agent, api, downloadUrl, Reply, upload } from "@/lib/api";
 import { ErrorBox, Spinner } from "./bits";
 import { TierSwitch } from "./ModelChoice";
 
@@ -150,7 +150,7 @@ export function Chat({
         ) : (
           <div className="flex flex-col gap-4">
             {turns.map((t, i) => (
-              <Bubble key={i} turn={t} />
+              <Bubble key={i} turn={t} agent={agent} />
             ))}
           </div>
         )}
@@ -232,7 +232,7 @@ export function Chat({
   );
 }
 
-function Bubble({ turn }: { turn: Turn }) {
+function Bubble({ turn, agent }: { turn: Turn; agent: Agent }) {
   if (turn.role === "user") {
     return (
       <div className="self-end max-w-[80%]">
@@ -295,15 +295,26 @@ function Bubble({ turn }: { turn: Turn }) {
           <p className="text-xs faint">
             {turn.attachments.length > 1 ? "Files created:" : "File created:"}
           </p>
-          {turn.attachments.map((f, i) => (
-            <code
-              key={i}
-              className="mt-1 block break-all rounded-md px-2 py-1 text-xs"
-              style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}
-            >
-              {f.path || f.name}
-            </code>
-          ))}
+          {turn.attachments.map((f, i) =>
+            agent.output_volume && f.path ? (
+              <a
+                key={i}
+                href={downloadUrl(agent.name, f.path)}
+                className="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs underline hover:no-underline"
+                style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}
+              >
+                ⬇ {f.name || f.path}
+              </a>
+            ) : (
+              <code
+                key={i}
+                className="mt-1 block break-all rounded-md px-2 py-1 text-xs"
+                style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}
+              >
+                {f.path || f.name}
+              </code>
+            )
+          )}
         </div>
       ) : null}
 

@@ -8,3 +8,4 @@ __pycache__/
 ui/node_modules/
 ui/.next/
 ui/out/
+ui/tsconfig.tsbuildinfo

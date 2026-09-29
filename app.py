@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import access
@@ -93,7 +93,8 @@ def send(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)
     # The invocation below still runs under the user's own token, so this check
     # is a courtesy for clearer errors, not the security boundary.
     agent = _allowed_agent(who, endpoint, tok)
-    return chat.ask(endpoint, agent["task"], history, tok, files=uploads)
+    output_dir = filestore.output_dir_path(agent["output_volume"]) if agent.get("output_volume") else ""
+    return chat.ask(endpoint, agent["task"], history, tok, files=uploads, output_dir=output_dir)
 
 
 @app.post("/api/upload")
@@ -117,6 +118,29 @@ async def upload(
 
     blob = await file.read()
     return filestore.upload(agent["upload_volume"], name, blob, tok)
+
+
+@app.get("/api/download")
+def download(
+    endpoint: str,
+    path: str,
+    x_forwarded_access_token: str = Header(None),
+):
+    """Fetch a file an agent generated, as the signed-in user."""
+    who, tok = _who(x_forwarded_access_token)
+    agent = _allowed_agent(who, endpoint.strip(), tok)
+    if not agent.get("output_volume"):
+        raise HTTPException(400, "This agent does not produce downloadable files.")
+    if not filestore.in_volume(path, agent["output_volume"]):
+        raise HTTPException(403, "That file is not in this agent's output location.")
+
+    blob = filestore.download(path, tok)
+    name = path.rsplit("/", 1)[-1] or "download"
+    return Response(
+        content=blob,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="' + name.replace('"', "") + '"'},
+    )
 
 
 @app.get("/api/admin/overview")
