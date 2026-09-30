@@ -96,11 +96,12 @@ export default function Page() {
         <ThemeToggle />
       </header>
 
-      <Main>
+      <Main wide={!!open}>
         {open ? (
           <Chat
             agent={open}
             agents={agents || []}
+            historyEnabled={session.chat_history}
             models={models || []}
             onBack={() => setOpen(null)}
             onSwitch={setOpen}
@@ -173,6 +174,18 @@ function TabButton({ value, children }: { value: string; children: React.ReactNo
   );
 }
 
-function Main({ children }: { children: React.ReactNode }) {
-  return <main className="mx-auto w-full max-w-5xl px-5 pb-20 pt-6">{children}</main>;
+function Main({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+  // A conversation gets the whole window, edge to edge; the card grids and admin
+  // pages stay in a centred column, where long lines would be hard to scan.
+  return (
+    <main
+      className={
+        wide
+          ? "w-full"
+          : "mx-auto w-full max-w-5xl px-5 pb-20 pt-6"
+      }
+    >
+      {children}
+    </main>
+  );
 }

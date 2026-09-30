@@ -1,9 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Agent, api, downloadUrl, Reply, upload } from "@/lib/api";
-import { ErrorBox, Spinner } from "./bits";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Agent, api, downloadUrl, Reply, SavedChat, upload } from "@/lib/api";
+import { ErrorBox } from "./bits";
 import { TierSwitch } from "./ModelChoice";
+import { ChatHistory } from "./ChatHistory";
+import {
+  ArrowUpIcon,
+  CheckIcon,
+  ChevronLeftIcon,
+  CopyIcon,
+  PanelLeftIcon,
+  PaperclipIcon,
+  RefreshIcon,
+  SparkleIcon,
+} from "./icons";
 
 type Turn = {
   role: "user" | "assistant" | "error";
@@ -14,16 +27,36 @@ type Turn = {
   files?: string[];
 };
 
+/** What the last question was, so a failed one can be sent again unchanged. */
+type Attempt = { text: string; files: string[]; shown: string[] };
+
+const MAX_INPUT_PX = 200;
+
+/** A conversation id the server can key saved history on. randomUUID needs a
+ *  secure context (https or localhost), so there is a fallback for plain http. */
+function newId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      return (c === "x" ? r : (r & 3) | 8).toString(16);
+    });
+  }
+}
+
 export function Chat({
   agent,
   models,
   agents,
+  historyEnabled,
   onBack,
   onSwitch,
 }: {
   agent: Agent;
   models: Agent[];
   agents: Agent[];
+  historyEnabled: boolean;
   onBack: () => void;
   onSwitch: (a: Agent) => void;
 }) {
@@ -33,12 +66,35 @@ export function Chat({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState("");
   const [err, setErr] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
+  const [attempt, setAttempt] = useState<Attempt | null>(null);
+  // Set once the first question is sent (or an old conversation is opened);
+  // the server files every later message under it.
+  const [conversationId, setConversationId] = useState("");
+  // Small screens: the list is a panel above the chat, toggled from the top bar.
+  const [showHistory, setShowHistory] = useState(false);
+  // Wide screens: fold the list down to a slim rail to give the conversation the
+  // room. Remembered, because it is a preference about the screen, not a chat.
+  const [collapsed, setCollapsed] = useState(false);
+  const [saved, setSaved] = useState<SavedChat[] | null>(null);
+  const [savedErr, setSavedErr] = useState("");
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Follow new messages only while the reader is already at the bottom. Yanking
+  // the view down while someone scrolls back to re-read an earlier answer is
+  // the most annoying thing a chat can do.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el && stickRef.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [turns, busy]);
+
+  function onScroll() {
+    const el = scrollRef.current;
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
 
   // A different assistant means a different conversation. Carrying the old
   // transcript across would send one model's words to another as if it had
@@ -48,7 +104,58 @@ export function Chat({
     setPending([]);
     setDraft("");
     setErr("");
+    setAttempt(null);
+    setConversationId("");
+    setShowHistory(false);
+    stickRef.current = true;
+    inputRef.current?.focus();
   }, [agent.name]);
+
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem("agent-portal-chats-collapsed") === "1");
+    } catch {
+      // Blocked storage just means the list opens expanded each visit.
+    }
+  }, []);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem("agent-portal-chats-collapsed", next ? "1" : "0");
+    } catch {
+      // Not worth an error; it only resets on the next visit.
+    }
+  }
+
+  // Load this person's past chats for this agent as soon as the chat opens, so
+  // the list is already there rather than behind a button.
+  useEffect(() => {
+    if (!historyEnabled) return;
+    let live = true;
+    setSaved(null);
+    setSavedErr("");
+    api
+      .chats(agent.name)
+      .then((r) => live && setSaved(r.chats))
+      .catch((e) => {
+        if (!live) return;
+        setSavedErr(e.message);
+        setSaved([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [agent.name, historyEnabled]);
+
+  // Grow with the text up to a cap, then scroll inside the box.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, MAX_INPUT_PX) + "px";
+  }, [draft]);
 
   // Only the real back-and-forth goes to the agent; errors stay local so a
   // failed attempt never poisons the next one.
@@ -57,28 +164,27 @@ export function Chat({
       .filter((t) => t.role !== "error")
       .map((t) => ({ role: t.role, content: t.text }));
 
-  async function send() {
-    const text = draft.trim();
-    if (!text && pending.length === 0) return;
+  async function run(a: Attempt, retry: boolean) {
     setErr("");
-    setDraft("");
-    const files = pending.map((f) => f.path);
-    const shown = pending.map((f) => f.name);
-    setPending([]);
+    stickRef.current = true;
+    setAttempt(a);
 
-    const asked: Turn = {
-      role: "user",
-      text: text || "Please process the attached file.",
-      files: shown,
-    };
-    setTurns((t) => [...t, asked]);
+    // On a retry the question is already in the transcript, so it is not added
+    // (or sent) a second time; only the error under it is removed.
+    const base = history();
+    const messages = retry ? base : [...base, { role: "user", content: a.text }];
+    if (retry) {
+      setTurns((t) => (t.length && t[t.length - 1].role === "error" ? t.slice(0, -1) : t));
+    } else {
+      setTurns((t) => [...t, { role: "user", text: a.text, files: a.shown }]);
+    }
+
+    const cid = conversationId || newId();
+    if (!conversationId) setConversationId(cid);
+
     setBusy(true);
     try {
-      const out: Reply = await api.chat(
-        agent.name,
-        [...history(), { role: "user", content: asked.text }],
-        files
-      );
+      const out: Reply = await api.chat(agent.name, messages, a.files, cid, a.shown);
       setTurns((t) => [
         ...t,
         {
@@ -89,10 +195,74 @@ export function Chat({
           attachments: out.attachments,
         },
       ]);
+      // A new or continued chat appears in the list straight away. The server
+      // saves in the background, so re-reading the list here could miss it.
+      if (historyEnabled) {
+        const title = (messages[0]?.content || "Conversation").replace(/\s+/g, " ").trim();
+        const item: SavedChat = {
+          id: cid,
+          endpoint: agent.name,
+          updated: new Date().toISOString(),
+          count: messages.length + 1,
+          title: title.length > 80 ? title.slice(0, 80) + "…" : title,
+        };
+        setSaved((l) => [item, ...(l || []).filter((c) => c.id !== cid)]);
+      }
     } catch (e: any) {
       setTurns((t) => [...t, { role: "error", text: e.message }]);
     } finally {
       setBusy(false);
+      inputRef.current?.focus();
+    }
+  }
+
+  function send() {
+    const text = draft.trim();
+    if ((!text && pending.length === 0) || busy) return;
+    const a: Attempt = {
+      text: text || "Please process the attached file.",
+      files: pending.map((f) => f.path),
+      shown: pending.map((f) => f.name),
+    };
+    setDraft("");
+    setPending([]);
+    run(a, false);
+  }
+
+  function newChat() {
+    setTurns([]);
+    setPending([]);
+    setDraft("");
+    setErr("");
+    setAttempt(null);
+    setConversationId("");
+    setShowHistory(false);
+    inputRef.current?.focus();
+  }
+
+  async function resume(id: string) {
+    setErr("");
+    try {
+      const { messages } = await api.chatOpen(id);
+      setTurns(messages.map((m) => ({ ...m })));
+      setConversationId(id);
+      setAttempt(null);
+      setPending([]);
+      setShowHistory(false);
+      stickRef.current = true;
+      inputRef.current?.focus();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  }
+
+  async function forget(id: string) {
+    try {
+      await api.chatDelete(id);
+      setSaved((l) => (l || []).filter((c) => c.id !== id));
+      if (id === conversationId) newChat();
+    } catch (e: any) {
+      setSavedErr(e.message);
     }
   }
 
@@ -111,139 +281,311 @@ export function Chat({
   }
 
   const accepts = (agent.accepts || []).map((a) => "." + a.replace(/^\./, ""));
+  const canSend = !busy && (!!draft.trim() || pending.length > 0);
+  const empty = turns.length === 0 && !busy;
 
-  return (
-    <div>
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <button type="button" onClick={onBack} className="btn btn-quiet shrink-0">
-            ← Back
-          </button>
-          <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold">{agent.display_name}</h2>
-            <p className="text-sm muted">{agent.blurb || agent.kind_hint}</p>
-          </div>
-        </div>
-
-        {agent.metered ? (
-          <TierSwitch models={models} current={agent} onSwitch={onSwitch} />
-        ) : models.length ? (
-          <button
-            type="button"
-            className="shrink-0 text-sm muted underline hover:text-[var(--ink)]"
-            onClick={() => onSwitch(models[0])}
-          >
-            Ask a general assistant instead
-          </button>
-        ) : null}
-      </div>
-
-      <ErrorBox>{err}</ErrorBox>
-
-      <div className="card p-5">
-        {turns.length === 0 ? (
-          <p className="py-6 text-center text-sm muted">
-            {agent.supports_files
-              ? "Attach a file below, or just type your question to get started."
-              : "Type a question below to get started."}
-          </p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {turns.map((t, i) => (
-              <Bubble key={i} turn={t} agent={agent} />
+  // The same input serves both layouts: centred under the greeting on a fresh
+  // chat, pinned to the bottom once there is a conversation.
+  const composer = (
+    <div className="w-full">
+      <div
+        className="flex flex-col rounded-3xl px-2 py-2 shadow-sm transition focus-within:border-[var(--brand)]"
+        style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+      >
+        {pending.length > 0 || uploading ? (
+          <div className="flex flex-wrap items-center gap-2 px-2 pb-1 pt-1">
+            {pending.map((f, i) => (
+              <span key={i} className="tag gap-1.5">
+                <PaperclipIcon size={13} /> {f.name}
+                <button
+                  type="button"
+                  aria-label={`Remove ${f.name}`}
+                  className="opacity-70 hover:opacity-100"
+                  onClick={() => setPending((p) => p.filter((_, j) => j !== i))}
+                >
+                  ✕
+                </button>
+              </span>
             ))}
-          </div>
-        )}
-
-        {busy ? (
-          <div className="mt-4">
-            <Spinner label="Working on it — this can take a moment." />
+            {uploading ? <span className="text-xs faint">Uploading {uploading}…</span> : null}
           </div>
         ) : null}
-        <div ref={endRef} />
-      </div>
 
-      {agent.supports_files ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="btn btn-quiet"
-            onClick={() => fileRef.current?.click()}
-            disabled={!!uploading}
-          >
-            {uploading ? `Uploading ${uploading}…` : "Attach a file"}
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            className="hidden"
-            accept={accepts.join(",") || undefined}
-            aria-label="Choose a file to send to this agent"
-            onChange={(e) => {
-              pick(e.target.files?.[0]);
-              e.currentTarget.value = "";
-            }}
-          />
-          <span className="text-xs faint">
-            {accepts.length ? `Accepts ${accepts.join(", ")}` : "Any file type"}
-          </span>
-          {pending.map((f, i) => (
-            <span key={i} className="tag gap-1.5">
-              {f.name}
+        <div className="flex items-end gap-1">
+          {agent.supports_files ? (
+            <>
               <button
                 type="button"
-                aria-label={`Remove ${f.name}`}
-                className="opacity-70 hover:opacity-100"
-                onClick={() => setPending((p) => p.filter((_, j) => j !== i))}
+                className="icon-btn !h-10 !w-10 !rounded-full"
+                onClick={() => fileRef.current?.click()}
+                disabled={!!uploading}
+                title={accepts.length ? `Attach a file (${accepts.join(", ")})` : "Attach a file"}
+                aria-label="Attach a file"
               >
-                ✕
+                <PaperclipIcon size={20} />
               </button>
-            </span>
-          ))}
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                accept={accepts.join(",") || undefined}
+                aria-label="Choose a file to send to this agent"
+                onChange={(e) => {
+                  pick(e.target.files?.[0]);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </>
+          ) : null}
+
+          <textarea
+            ref={inputRef}
+            className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-2 py-2.5 text-[15px] outline-none placeholder:text-[var(--ink-faint)]"
+            rows={1}
+            value={draft}
+            aria-label="Your message"
+            placeholder={`Message ${agent.display_name}`}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // isComposing: Enter confirms an IME candidate (Japanese, Chinese,
+              // Korean input) and must not also send the half-typed message.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={send}
+            disabled={!canSend}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition"
+            style={
+              canSend
+                ? { background: "var(--brand)", color: "var(--brand-ink)" }
+                : { background: "var(--bubble)", color: "var(--ink-faint)" }
+            }
+            title="Send"
+            aria-label="Send message"
+          >
+            <ArrowUpIcon size={20} />
+          </button>
         </div>
+      </div>
+      <p className="mt-2 text-center text-xs faint">
+        Enter to send · Shift+Enter for a new line
+        {agent.supports_files
+          ? accepts.length
+            ? ` · Files: ${accepts.join(", ")}`
+            : " · Any file type"
+          : ""}
+      </p>
+    </div>
+  );
+
+  return (
+    <div
+      className="flex flex-col md:flex-row"
+      style={{ height: "calc(100dvh - 4.25rem)", minHeight: 460 }}
+    >
+      {historyEnabled ? (
+        <ChatHistory
+          className={showHistory ? "max-h-64 border-b md:max-h-none md:border-b-0" : "hidden md:flex"}
+          items={saved}
+          error={savedErr}
+          activeId={conversationId}
+          busy={busy}
+          onOpen={resume}
+          onNew={newChat}
+          onDelete={forget}
+          collapsed={collapsed}
+          onToggle={toggleCollapsed}
+        />
       ) : null}
 
-      <div className="mt-3 flex items-end gap-2">
-        <textarea
-          className="field min-h-[46px] resize-y"
-          rows={1}
-          value={draft}
-          aria-label="Your message"
-          placeholder="Ask a question…"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="btn btn-primary shrink-0"
-          onClick={send}
-          disabled={busy || (!draft.trim() && pending.length === 0)}
-        >
-          Send
-        </button>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* Top bar */}
+        <div className="flex h-12 shrink-0 items-center gap-2 px-3">
+          {historyEnabled ? (
+            <button
+              type="button"
+              className="icon-btn md:hidden"
+              onClick={() => setShowHistory(!showHistory)}
+              aria-expanded={showHistory}
+              title={showHistory ? "Hide your chats" : "Show your chats"}
+              aria-label={showHistory ? "Hide your chats" : "Show your chats"}
+            >
+              <PanelLeftIcon />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg py-1.5 pl-1.5 pr-2.5 text-sm muted transition hover:bg-[var(--bubble)] hover:text-[var(--ink)]"
+            title="Back to all agents"
+          >
+            <ChevronLeftIcon size={16} />
+            Agents
+          </button>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[15px] font-semibold leading-tight">
+              {agent.display_name}
+            </h2>
+            <p className="hidden truncate text-xs faint sm:block">
+              {agent.blurb || agent.kind_hint}
+            </p>
+          </div>
+          {agent.metered ? (
+            <TierSwitch models={models} current={agent} onSwitch={onSwitch} />
+          ) : models.length ? (
+            <button
+              type="button"
+              className="hidden shrink-0 text-sm muted underline hover:text-[var(--ink)] sm:inline"
+              onClick={() => onSwitch(models[0])}
+            >
+              Ask a general assistant instead
+            </button>
+          ) : null}
+          {!historyEnabled && turns.length > 0 ? (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={newChat}
+              disabled={busy}
+              title="New chat"
+              aria-label="New chat"
+            >
+              <RefreshIcon />
+            </button>
+          ) : null}
+        </div>
+
+        {err ? (
+          <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
+            <ErrorBox>{err}</ErrorBox>
+          </div>
+        ) : null}
+
+        {empty ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-16">
+            <div
+              aria-hidden
+              className="mb-4 flex h-12 w-12 items-center justify-center rounded-full"
+              style={{ background: "var(--brand-soft)", color: "var(--brand-deep)" }}
+            >
+              <SparkleIcon size={24} />
+            </div>
+            <h1 className="text-center text-2xl font-semibold tracking-tight">
+              {agent.display_name}
+            </h1>
+            <p className="mt-2 max-w-md text-center text-sm muted">
+              {agent.blurb ||
+                (agent.supports_files
+                  ? "Attach a file, or just type your question to get started."
+                  : "Type a question to get started.")}
+            </p>
+            <div className="mt-8 w-full max-w-3xl">{composer}</div>
+          </div>
+        ) : (
+          <>
+            <div
+              ref={scrollRef}
+              onScroll={onScroll}
+              className="min-h-0 flex-1 overflow-y-auto"
+              role="log"
+              aria-live="polite"
+              aria-label="Conversation"
+            >
+              <div className="mx-auto flex w-full max-w-3xl flex-col gap-7 px-4 py-6">
+                {turns.map((t, i) => (
+                  <Message
+                    key={i}
+                    turn={t}
+                    agent={agent}
+                    onRetry={
+                      t.role === "error" && i === turns.length - 1 && attempt && !busy
+                        ? () => run(attempt, true)
+                        : undefined
+                    }
+                  />
+                ))}
+                {busy ? <Typing /> : null}
+              </div>
+            </div>
+            <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-3 pt-1">{composer}</div>
+          </>
+        )}
       </div>
-      <p className="mt-1.5 text-xs faint">Enter sends. Shift+Enter starts a new line.</p>
     </div>
   );
 }
 
-function Bubble({ turn, agent }: { turn: Turn; agent: Agent }) {
+/** Three pulsing dots beside the assistant's mark: the reply is on its way. */
+function Typing() {
+  return (
+    <div className="flex gap-3" role="status" aria-label="The assistant is working on a reply">
+      <Avatar />
+      <div className="pt-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="typing-dot" />
+          <span className="typing-dot" style={{ animationDelay: "0.15s" }} />
+          <span className="typing-dot" style={{ animationDelay: "0.3s" }} />
+        </div>
+        <p className="mt-1.5 text-xs faint">Working on it — this can take a moment.</p>
+      </div>
+    </div>
+  );
+}
+
+function Avatar() {
+  return (
+    <div
+      aria-hidden
+      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+      style={{ border: "1px solid var(--line)", color: "var(--brand-deep)" }}
+    >
+      <SparkleIcon size={16} />
+    </div>
+  );
+}
+
+function Message({
+  turn,
+  agent,
+  onRetry,
+}: {
+  turn: Turn;
+  agent: Agent;
+  onRetry?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(turn.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access can be blocked (insecure origin, embedded frame). The
+      // text is still selectable, so this is not worth an error message.
+    }
+  }
+
+  // The person's own message: a soft bubble on the right.
   if (turn.role === "user") {
     return (
-      <div className="self-end max-w-[80%]">
+      <div className="flex flex-col items-end">
         <div
-          className="rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
-          style={{ background: "var(--brand)", color: "var(--brand-ink)" }}
+          className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl px-4 py-2.5 text-[15px]"
+          style={{ background: "var(--bubble)" }}
         >
           {turn.text}
         </div>
         {turn.files?.length ? (
-          <p className="mt-1 text-right text-xs faint">Sent: {turn.files.join(", ")}</p>
+          <p className="mt-1 flex items-center gap-1 text-xs faint">
+            <PaperclipIcon size={12} /> {turn.files.join(", ")}
+          </p>
         ) : null}
       </div>
     );
@@ -251,76 +593,111 @@ function Bubble({ turn, agent }: { turn: Turn; agent: Agent }) {
 
   if (turn.role === "error") {
     return (
-      <div className="self-start max-w-[85%]">
-        <div className="error whitespace-pre-wrap">{turn.text}</div>
+      <div className="flex gap-3">
+        <Avatar />
+        <div className="min-w-0 flex-1">
+          <div className="error whitespace-pre-wrap">{turn.text}</div>
+          {onRetry ? (
+            <button type="button" className="btn btn-quiet mt-2" onClick={onRetry}>
+              <RefreshIcon size={15} /> Try again
+            </button>
+          ) : null}
+        </div>
       </div>
     );
   }
 
+  // The assistant's reply: plain text on the page, with its mark alongside.
   return (
-    <div className="self-start max-w-[85%]">
-      <div
-        className="rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words"
-        style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}
-      >
-        {turn.text}
+    <div className="group flex gap-3">
+      <Avatar />
+      <div className="min-w-0 flex-1">
+        <div className="md break-words text-[15px] leading-relaxed">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              // Replies come from agents, so every link leaves the portal in a
+              // new tab and gets no access to it.
+              a: ({ node, ...p }) => <a {...p} target="_blank" rel="noopener noreferrer" />,
+              // Wide tables scroll inside the column instead of stretching it.
+              table: ({ node, ...p }) => (
+                <div className="md-table">
+                  <table {...p} />
+                </div>
+              ),
+            }}
+          >
+            {turn.text}
+          </ReactMarkdown>
+        </div>
+
+        {turn.citations?.length ? (
+          <div className="mt-3">
+            <p className="text-xs faint">Based on</p>
+            <ul className="mt-1 space-y-0.5">
+              {turn.citations.map((c, i) => (
+                <li key={i} className="text-sm">
+                  {c.url ? (
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="muted underline hover:text-[var(--brand)]"
+                    >
+                      {c.label}
+                    </a>
+                  ) : (
+                    <span className="muted">{c.label}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {turn.attachments?.length ? (
+          <div className="mt-3">
+            <p className="text-xs faint">
+              {turn.attachments.length > 1 ? "Files created" : "File created"}
+            </p>
+            {turn.attachments.map((f, i) =>
+              agent.output_volume && f.path ? (
+                <a
+                  key={i}
+                  href={downloadUrl(agent.name, f.path)}
+                  className="mt-1.5 flex w-fit items-center gap-2 rounded-xl px-3 py-2 text-sm transition hover:bg-[var(--bubble)]"
+                  style={{ border: "1px solid var(--line)" }}
+                >
+                  ⬇ {f.name || f.path}
+                </a>
+              ) : (
+                <code
+                  key={i}
+                  className="mt-1.5 block break-all rounded-md px-2 py-1 text-xs"
+                  style={{ background: "var(--bubble)" }}
+                >
+                  {f.path || f.name}
+                </code>
+              )
+            )}
+          </div>
+        ) : null}
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <button
+            type="button"
+            onClick={copy}
+            className="icon-btn !h-8 !w-8 opacity-60 hover:opacity-100 focus:opacity-100"
+            title={copied ? "Copied" : "Copy"}
+            aria-label="Copy this reply"
+          >
+            {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+          </button>
+          {turn.tools?.length ? (
+            <p className="text-xs faint">Used: {turn.tools.join(", ")}</p>
+          ) : null}
+        </div>
       </div>
-
-      {turn.citations?.length ? (
-        <div className="mt-2">
-          <p className="text-xs faint">Based on:</p>
-          <ul className="mt-0.5 space-y-0.5">
-            {turn.citations.map((c, i) => (
-              <li key={i} className="text-xs">
-                {c.url ? (
-                  <a
-                    href={c.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="muted underline hover:text-[var(--brand)]"
-                  >
-                    {c.label}
-                  </a>
-                ) : (
-                  <span className="muted">{c.label}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {turn.attachments?.length ? (
-        <div className="mt-2">
-          <p className="text-xs faint">
-            {turn.attachments.length > 1 ? "Files created:" : "File created:"}
-          </p>
-          {turn.attachments.map((f, i) =>
-            agent.output_volume && f.path ? (
-              <a
-                key={i}
-                href={downloadUrl(agent.name, f.path)}
-                className="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs underline hover:no-underline"
-                style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}
-              >
-                ⬇ {f.name || f.path}
-              </a>
-            ) : (
-              <code
-                key={i}
-                className="mt-1 block break-all rounded-md px-2 py-1 text-xs"
-                style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}
-              >
-                {f.path || f.name}
-              </code>
-            )
-          )}
-        </div>
-      ) : null}
-
-      {turn.tools?.length ? (
-        <p className="mt-1.5 text-xs faint">Used: {turn.tools.join(", ")}</p>
-      ) : null}
     </div>
   );
 }

@@ -27,6 +27,7 @@ export type Session = {
   groups: string[];
   is_admin: boolean;
   auth_mode: string;
+  chat_history: boolean;
 };
 
 export type Grant = {
@@ -46,6 +47,16 @@ export type AdminAgent = Agent & {
 
 export type LogLine = { at: string; level: string; source: string; message: string };
 export type LogsResult = { stored: boolean; note: string; lines: LogLine[] };
+
+export type SavedChat = { id: string; endpoint: string; updated: string; count: number; title: string };
+export type SavedMessage = {
+  role: "user" | "assistant";
+  text: string;
+  tools?: string[];
+  citations?: { label: string; url: string }[];
+  attachments?: { name: string; path: string }[];
+  files?: string[];
+};
 
 export type Reply = {
   reply: string;
@@ -81,8 +92,22 @@ export const api = {
   agents: () => request<{ agents: Agent[] }>("/api/agents"),
   models: () =>
     request<{ enabled: boolean; allowed: boolean; reason: string; models: Agent[] }>("/api/models"),
-  chat: (endpoint: string, history: { role: string; content: string }[], files: string[]) =>
-    request<Reply>("/api/chat", { endpoint, history, files }),
+  chat: (
+    endpoint: string,
+    history: { role: string; content: string }[],
+    files: string[],
+    conversation_id?: string,
+    file_names?: string[]
+  ) => request<Reply>("/api/chat", { endpoint, history, files, conversation_id, file_names }),
+  chats: (endpoint: string) =>
+    request<{ enabled: boolean; chats: SavedChat[] }>(
+      `/api/chats?endpoint=${encodeURIComponent(endpoint)}`
+    ),
+  chatOpen: (id: string) => request<{ messages: SavedMessage[] }>(`/api/chats/${id}`),
+  chatDelete: async (id: string) => {
+    const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Could not delete that conversation");
+  },
   adminOverview: () =>
     request<{
       agents: AdminAgent[];

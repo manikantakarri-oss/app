@@ -103,7 +103,7 @@ export function TierSwitch({
   if (list.length < 2) return null;
   return (
     <div className="shrink-0">
-      <span className="mb-1 block text-xs faint">How much thinking?</span>
+      <span className="sr-only">How much thinking?</span>
       <div className="inline-flex rounded-lg p-0.5" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
         {list.map((t) => {
           const active = t.model.name === current.name;

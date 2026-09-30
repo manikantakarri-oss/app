@@ -16,13 +16,14 @@ import logging
 import os
 import time
 
-from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import access
 import audit
 import chat
+import chats
 import files as filestore
 import llm
 import logbuf
@@ -105,7 +106,7 @@ def _require_admin(forwarded):
 @app.get("/api/session")
 def session(x_forwarded_access_token: str = Header(None)):
     who, _ = _who(x_forwarded_access_token)
-    return {**who, "auth_mode": auth_mode()}
+    return {**who, "auth_mode": auth_mode(), "chat_history": chats.enabled()}
 
 
 @app.get("/api/agents")
@@ -131,7 +132,11 @@ def _allowed_agent(who: dict, endpoint: str, user_tok: str = "") -> dict:
 
 
 @app.post("/api/chat")
-def send(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+def send(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
     endpoint = (payload.get("endpoint") or "").strip()
     history = payload.get("history") or []
     uploads = [p for p in (payload.get("files") or []) if isinstance(p, str) and p]
@@ -144,7 +149,60 @@ def send(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)
     # is a courtesy for clearer errors, not the security boundary.
     agent = _allowed_agent(who, endpoint, tok)
     output_dir = filestore.output_dir_path(agent["output_volume"]) if agent.get("output_volume") else ""
-    return chat.ask(endpoint, agent["task"], history, tok, files=uploads, output_dir=output_dir)
+    out = chat.ask(endpoint, agent["task"], history, tok, files=uploads, output_dir=output_dir)
+
+    # Saved after the reply has gone out, and only for a successful exchange, so
+    # history never slows a chat and never holds a failed attempt.
+    cid = (payload.get("conversation_id") or "").strip()
+    if chats.enabled() and chats.valid_id(cid) and history and history[-1].get("role") == "user":
+        names = [n for n in (payload.get("file_names") or []) if isinstance(n, str)][:20]
+        background.add_task(
+            _save_chat, who["user_name"], cid, endpoint, len(history) - 1,
+            str(history[-1].get("content") or ""), names, out,
+        )
+    return out
+
+
+def _save_chat(user: str, cid: str, endpoint: str, idx: int, question: str, names: list, out: dict):
+    try:
+        chats.save(user, cid, endpoint, idx, [
+            {"role": "user", "text": question, "meta": {"files": names}},
+            {"role": "assistant", "text": out.get("reply") or "", "meta": {
+                "tools": out.get("tools") or [],
+                "citations": out.get("citations") or [],
+                "attachments": out.get("attachments") or [],
+            }},
+        ])
+    except Exception as exc:  # a failed save must never surface as a failed chat
+        log.warning("could not save conversation %s for %s: %s", cid, user, str(exc)[:300])
+
+
+@app.get("/api/chats")
+def chat_list(endpoint: str = "", x_forwarded_access_token: str = Header(None)):
+    """The signed-in person's saved conversations, newest first."""
+    who, _ = _who(x_forwarded_access_token)
+    if not chats.enabled():
+        return {"enabled": False, "chats": []}
+    return {"enabled": True, "chats": chats.list_chats(who["user_name"], endpoint.strip())}
+
+
+@app.get("/api/chats/{cid}")
+def chat_open(cid: str, x_forwarded_access_token: str = Header(None)):
+    who, _ = _who(x_forwarded_access_token)
+    if not chats.enabled():
+        raise HTTPException(404, "conversation history is not turned on")
+    messages = chats.get_chat(who["user_name"], cid)
+    if not messages:
+        raise HTTPException(404, "no such conversation")
+    return {"messages": messages}
+
+
+@app.delete("/api/chats/{cid}")
+def chat_delete(cid: str, x_forwarded_access_token: str = Header(None)):
+    who, _ = _who(x_forwarded_access_token)
+    if chats.enabled():
+        chats.delete_chat(who["user_name"], cid)
+    return {"deleted": cid}
 
 
 @app.post("/api/upload")
