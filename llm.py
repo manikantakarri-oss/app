@@ -216,10 +216,10 @@ def _sql(query: str, user_tok: str, warehouse: str) -> list:
 
 
 # Grouped by endpoint, not by SKU: `usage_metadata.endpoint_name` says which
-# model was actually paid for, which is the question people ask. Note that
-# agent endpoints (mas-*) never appear here - an agent's thinking is billed
-# against whichever foundation model it runs on, so cost cannot be attributed
-# to an individual agent. Verified: no mas-* endpoint has any billing rows.
+# model was actually paid for, which is the question people ask. Supervisor
+# agents (mas-*) bill under their own product, SUPERVISOR_AGENT, with the agent's
+# endpoint name in usage_metadata - so they are included alongside MODEL_SERVING
+# and appear as their own line. Verified against system.billing.usage.
 SPEND_SQL = """
 SELECT COALESCE(u.usage_metadata.endpoint_name, u.sku_name) AS item,
        SUM(u.usage_quantity)                                AS dbus,
@@ -227,7 +227,7 @@ SELECT COALESCE(u.usage_metadata.endpoint_name, u.sku_name) AS item,
 FROM system.billing.usage u
 LEFT JOIN system.billing.list_prices p
        ON p.sku_name = u.sku_name AND p.price_end_time IS NULL
-WHERE u.billing_origin_product = 'MODEL_SERVING'
+WHERE u.billing_origin_product IN ('MODEL_SERVING', 'SUPERVISOR_AGENT')
   AND u.usage_date >= date_sub(current_date(), {days})
 GROUP BY 1
 HAVING SUM(u.usage_quantity) > 0
