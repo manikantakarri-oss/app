@@ -12,7 +12,9 @@ so the portal can be deleted and rebuilt without losing configuration.
 """
 from __future__ import annotations
 
+import logging
 import os
+import time
 
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
@@ -23,6 +25,8 @@ import audit
 import chat
 import files as filestore
 import llm
+import logbuf
+import logsink
 from dbx import DbxError, app_token, auth_mode, user_token
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,8 +38,54 @@ WEB = os.path.join(HERE, "web")
 app = FastAPI(title="Agent Portal", docs_url="/api/docs")
 
 
+# stdout/stderr from a Databricks App land in the app's Logs tab (and
+# `databricks apps logs <app>`), so plain logging is all that is needed. Tokens
+# and request bodies are never logged.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("portal")
+log.addHandler(logbuf.buffer)  # in-memory fallback for the admin panel's Logs view
+if logsink.enabled():
+    log.addHandler(logsink.handler)  # durable copy of problems, in a Delta table
+elif logsink.TABLE:
+    log.warning("PORTAL_LOG_TABLE=%r is not catalog.schema.table; logs stay in memory only", logsink.TABLE)
+
+
+def _caller(request: Request) -> str:
+    """Who is asking, from the headers the Apps proxy adds. Not a credential."""
+    h = request.headers
+    return h.get("x-forwarded-email") or h.get("x-forwarded-preferred-username") or "unknown"
+
+
+def _ctx(request: Request, status: int) -> dict:
+    """Structured fields, so the Delta table can be filtered by user or path."""
+    return {"extra": {"actor": _caller(request), "method": request.method, "path": request.url.path, "status": status}}
+
+
+@app.middleware("http")
+async def _access_log(request: Request, call_next):
+    # The Logs panel polls its own route; logging that would fill the view with itself.
+    if not request.url.path.startswith("/api/") or request.url.path in ("/api/health", "/api/admin/logs"):
+        return await call_next(request)
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("%s %s user=%s -> unhandled error", request.method, request.url.path, _caller(request), **_ctx(request, 500))
+        raise
+    ms = int((time.monotonic() - start) * 1000)
+    level = logging.WARNING if response.status_code >= 400 else logging.INFO
+    log.log(level, "%s %s user=%s -> %s (%d ms)", request.method, request.url.path, _caller(request), response.status_code, ms,
+            **_ctx(request, response.status_code))
+    return response
+
+
 @app.exception_handler(DbxError)
-async def _dbx_error(_: Request, exc: DbxError):
+async def _dbx_error(request: Request, exc: DbxError):
+    # The reason behind a failed Databricks call, e.g. a user without WRITE
+    # VOLUME on an upload. The access log above carries the same path and user.
+    log.warning("databricks call failed: %s %s user=%s status=%s: %s",
+                request.method, request.url.path, _caller(request), exc.status, str(exc)[:500],
+                **_ctx(request, exc.status))
     return JSONResponse({"error": str(exc)}, status_code=exc.status)
 
 
@@ -257,6 +307,27 @@ def llm_cost(days: int = 30, x_forwarded_access_token: str = Header(None)):
     """Actual model-serving spend, read from the workspace billing tables."""
     _who_admin, tok = _require_admin(x_forwarded_access_token)
     return llm.spend(tok, days)
+
+
+@app.get("/api/admin/logs")
+def recent_logs(
+    days: int = 7, limit: int = 200, x_forwarded_access_token: str = Header(None)
+):
+    """Recent problems - failed API calls and their reasons.
+
+    Read from the Delta table when PORTAL_LOG_TABLE is set, otherwise from this
+    process's memory. Falls back to memory, with a note, if the table cannot be
+    read, so a permissions slip cannot blank the panel.
+    """
+    _require_admin(x_forwarded_access_token)
+    limit = 20 if limit < 20 else (500 if limit > 500 else limit)
+    if logsink.enabled():
+        try:
+            return {"stored": True, "note": "", "lines": logsink.recent(days, limit)}
+        except Exception as exc:
+            note = "Could not read the log table, showing this session only. " + str(exc)[:200]
+            return {"stored": False, "note": note, "lines": logbuf.buffer.recent(logging.WARNING, limit)}
+    return {"stored": False, "note": "", "lines": logbuf.buffer.recent(logging.WARNING, limit)}
 
 
 @app.get("/api/admin/audit")

@@ -13,6 +13,19 @@ command:
   - --port
   - "8000"
 
+# Durable log of failed API calls, shown in the admin panel. Uncomment and set to
+# a catalog.schema.table the app's service principal can write to. The app
+# creates the table itself. Unset = logs are kept in memory only.
+#   The service principal needs: USE CATALOG, USE SCHEMA, CREATE TABLE on the
+#   schema (or pre-create the table and grant MODIFY + SELECT), and CAN_USE on a
+#   SQL warehouse. PORTAL_LOG_WAREHOUSE pins one; otherwise the first is used.
+#
+env:
+  - name: PORTAL_LOG_TABLE
+    value: mcp-test.mcp-test-schema.portal_logs
+  - name: PORTAL_LOG_WAREHOUSE
+    value: a21962cab375c9cc
+
 # Scopes requested on behalf of the signed-in user.
 #
 # Two things to know, both verified on this workspace:

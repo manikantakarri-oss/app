@@ -44,6 +44,9 @@ export type AdminAgent = Agent & {
   agent_id?: string;
 };
 
+export type LogLine = { at: string; level: string; source: string; message: string };
+export type LogsResult = { stored: boolean; note: string; lines: LogLine[] };
+
 export type Reply = {
   reply: string;
   tools: string[];
@@ -103,6 +106,7 @@ export const api = {
       members_visible?: boolean;
     }>("/api/admin/llm"),
   llmSet: (payload: Record<string, unknown>) => request<unknown>("/api/admin/llm", payload),
+  logs: (days: number) => request<LogsResult>(`/api/admin/logs?days=${days}`),
   cost: (days: number) =>
     request<{
       days: number;

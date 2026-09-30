@@ -15,12 +15,15 @@ token; `auth_mode()` reports which world we are in and the UI shows it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
 from typing import Any
 
 import httpx
+
+log = logging.getLogger("portal.dbx")
 
 PROFILE = os.environ.get("DATABRICKS_CONFIG_PROFILE", "azure-prem")
 
@@ -145,5 +148,8 @@ def call(method: str, path: str, token: str, **kw) -> Any:
     headers.update(kw.pop("headers", None) or {})
     resp = httpx.request(method, f"{host()}{path}", headers=headers, timeout=120, **kw)
     if resp.status_code >= 400:
+        # Logged here as well as in the route handler, because callers often
+        # swallow this error (name lookups, "why" labels) and it would vanish.
+        log.warning("%s %s -> %s: %s", method, path, resp.status_code, resp.text[:300])
         raise DbxError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}", resp.status_code)
     return resp.json() if resp.content else {}

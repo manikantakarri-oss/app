@@ -5,6 +5,7 @@ import { AdminAgent, api } from "@/lib/api";
 import { CostChart } from "./CostChart";
 import { ErrorBox, Notice, SectionHead, Spinner, StatusDot } from "./bits";
 import { Activity } from "./Activity";
+import { Logs } from "./Logs";
 
 type Overview = Awaited<ReturnType<typeof api.adminOverview>>;
 
@@ -62,6 +63,7 @@ export function Admin() {
 
       <Spending />
       <Activity />
+      <Logs />
     </div>
   );
 }
@@ -413,9 +415,9 @@ function Spending() {
           <>
             <CostChart lines={data.lines} total={data.total_usd} days={data.days} />
             <p className="mt-4 text-xs faint">
-              Your agents do not appear separately. An agent&apos;s thinking is charged to
-              whichever model it runs on, so it is included above — Databricks does not break it
-              out per agent.
+              Supervisor agents appear as their own line (named by their endpoint). Other agents are
+              charged to whichever model they run on, so their cost is included in that model&apos;s
+              line.
             </p>
           </>
         )}
