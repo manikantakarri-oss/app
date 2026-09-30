@@ -146,10 +146,13 @@ def call(method: str, path: str, token: str, **kw) -> Any:
     # Bricks endpoints want X-Databricks-Workspace-Id).
     headers = {"Authorization": f"Bearer {token}"}
     headers.update(kw.pop("headers", None) or {})
+    # For best-effort calls whose failure is expected (and handled by the
+    # caller): logged quietly so they do not fill the problem log.
+    quiet = kw.pop("quiet", False)
     resp = httpx.request(method, f"{host()}{path}", headers=headers, timeout=120, **kw)
     if resp.status_code >= 400:
         # Logged here as well as in the route handler, because callers often
         # swallow this error (name lookups, "why" labels) and it would vanish.
-        log.warning("%s %s -> %s: %s", method, path, resp.status_code, resp.text[:300])
+        log.log(logging.DEBUG if quiet else logging.WARNING, "%s %s -> %s: %s", method, path, resp.status_code, resp.text[:300])
         raise DbxError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}", resp.status_code)
     return resp.json() if resp.content else {}

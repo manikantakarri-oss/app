@@ -90,13 +90,41 @@ def _first_warehouse(tok: str) -> str:
     return whs[0]["id"]
 
 
+_ready = False
+_ready_lock = threading.Lock()
+
+
+def ensure_table() -> None:
+    """Create the table (and trim old rows) once per process.
+
+    Called by the writer and by the panel's read, so a missing table is created
+    by whichever comes first, and a failure is raised to the panel with its real
+    reason instead of surfacing later as "table not found".
+    """
+    global _ready
+    if _ready:
+        return
+    with _ready_lock:
+        if _ready:
+            return
+        _run(
+            "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
+            "logged_at TIMESTAMP, level STRING, source STRING, actor STRING, "
+            "method STRING, path STRING, status INT, message STRING)"
+        )
+        _run(
+            "DELETE FROM " + QUALIFIED + " WHERE logged_at < current_timestamp() - INTERVAL "
+            + str(RETENTION_DAYS) + " DAYS"
+        )
+        _ready = True
+
+
 class DeltaHandler(logging.Handler):
     def __init__(self) -> None:
         super().__init__(level=logging.WARNING)
         self._q: queue.Queue = queue.Queue(maxsize=1000)
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._ready = False
 
     def emit(self, record: logging.LogRecord) -> None:
         if threading.current_thread().name == THREAD_NAME:
@@ -139,17 +167,7 @@ class DeltaHandler(logging.Handler):
                 _err("could not write %d row(s) to %s: %s" % (len(rows), TABLE, str(exc)[:200]))
 
     def _write(self, rows: list) -> None:
-        if not self._ready:
-            _run(
-                "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
-                "logged_at TIMESTAMP, level STRING, source STRING, actor STRING, "
-                "method STRING, path STRING, status INT, message STRING)"
-            )
-            _run(
-                "DELETE FROM " + QUALIFIED + " WHERE logged_at < current_timestamp() - INTERVAL "
-                + str(RETENTION_DAYS) + " DAYS"
-            )
-            self._ready = True
+        ensure_table()
 
         params, tuples = [], []
         for i, row in enumerate(rows):
@@ -168,6 +186,7 @@ class DeltaHandler(logging.Handler):
 def recent(days: int, limit: int) -> list:
     """Stored problem lines, newest first, in the same shape as `logbuf`."""
     days = 1 if days < 1 else (90 if days > 90 else days)
+    ensure_table()
     rows = _run(
         "SELECT date_format(logged_at, \"yyyy-MM-dd'T'HH:mm:ss'Z'\"), level, source, message "
         "FROM " + QUALIFIED + " WHERE logged_at >= current_timestamp() - INTERVAL " + str(days) + " DAYS "

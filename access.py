@@ -96,7 +96,7 @@ def bricks_meta(tok: str, workspace_id: str = "") -> dict:
         headers["X-Databricks-Workspace-Id"] = workspace_id
     for path, key in BRICKS_APIS:
         try:
-            data = call("GET", path, tok, headers=headers)
+            data = call("GET", path, tok, headers=headers, quiet=True)
         except DbxError:
             continue
         for a in data.get(key) or []:
