@@ -2,34 +2,41 @@
 
 import { useEffect, useState } from "react";
 
-type Choice = "light" | "dark" | "system";
+type Choice = "light" | "dark";
 const KEY = "agent-portal-theme";
 
-/** Writes the choice onto <html>. "system" removes the attribute so the CSS
- *  media query takes over again. */
+/** Writes the choice onto <html>. */
 export function applyTheme(choice: Choice) {
-  const root = document.documentElement;
-  if (choice === "system") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", choice);
+  document.documentElement.setAttribute("data-theme", choice);
+}
+
+/** What the OS asks for. Used only until the person picks one themselves. */
+function osChoice(): Choice {
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
 }
 
 function stored(): Choice {
   try {
     const v = localStorage.getItem(KEY);
-    if (v === "light" || v === "dark" || v === "system") return v;
+    if (v === "light" || v === "dark") return v;
+    // Anything else, including a "system" saved by an earlier version, means
+    // "no explicit choice yet", so follow the OS.
   } catch {
-    // Private windows and blocked site data both throw here; system is a fine
-    // answer in that case.
+    // Private windows and blocked site data both throw here; the OS setting is
+    // a fine answer in that case.
   }
-  return "system";
+  return osChoice();
 }
 
-const ORDER: Choice[] = ["light", "dark", "system"];
-const LABEL: Record<Choice, string> = { light: "Light", dark: "Dark", system: "System" };
-const ICON: Record<Choice, string> = { light: "☀", dark: "☾", system: "◐" };
+const LABEL: Record<Choice, string> = { light: "Light", dark: "Dark" };
+const ICON: Record<Choice, string> = { light: "☀", dark: "☾" };
 
 export function ThemeToggle() {
-  const [choice, setChoice] = useState<Choice>("system");
+  const [choice, setChoice] = useState<Choice>("light");
 
   // Read on mount rather than during render: the value only exists in the
   // browser, and this component is inside a static export.
@@ -38,7 +45,7 @@ export function ThemeToggle() {
   }, []);
 
   function next() {
-    const pick = ORDER[(ORDER.indexOf(choice) + 1) % ORDER.length];
+    const pick: Choice = choice === "light" ? "dark" : "light";
     setChoice(pick);
     applyTheme(pick);
     try {
@@ -54,8 +61,8 @@ export function ThemeToggle() {
       type="button"
       onClick={next}
       className="btn btn-quiet"
-      title={`Appearance: ${LABEL[choice]}. Click to change.`}
-      aria-label={`Appearance: ${LABEL[choice]}. Click to change.`}
+      title={`Appearance: ${LABEL[choice]}. Click to switch to ${LABEL[choice === "light" ? "dark" : "light"]}.`}
+      aria-label={`Appearance: ${LABEL[choice]}. Click to switch.`}
     >
       <span aria-hidden>{ICON[choice]}</span>
       <span className="hidden sm:inline">{LABEL[choice]}</span>

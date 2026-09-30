@@ -14,12 +14,13 @@ export const metadata: Metadata = {
 // Runs before the page paints, so a viewer who chose Light never sees a flash
 // of dark (or the reverse) while React hydrates. Kept tiny and defensive:
 // localStorage throws in private windows, and a broken theme must not stop the
-// portal from loading. `?theme=light|dark|system` overrides for one visit,
-// which makes a specific appearance easy to share or screenshot.
+// portal from loading. `?theme=light|dark` overrides for one visit,
+// which makes a specific appearance easy to share or screenshot. With no saved
+// choice the CSS media query follows the OS.
 const BOOT = `(function(){try{
 var q=new URLSearchParams(location.search).get('theme');
 var v=q||localStorage.getItem('agent-portal-theme');
-if(q&&(q==='light'||q==='dark'||q==='system'))localStorage.setItem('agent-portal-theme',q);
+if(q&&(q==='light'||q==='dark'))localStorage.setItem('agent-portal-theme',q);
 if(v==='light'||v==='dark')document.documentElement.setAttribute('data-theme',v);
 }catch(e){}})();`;
 
