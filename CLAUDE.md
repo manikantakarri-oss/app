@@ -45,6 +45,7 @@ There is no linter or CI config. The offline tests are plain scripts (no pytest 
 - Scope names are `<api-group>.<resource>`; bare names (`genie`, `unity-catalog`, ...) are rejected. Invoking agents needs `model-serving`.
 - `DATABRICKS_HOST` arrives **without a scheme** in Apps; `dbx.host()` normalises it.
 - `web/` is **committed** (it is what gets deployed) and `ui/out/` is gitignored. After any UI change, rebuild and copy to `web/` or the change will not ship.
+- **New client / workspace:** set `PORTAL_LOG_TABLE` in `app.yaml` to `<existing catalog>.<schema>.portal_logs` (the only per-client line). The app creates the schema (`store.ensure_schema`, best effort) and both tables on first use and picks a warehouse itself unless `PORTAL_LOG_WAREHOUSE` pins one. The SP needs `USE CATALOG` + `CREATE SCHEMA` on the catalog (or `USE SCHEMA` + `CREATE TABLE` on an existing schema) and `CAN_USE` on a warehouse.
 - **Onboarding an agent** = sharing its serving endpoint with the app's service principal (CAN_MANAGE). Until then it does not appear in the portal at all.
 
 Environment variables (all optional): `PORTAL_LOG_TABLE`, `PORTAL_LOG_WAREHOUSE`, `PORTAL_CHAT_TABLE`, `PORTAL_CHAT_RETENTION_DAYS` (default 180), `DATABRICKS_CONFIG_PROFILE`, `DATABRICKS_WORKSPACE_ID`. `.env.local` holds local `DATABRICKS_HOST`/`DATABRICKS_TOKEN`; it is gitignored. Never print, log or commit its contents.
@@ -92,11 +93,9 @@ Rules:
 - Tag `output_volume` lets agents hand back generated files; `GET /api/download` is limited to paths inside that volume (`filestore.in_volume`).
 - `sync_agents.py` auto-derives `upload_volume` from an agent's own `volume` tool.
 
-### 5. General assistants / foundation models (`llm.py`)
-- `llm/v1/chat` foundation models shown as plain chat assistants in a separate "General assistant" tab (`GET /api/models`), grouped into tiers (`ui/lib/tiers.ts`) with a "lower/higher cost" hint from the model name.
-- Foundation models have no endpoint id and cannot be tagged, so there is no per-user ACL. The on/off switch is the **workspace group `portal-llm-users`**: group exists = enabled, membership = audience; fails closed; default off.
-- This is **curation, not security** (users with `model-serving` scope can call them directly). The admin UI says so; keep that wording.
-- Admin: `GET/POST /api/admin/llm`.
+### 5. Foundation models: removed
+- The "General assistant" tab (raw `llm/v1/chat` foundation models, switched on by the `portal-llm-users` group, routes `/api/models` and `/api/admin/llm`) was removed. The portal only offers agents now.
+- `llm.py` keeps only the billing code (`spend`, `_warehouse`, `_pretty_model`), used by Costs and the dashboards.
 
 ### 6. Admin console (`ui/components/Admin.tsx`, routes under `/api/admin/*`)
 Sub-views: **People & access**, **Costs**, **Activity**, **Problems**, plus an Appearance panel.
@@ -122,12 +121,20 @@ Admin-only **Create an assistant** tab. It opens on a type picker ("Combine tool
 - **Privacy:** `GET /api/dashboard/me` takes the user from the caller's token and ignores any `user` parameter. Admin routes (`/api/admin/dashboard/{people,person,costs}`) expose **counts only**, never question text or chat titles. Keep it that way.
 - **Cost per person is an estimate**, not a bill: Databricks bills per endpoint, so each endpoint's real cost (`llm.spend`, run as the admin) is split by each person's share of questions to it. Cost with no portal usage behind it is shown as "Not from the portal", never spread over people. The UI labels it "Estimate" everywhere. Don't present it as exact.
 - The SQL (`from_json` on the `meta` column for file counts, `count_if`) has not been run against a live warehouse.
-- Headline cards show the change against the previous period of the same length (`previous` in the activity payload), as an arrow plus a signed number, never colour alone; a fall is neutral grey, not red.
+- **Me** view (`Mine`): a sentence summary with Questions/Conversations (with deltas), Active days and Current streak (computed client-side from `per_day`); activity chart; "Your go-to assistants" with an **Ask** button (needs the `agents`, `onOpen`, `onResume` props from `page.tsx`; an assistant you lost access to shows "No access"); recent conversations (`api.chats("")`); a weekday x hour heatmap in the viewer's time zone; and "Your files" (sent and received, with Download only when the agent has `output_volume`, via `downloadUrl`). Extras come from `GET /api/dashboard/me/insights` (`dashboard.insights`: UTC hour buckets plus files parsed from message `meta`; received files that echo an upload in the same conversation, which Agent Bricks does, are dropped). Empty states: history off, brand-new user (suggested assistants), nothing in this period (offers 90 days).
+- **Everyone** view adds `GET /api/admin/dashboard/overview` (`dashboard.org`): active and new people (with deltas), active people per day and questions per day as **two charts** (different scales, never a dual axis), an assistant leaderboard plus the assistants nobody used. Counts only. An admin's view of one person never shows their conversations, files or hours.
+- The heatmap level classes (`heat-0..4`) live **outside** `@layer` in `globals.css`, because the class name is built at runtime and Tailwind would purge a layered rule.
+- Headline numbers are one strip (`.kpi-strip`/`.kpi`) showing the change against the previous period of the same length (`previous` in the activity payload), as an arrow plus a signed number, never colour alone; a fall is neutral grey, not red. Questions gets a sparkline, and the chart an "Avg" reference line, only when at least 3 days have activity.
+- Changing the period keeps the old numbers on screen dimmed (`usePeriod` + `Dim`) instead of flashing a skeleton. The admin People table sorts by any numeric column and pages 25 at a time. The empty state links to the assistants via the optional `onGoto` prop.
 
 ### 9. UI shell (`ui/app/page.tsx`)
-Tabs (Radix, reflected in the URL hash): **Your assistants**, **My dashboard**, **General assistant** (only if models are enabled for the user), **Create an assistant** and **Admin** (admins only). Light / Dark / System theme (`ThemeToggle.tsx`, `?theme=` override, pre-paint script in `layout.tsx` to avoid flash). Colours are CSS variables in `globals.css`; use them rather than hard-coded colours.
+Tabs (Radix, reflected in the URL hash): **Your assistants**, **My dashboard**, **Create an assistant** and **Admin** (admins only). Light / Dark / System theme (`ThemeToggle.tsx`, `?theme=` override, pre-paint script in `layout.tsx` to avoid flash). Colours are CSS variables in `globals.css`; use them rather than hard-coded colours.
 
-The header is an app bar: logo mark and name on the left, the tabs as underlined navigation inline (`.nav-tab`; on phones a second, horizontally scrolling row), and the user's avatar, name and role plus the theme toggle on the right. The `Tabs.Root` wraps header and content so the bar works from anywhere, including from inside a chat (picking a tab closes the chat). The header's height is published as `--header-h` (ResizeObserver) and the chat sizes itself to the window below it, so don't hard-code a header height. Shared look: `.seg` (segmented control), `.chip`, `.avatar`, `--shadow` tokens, all in `globals.css`; `lib/people.ts` has `initials`/`nameOf`.
+The shell is a dark left sidebar (`.side*` classes, `--side-*` tokens, dark in both themes) holding the brand, a Search button, the tabs as a vertical `Tabs.List` (Workspace: Assistants, My dashboard; Manage: Create an assistant, Admin console), "Recent" conversations and the signed-in user. It folds to a 76px icon rail (remembered in `agent-portal-nav-collapsed`), is forced to the rail while a chat is open, and is a drawer on phones. A slim top bar (`.topbar`, breadcrumb, Search, theme toggle) sits over the content; its height is published as `--header-h` (ResizeObserver) and the chat sizes itself to the window below it, so don't hard-code it. `Tabs.Root` wraps everything so navigation works from inside a chat (picking a tab closes the chat). Tab values and URL hashes (`#dashboard`, `#build`, `#admin`) are unchanged.
+- **Home** (`Home.tsx`): gradient banner (`.hero`) with greeting, search and live counts; "Pick up where you left off" from `api.chats("")` (history on only); kind filter chips; `AgentCard` grid. `kindMeta` in `AgentCard.tsx` gives each kind one label, icon and colour (`.kind-*`).
+- **Recent conversations** open via `Chat`'s optional `resumeId` prop, which calls its own `resume` after the reset effect.
+- **Quick switcher** (`QuickSwitcher.tsx`, Ctrl/Cmd+K): jump to any ready assistant or page; navigation only.
+Shared look: `.seg`, `.chip`, `.avatar`, `.filter-chip`, `.cap`, `.status-pill`, `--shadow` tokens, all in `globals.css`; `lib/people.ts` has `initials`/`nameOf`.
 
 ### 10. Observability
 Every request gets an access-log line via middleware (caller from `x-forwarded-email`, status, timing). `DbxError` is mapped to the upstream status by an exception handler. `/api/health` returns `{ok, auth_mode}`. Interactive API docs at `/api/docs`.
@@ -144,7 +151,7 @@ chats.py         per-user saved conversations (Delta)
 store.py         run SQL as the app identity (warehouse selection)
 logsink.py       durable problem log (Delta)   logbuf.py  in-memory log ring
 files.py         UC volume upload / download
-llm.py           foundation-model switch, model list, real spend
+llm.py           real model-serving spend (system.billing)
 audit.py         activity log from system.access.audit
 builder.py       Supervisor Agent create/edit/delete
 knowledge.py     Knowledge Assistant create/edit/delete (document folders as sources)
@@ -152,7 +159,7 @@ genie.py         Genie space create/edit/delete + sharing (+ optional chat wrapp
 dashboard.py     per-person activity and estimated cost, from the chat table
 sync_agents.py   CLI: Agent Bricks metadata -> endpoint tags
 test_adapters.py, test_builder.py, test_genie.py, test_knowledge.py, test_dashboard.py, smoke.sh   tests
-ui/              Next.js 14 + React 18 + Tailwind 3 + Radix Tabs + react-markdown (components/, lib/api.ts, lib/tiers.ts)
+ui/              Next.js 14 + React 18 + Tailwind 3 + Radix Tabs + react-markdown (components/, lib/api.ts)
 web/             built static export that FastAPI serves (committed)
 app.yaml, update-scopes.json   Databricks Apps manifest and user-API scopes
 ```

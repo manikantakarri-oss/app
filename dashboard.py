@@ -26,6 +26,7 @@ an estimate everywhere it appears.
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import chats
 import llm
@@ -169,6 +170,133 @@ def everyone(days, names: dict | None = None) -> dict:
         for r in rows
     ]
     return {"enabled": True, "days": days, "note": "", "people": people}
+
+
+FILES_LIMIT = 40
+
+
+def insights(user: str, days, names: dict | None = None) -> dict:
+    """The rest of one person's own dashboard: when they work, and their files.
+
+    Only ever called with the caller's own name (from their token). Hours come
+    back as UTC hour buckets so the browser can place them in the viewer's own
+    time zone. Files are read from the message metadata the chat route saved:
+    names the person attached, and the files assistants handed back (with their
+    volume path, so they can be downloaded again through `/api/download`, which
+    still checks the agent's output location and the caller's access).
+    """
+    days = period(days)
+    if not chats.enabled():
+        return {**_off(days), "hours": [], "files": []}
+    names = names or {}
+    chats.ensure_table()
+    cte = _cte(days, True)
+    p = [_p("u", user)]
+    hours = store.run(
+        cte + "SELECT date_format(created_at, \"yyyy-MM-dd'T'HH:00:00'Z'\"), count_if(role = 'user') FROM m "
+        "GROUP BY 1 HAVING count_if(role = 'user') > 0",
+        p,
+    )
+    # json.dumps writes `"files": ["` / `"attachments": [{` only when the list is
+    # non-empty, so these filters skip the many messages that carried no file.
+    rows = store.run(
+        cte + "SELECT role, endpoint, conversation_id, meta, "
+        "date_format(created_at, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") FROM m "
+        "WHERE (role = 'assistant' AND meta LIKE '%\"attachments\": [{%') "
+        "OR (role = 'user' AND meta LIKE '%\"files\": [\"%') "
+        "ORDER BY created_at DESC LIMIT " + str(FILES_LIMIT),
+        p,
+    )
+    files = []
+    for role, ep, cid, meta, at in rows:
+        try:
+            m = json.loads(meta or "{}")
+        except (TypeError, ValueError):
+            continue
+        label = _pretty(ep, names)
+        if role == "assistant":
+            for a in m.get("attachments") or []:
+                path = (a or {}).get("path") or ""
+                if path:
+                    files.append({"direction": "received", "name": a.get("name") or path.rsplit("/", 1)[-1],
+                                  "path": path, "endpoint": ep, "label": label, "at": at or "", "conversation_id": cid})
+        else:
+            for n in m.get("files") or []:
+                if isinstance(n, str) and n:
+                    files.append({"direction": "sent", "name": n.rsplit("/", 1)[-1], "path": "",
+                                  "endpoint": ep, "label": label, "at": at or "", "conversation_id": cid})
+    # Agents often list the person's own upload among their "attachments" (seen
+    # live with an Agent Bricks supervisor), which is not a file they got back.
+    # Drop received entries that echo a file sent in the same conversation, and
+    # repeats of one path - the newest copy is kept, as rows are newest first.
+    sent = {(f["conversation_id"], f["name"]) for f in files if f["direction"] == "sent"}
+    seen: set = set()
+    kept = []
+    for f in files:
+        if f["direction"] == "received":
+            if (f["conversation_id"], f["name"]) in sent or f["path"] in seen:
+                continue
+            seen.add(f["path"])
+        kept.append(f)
+    return {
+        "enabled": True,
+        "days": days,
+        "note": "",
+        "hours": [{"hour": r[0], "questions": _num(r[1])} for r in hours if r[0]],
+        "files": kept[:FILES_LIMIT],
+    }
+
+
+def org(days, names: dict | None = None) -> dict:
+    """Adoption across the portal, for admins. Counts only; nothing anyone typed."""
+    days = period(days)
+    if not chats.enabled():
+        return {**_off(days), "per_day": [], "assistants": []}
+    names = names or {}
+    chats.ensure_table()
+    cte = _cte(days, False)
+    active = "count(DISTINCT CASE WHEN role = 'user' THEN user_name END)"
+    tot = store.run(cte + "SELECT " + active + ", count_if(role = 'user'), count(DISTINCT conversation_id), "
+                    "count(DISTINCT endpoint) FROM m")
+    row = (tot or [[0, 0, 0, 0]])[0]
+    prev = store.run(_cte(days, False, before=days) + "SELECT " + active + ", count_if(role = 'user') FROM m")
+    prow = (prev or [[0, 0]])[0]
+    # First message ever inside this window. Bounded by chat retention, so "new"
+    # means "first seen since history began", which the UI says.
+    new = store.run(
+        "SELECT count(*) FROM (SELECT user_name, min(created_at) AS f FROM " + chats.QUALIFIED + " "
+        "WHERE role = 'user' GROUP BY user_name) WHERE f >= current_timestamp() - INTERVAL " + str(days) + " DAYS"
+    )
+    by_day = store.run(cte + "SELECT date_format(created_at, 'yyyy-MM-dd'), count_if(role = 'user'), " + active +
+                       " FROM m GROUP BY 1")
+    by_ep = store.run(
+        cte + "SELECT endpoint, count_if(role = 'user'), count(DISTINCT user_name), "
+        "date_format(max(created_at), \"yyyy-MM-dd'T'HH:mm:ss'Z'\") FROM m "
+        "GROUP BY endpoint HAVING count_if(role = 'user') > 0 ORDER BY 2 DESC LIMIT 50"
+    )
+    have = {r[0]: (_num(r[1]), _num(r[2])) for r in by_day}
+    today = dt.date.today()
+    per_day = []
+    for i in range(days - 1, -1, -1):
+        d = (today - dt.timedelta(days=i)).isoformat()
+        q, a = have.get(d, (0, 0))
+        per_day.append({"day": d, "questions": q, "people": a})
+    return {
+        "enabled": True,
+        "days": days,
+        "note": "",
+        "people": _num(row[0]),
+        "questions": _num(row[1]),
+        "conversations": _num(row[2]),
+        "assistants": _num(row[3]),
+        "new_people": _num((new or [[0]])[0][0]),
+        "previous": {"people": _num(prow[0]), "questions": _num(prow[1])},
+        "per_day": per_day,
+        "assistants_used": [
+            {"name": r[0], "label": _pretty(r[0], names), "questions": _num(r[1]), "people": _num(r[2]), "last_used": r[3] or ""}
+            for r in by_ep
+        ],
+    }
 
 
 def costs(days, admin_tok: str, names: dict | None = None) -> dict:

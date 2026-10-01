@@ -108,6 +108,36 @@ export type PersonRow = {
   last_active: string;
 };
 export type CostRow = { user: string; est_usd: number; questions: number };
+export type FileItem = {
+  direction: "sent" | "received";
+  name: string;
+  path: string;
+  endpoint: string;
+  label: string;
+  at: string;
+  conversation_id: string;
+};
+export type Insights = {
+  enabled: boolean;
+  days: number;
+  note: string;
+  /** UTC hour buckets ("2026-10-01T09:00:00Z") with questions asked in each. */
+  hours: { hour: string; questions: number }[];
+  files: FileItem[];
+};
+export type OrgOverview = {
+  enabled: boolean;
+  days: number;
+  note: string;
+  people: number;
+  questions: number;
+  conversations: number;
+  assistants: number;
+  new_people: number;
+  previous: { people: number; questions: number };
+  per_day: { day: string; questions: number; people: number }[];
+  assistants_used: { name: string; label: string; questions: number; people: number; last_used: string }[];
+};
 
 export type KnowledgeSource = { volume: string; subfolder: string; name: string; description: string };
 export type KnowledgeSpec = {
@@ -191,8 +221,6 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
 export const api = {
   session: () => request<Session>("/api/session"),
   agents: () => request<{ agents: Agent[] }>("/api/agents"),
-  models: () =>
-    request<{ enabled: boolean; allowed: boolean; reason: string; models: Agent[] }>("/api/models"),
   chat: (
     endpoint: string,
     history: { role: string; content: string }[],
@@ -223,6 +251,8 @@ export const api = {
       level,
     }),
   dashMe: (days: number) => request<Activity>(`/api/dashboard/me?days=${days}`),
+  dashInsights: (days: number) => request<Insights>(`/api/dashboard/me/insights?days=${days}`),
+  dashOrg: (days: number) => request<OrgOverview>(`/api/admin/dashboard/overview?days=${days}`),
   dashPeople: (days: number) =>
     request<{ enabled: boolean; note: string; people: PersonRow[] }>(`/api/admin/dashboard/people?days=${days}`),
   dashPerson: (user: string, days: number) =>
@@ -296,15 +326,6 @@ export const api = {
     send<{ agent_id: string; acted_as: string; warnings: string[] }>("PUT", `/api/admin/builder/agents/${id}`, spec),
   builderDelete: (id: string) => send<{ deleted: string }>("DELETE", `/api/admin/builder/agents/${id}`),
   meta: (payload: Record<string, string>) => request<unknown>("/api/admin/meta", payload),
-  llmState: () =>
-    request<{
-      enabled: boolean;
-      group: string;
-      group_id: string | null;
-      members: string[];
-      members_visible?: boolean;
-    }>("/api/admin/llm"),
-  llmSet: (payload: Record<string, unknown>) => request<unknown>("/api/admin/llm", payload),
   logs: (days: number) => request<LogsResult>(`/api/admin/logs?days=${days}`),
   cost: (days: number) =>
     request<{

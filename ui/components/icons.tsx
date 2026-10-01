@@ -151,6 +151,103 @@ export const ArrowUpRightIcon = ({ size }: P) => (
   </Svg>
 );
 
+/** Four tiles: the assistants home. */
+export const GridIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <rect x="4" y="4" width="7" height="7" rx="2" />
+    <rect x="13" y="4" width="7" height="7" rx="2" />
+    <rect x="4" y="13" width="7" height="7" rx="2" />
+    <rect x="13" y="13" width="7" height="7" rx="2" />
+  </Svg>
+);
+
+/** Rising bars: the dashboard. */
+export const ChartIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M4 20h16" />
+    <path d="M7 16v-4M12 16V8M17 16v-7" />
+  </Svg>
+);
+
+/** A wand with a spark: create an assistant. */
+export const WandIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="m4 20 11-11" />
+    <path d="m13.5 7.5 3 3" />
+    <path d="M18 3v3M16.5 4.5h3M20 9.5v2M19 10.5h2M9.5 3.5v2M8.5 4.5h2" />
+  </Svg>
+);
+
+/** A shield: the admin console. */
+export const ShieldIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M12 3.5 19 6v5.5c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z" />
+    <path d="m9 12 2 2 4-4" />
+  </Svg>
+);
+
+/** Stacked layers: an assistant that combines several tools. */
+export const LayersIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="m12 4 8.5 4.5L12 13 3.5 8.5z" />
+    <path d="m3.5 12.5 8.5 4.5 8.5-4.5" />
+    <path d="m3.5 16.5 8.5 4.5 8.5-4.5" />
+  </Svg>
+);
+
+/** An open book: answers from documents. */
+export const BookIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M12 6.5C10.5 5 8 4.5 4 4.5v13c4 0 6.5.5 8 2 1.5-1.5 4-2 8-2v-13c-4 0-6.5.5-8 2z" />
+    <path d="M12 6.5v13" />
+  </Svg>
+);
+
+/** Three lines with a handle: open the menu on small screens. */
+export const MenuIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Svg>
+);
+
+export const PlusIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M12 5v14M5 12h14" />
+  </Svg>
+);
+
+export const CloseIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </Svg>
+);
+
+export const ChevronRightIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="m9.5 6 6 6-6 6" />
+  </Svg>
+);
+
+export const ClockIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 8v4l2.5 2" />
+  </Svg>
+);
+
+export const FileIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3.5V8h4.5" />
+  </Svg>
+);
+
+export const ArrowRightIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </Svg>
+);
+
 export const ArrowDownRightIcon = ({ size }: P) => (
   <Svg size={size}>
     <path d="M7 7l10 10M17 8v9H8" />

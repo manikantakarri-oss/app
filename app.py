@@ -139,18 +139,10 @@ def agents(x_forwarded_access_token: str = Header(None)):
 
 
 def _allowed_agent(who: dict, endpoint: str, user_tok: str = "") -> dict:
-    """The agent record, or 403. Needed because the task drives the wire format.
-
-    Foundation models are checked too: they carry no ACL of their own, so the
-    portal's group switch is the only thing gating them here.
-    """
+    """The agent record, or 403. Needed because the task drives the wire format."""
     for a in access.visible_agents(who, app_token(), user_tok):
         if a["name"] == endpoint:
             return a
-    if user_tok:
-        for m in llm.visible_models(who, app_token(), user_tok).get("models", []):
-            if m["name"] == endpoint:
-                return m
     raise HTTPException(403, "You do not have access to that agent.")
 
 
@@ -476,6 +468,21 @@ def dashboard_me(days: int = 30, x_forwarded_access_token: str = Header(None)):
     return dashboard.activity(who["user_name"], days, _names(app_token()))
 
 
+@app.get("/api/dashboard/me/insights")
+def dashboard_me_insights(days: int = 30, x_forwarded_access_token: str = Header(None)):
+    """When the signed-in person uses the assistants, and their files. Own data only:
+    the name comes from their token, never from the request."""
+    who, _ = _who(x_forwarded_access_token)
+    return dashboard.insights(who["user_name"], days, _names(app_token()))
+
+
+@app.get("/api/admin/dashboard/overview")
+def dashboard_overview(days: int = 30, x_forwarded_access_token: str = Header(None)):
+    """Adoption across the portal: active and new people, use per assistant. Counts only."""
+    _require_admin(x_forwarded_access_token)
+    return dashboard.org(days, _names(app_token()))
+
+
 @app.get("/api/admin/dashboard/people")
 def dashboard_people(days: int = 30, x_forwarded_access_token: str = Header(None)):
     _require_admin(x_forwarded_access_token)
@@ -541,35 +548,6 @@ def knowledge_update(ka_id: str, payload: dict = Body(...), x_forwarded_access_t
 def knowledge_delete(ka_id: str, x_forwarded_access_token: str = Header(None)):
     _, tok = _require_admin(x_forwarded_access_token)
     return knowledge.delete_assistant(ka_id, tok)
-
-
-@app.get("/api/models")
-def chat_models(x_forwarded_access_token: str = Header(None)):
-    """Foundation models offered as plain chat assistants."""
-    who, tok = _who(x_forwarded_access_token)
-    return llm.visible_models(who, app_token(), tok)
-
-
-@app.get("/api/admin/llm")
-def llm_state(x_forwarded_access_token: str = Header(None)):
-    _require_admin(x_forwarded_access_token)
-    state = llm.group_state(app_token())
-    return {**state, "group": llm.LLM_GROUP}
-
-
-@app.post("/api/admin/llm")
-def llm_set(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
-    """Turn model access on or off, and set who gets it."""
-    _require_admin(x_forwarded_access_token)
-    tok = app_token()
-    if "enabled" in payload:
-        state = llm.set_enabled(bool(payload["enabled"]), tok)
-    else:
-        state = llm.group_state(tok)
-    if state["enabled"] and isinstance(payload.get("users"), list):
-        users = [u.strip() for u in payload["users"] if isinstance(u, str) and u.strip()]
-        access.set_group_members(state["group_id"], users, tok)
-    return {**llm.group_state(tok), "group": llm.LLM_GROUP}
 
 
 @app.get("/api/admin/cost")

@@ -2,7 +2,8 @@
 
 Shared by the problem log (`logsink`) and saved conversations (`chats`). The
 app's service principal needs CAN_USE on a warehouse; PORTAL_LOG_WAREHOUSE pins
-one, otherwise the first (preferring a running one) is used.
+one, otherwise the first (preferring a running one) is used, so the same
+app.yaml works in any workspace. Schema and tables are created on first use.
 """
 from __future__ import annotations
 
@@ -35,6 +36,21 @@ def run(statement: str, params: list | None = None) -> list:
     if status.get("state") in ("FAILED", "CANCELED", "CLOSED"):
         raise DbxError(str((status.get("error") or {}).get("message") or status["state"])[:300], 502)
     return (data.get("result") or {}).get("data_array") or []
+
+
+def ensure_schema(qualified_table: str, runner=None) -> None:
+    """Create the table's schema if it is missing, so a new workspace needs only a catalog.
+
+    Best effort: if the service principal lacks CREATE SCHEMA but the schema
+    already exists, the CREATE TABLE that follows still works, and if it does
+    not exist that statement fails with the real reason. `runner` lets callers
+    pass their own (patchable) runner.
+    """
+    schema = qualified_table.rsplit(".", 1)[0]
+    try:
+        (runner or run)("CREATE SCHEMA IF NOT EXISTS " + schema)
+    except DbxError:
+        pass
 
 
 def _first_warehouse(tok: str) -> str:

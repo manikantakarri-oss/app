@@ -123,7 +123,13 @@ def _cli_user_token() -> str:
     tok = data.get("access_token")
     if not tok:
         raise DbxError("could not obtain a CLI token; run `databricks auth login`")
-    _cli_token = (tok, time.time() + 1800)
+    # The CLI hands back its own cached token, which may be minutes from expiry,
+    # so trust what it says rather than assuming a fresh half hour.
+    try:
+        life = min(1800.0, float(data.get("expires_in") or 1800))
+    except (TypeError, ValueError):
+        life = 1800.0
+    _cli_token = (tok, time.time() + life)
     return tok
 
 

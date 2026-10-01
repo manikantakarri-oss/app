@@ -47,10 +47,6 @@ run "task exposed"        'task'               "$B/api/agents"
 run "kind exposed"        'kind_label'         "$B/api/agents"
 run "file capability flag" 'supports_files'    "$B/api/agents"
 
-# foundation models. The switch is a Databricks group, so these reflect real
-# workspace state: "enabled" tells you whether portal-llm-users exists.
-run "models endpoint"     'enabled'            "$B/api/models"
-run "llm switch state"    'portal-llm-users'   "$B/api/admin/llm"
 run "cost panel"          'available'          "$B/api/admin/cost?days=7"
 # Activity log reads Databricks' own audit records and renders them as
 # sentences; check the endpoint answers and that filtering is honoured.

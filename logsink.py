@@ -70,6 +70,7 @@ def ensure_table() -> None:
     with _ready_lock:
         if _ready:
             return
+        store.ensure_schema(QUALIFIED, _run)
         _run(
             "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
             "logged_at TIMESTAMP, level STRING, source STRING, actor STRING, "

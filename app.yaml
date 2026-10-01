@@ -13,23 +13,24 @@ command:
   - --port
   - "8000"
 
-# Durable log of failed API calls, shown in the admin panel. Uncomment and set to
-# a catalog.schema.table the app's service principal can write to. The app
-# creates the table itself. Unset = logs are kept in memory only.
-#   The service principal needs: USE CATALOG, USE SCHEMA, CREATE TABLE on the
-#   schema (or pre-create the table and grant MODIFY + SELECT), and CAN_USE on a
-#   SQL warehouse. PORTAL_LOG_WAREHOUSE pins one; otherwise the first is used.
+# PER CLIENT: PORTAL_LOG_TABLE is the only line to change for a new workspace.
+# Point it at <an existing catalog>.agent_portal.portal_logs. The app creates
+# the schema and both tables itself on first use: portal_logs (the admin
+# Problems view) and portal_chats beside it (chat History and the dashboards).
+# Unset = no history, no dashboards, problem log kept in memory only.
 #
-# Saved conversations (the History button in chat) use a second table. By
-# default it is `portal_chats` in the same catalog and schema as the log table,
-# so nothing more is needed. To place it elsewhere, add PORTAL_CHAT_TABLE
-# (catalog.schema.table). PORTAL_CHAT_RETENTION_DAYS (default 180) sets how long
-# conversations are kept. With no log table and no chat table, history is off.
+# One-time grants for the app's service principal in that workspace:
+#   GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<sp-application-id>`;
+#   plus CAN_USE on any SQL warehouse.
+# If the schema already exists, grant USE SCHEMA + CREATE TABLE on it instead of
+# CREATE SCHEMA on the catalog.
+#
+# Optional: PORTAL_LOG_WAREHOUSE pins a warehouse id (otherwise a running one the
+# service principal can use is picked), PORTAL_CHAT_TABLE puts chats elsewhere,
+# PORTAL_CHAT_RETENTION_DAYS (default 180) sets how long chats are kept.
 env:
   - name: PORTAL_LOG_TABLE
-    value: mcp-test.mcp-test-schema.portal_logs
-  - name: PORTAL_LOG_WAREHOUSE
-    value: a21962cab375c9cc
+    value: databrickspoc.agent_builder.portal_logs
 
 # Scopes requested on behalf of the signed-in user.
 #

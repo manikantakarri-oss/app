@@ -1,18 +1,37 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { Agent, api, Session } from "@/lib/api";
-import { AgentCard } from "@/components/AgentCard";
-import { ModelChoice } from "@/components/ModelChoice";
+import { Agent, api, SavedChat, Session } from "@/lib/api";
+import { kindMeta } from "@/components/AgentCard";
 import { Chat } from "@/components/Chat";
 import { Admin } from "@/components/Admin";
 import { Builder } from "@/components/Builder";
 import { Dashboard } from "@/components/Dashboard";
-import { Empty, ErrorBox, SectionHead, Spinner } from "@/components/bits";
+import { Home, whenAgo } from "@/components/Home";
+import { Page as SwitcherPage, QuickSwitcher } from "@/components/QuickSwitcher";
+import { ErrorBox, Spinner } from "@/components/bits";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { SparkleIcon } from "@/components/icons";
+import {
+  ChartIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  GridIcon,
+  MenuIcon,
+  SearchIcon,
+  ShieldIcon,
+  SparkleIcon,
+  WandIcon,
+} from "@/components/icons";
 import { initials, nameOf } from "@/lib/people";
+
+const TITLES: Record<string, string> = {
+  agents: "Assistants",
+  dashboard: "My dashboard",
+  build: "Create an assistant",
+  admin: "Admin console",
+};
 
 export default function Page() {
   const [session, setSession] = useState<Session | null>(null);
@@ -20,27 +39,44 @@ export default function Page() {
 
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [agentsErr, setAgentsErr] = useState("");
-
-  const [models, setModels] = useState<Agent[] | null>(null);
-  const [modelsNote, setModelsNote] = useState("");
-  const [modelsOffered, setModelsOffered] = useState(false);
+  const [recents, setRecents] = useState<SavedChat[] | null>(null);
 
   const [open, setOpen] = useState<Agent | null>(null);
+  const [resumeId, setResumeId] = useState("");
   const [tab, setTab] = useState("agents");
-  const [find, setFind] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+  const [drawer, setDrawer] = useState(false);
+  const [switcher, setSwitcher] = useState(false);
+  const [mac, setMac] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
 
   // Tabs are reflected in the URL so a section can be linked to and survives
   // a refresh.
   useEffect(() => {
     const want = window.location.hash.replace("#", "");
-    if (want === "models" || want === "admin" || want === "build" || want === "dashboard") setTab(want);
+    if (want === "admin" || want === "build" || want === "dashboard") setTab(want);
+    try {
+      setCollapsed(localStorage.getItem("agent-portal-nav-collapsed") === "1");
+    } catch {
+      // Blocked storage just means the menu opens expanded each visit.
+    }
+    setMac(/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent));
   }, []);
 
   function pickTab(next: string) {
     setTab(next);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", next === "agents" ? "#" : "#" + next);
+    }
+  }
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem("agent-portal-nav-collapsed", next ? "1" : "0");
+    } catch {
+      // Only a preference; it resets on the next visit.
     }
   }
 
@@ -57,15 +93,21 @@ export default function Page() {
       .agents()
       .then((d) => setAgents(d.agents))
       .catch((e) => setAgentsErr(e.message));
-    api
-      .models()
-      .then((d) => {
-        setModelsOffered(d.allowed);
-        setModels(d.models);
-        setModelsNote(d.reason || "");
-      })
-      .catch(() => setModelsOffered(false));
   }, [session]);
+
+  // Recent conversations, across every assistant. Refreshed whenever a chat is
+  // closed so what was just said shows up straight away.
+  const loadRecents = useCallback(() => {
+    if (!session?.chat_history) return;
+    api
+      .chats("")
+      .then((r) => setRecents(r.chats))
+      .catch(() => setRecents([]));
+  }, [session]);
+
+  useEffect(() => {
+    if (!open) loadRecents();
+  }, [open, loadRecents]);
 
   useEffect(() => {
     const el = headerRef.current;
@@ -77,199 +119,379 @@ export default function Page() {
     return () => ro.disconnect();
   }, [session]);
 
+  // Ctrl/Cmd + K opens the quick switcher from anywhere.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSwitcher((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const pages = useMemo<SwitcherPage[]>(() => {
+    const p: SwitcherPage[] = [
+      { value: "agents", label: "Assistants", icon: <GridIcon size={18} /> },
+      { value: "dashboard", label: "My dashboard", icon: <ChartIcon size={18} /> },
+    ];
+    if (session?.is_admin) {
+      p.push({ value: "build", label: "Create an assistant", icon: <WandIcon size={18} /> });
+      p.push({ value: "admin", label: "Admin console", icon: <ShieldIcon size={18} /> });
+    }
+    return p;
+  }, [session]);
+
+  function openAgent(a: Agent) {
+    setResumeId("");
+    setOpen(a);
+    setDrawer(false);
+  }
+
+  function resumeChat(a: Agent, id: string) {
+    setResumeId(id);
+    setOpen(a);
+    setDrawer(false);
+  }
+
+  function goPage(v: string) {
+    setOpen(null);
+    setDrawer(false);
+    pickTab(v);
+  }
+
   if (fatal) {
     return (
-      <Main>
-        <div className="mt-10">
+      <Splash>
+        <div className="w-full max-w-md">
           <ErrorBox>{fatal}</ErrorBox>
         </div>
-      </Main>
+      </Splash>
     );
   }
 
   if (!session) {
     return (
-      <Main>
-        <div className="mt-10">
-          <Spinner label="Signing you in…" />
-        </div>
-      </Main>
+      <Splash>
+        <Spinner label="Signing you in…" />
+      </Splash>
     );
   }
+
+  // During a conversation the menu folds to its icon rail on wide screens, so
+  // the chat and its own history list get the room.
+  const rail = collapsed || !!open;
+  const byName = new Map((agents || []).map((a) => [a.name, a]));
+  const sideRecents = (recents || []).filter((c) => byName.get(c.endpoint)?.ready).slice(0, 6);
+  const shortName = session.display_name.includes("@") ? nameOf(session.display_name) : session.display_name;
+  const role = (session.is_admin ? "Administrator" : "Member") + (session.auth_mode === "local-dev" ? " · local" : "");
 
   return (
     <Tabs.Root
       value={tab}
+      orientation="vertical"
       onValueChange={(v) => {
-        // Navigating always leaves an open chat, so the bar works from anywhere.
+        // Navigating always leaves an open chat, so the menu works from anywhere.
         setOpen(null);
+        setDrawer(false);
         pickTab(v);
       }}
     >
-      <header ref={headerRef} className="app-header sticky top-0 z-20 flex flex-wrap items-center gap-x-6 px-5 lg:px-10">
-        <div className="flex h-16 items-center gap-3">
-          <span className="logo-mark" aria-hidden>
-            <SparkleIcon size={20} />
-          </span>
-          <span className="text-[17px] font-semibold tracking-[-0.02em]">Agent Portal</span>
-        </div>
+      <div className="flex min-h-dvh">
+        {/* Phone: dim the page behind the open menu. */}
+        {drawer ? (
+          <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setDrawer(false)} aria-hidden />
+        ) : null}
 
-        <nav
-          className="order-last -mx-5 w-full overflow-x-auto px-5 [scrollbar-width:none] lg:order-none lg:mx-0 lg:w-auto lg:flex-1 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden"
-          aria-label="Main"
+        <aside
+          className={`side fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col transition-[width,transform] duration-200 lg:sticky lg:top-0 lg:z-30 lg:h-dvh lg:translate-x-0 ${
+            drawer ? "translate-x-0" : "-translate-x-full"
+          } ${rail ? "lg:w-[76px]" : "lg:w-[264px]"}`}
+          aria-label="Main menu"
         >
-          <Tabs.List className="flex" aria-label="Sections">
-            <TabButton value="agents">Your assistants</TabButton>
-            <TabButton value="dashboard">My dashboard</TabButton>
-            {modelsOffered ? <TabButton value="models">General assistant</TabButton> : null}
-            {session.is_admin ? <TabButton value="build">Create an assistant</TabButton> : null}
-            {session.is_admin ? <TabButton value="admin">Admin</TabButton> : null}
-          </Tabs.List>
-        </nav>
-
-        <div className="ml-auto flex h-16 items-center gap-3 lg:ml-0">
-          <div className="flex items-center gap-3" title={session.user_name}>
-            <span className="avatar" aria-hidden>
-              {initials(session.display_name)}
-            </span>
-            <span className="hidden min-w-0 leading-tight md:block">
-              <span className="block max-w-[220px] truncate text-sm font-semibold">
-                {session.display_name.includes("@") ? nameOf(session.display_name) : session.display_name}
+          {/* Brand */}
+          <div className={`flex h-16 shrink-0 items-center gap-3 px-5 ${rail ? "lg:justify-center lg:px-0" : ""}`}>
+            <button type="button" className="flex min-w-0 items-center gap-3" onClick={() => goPage("agents")} title="Agent Portal home">
+              <span className="side-mark" aria-hidden>
+                <SparkleIcon size={20} />
               </span>
-              <span className="block text-xs faint">
-                {session.is_admin ? "Administrator" : "Member"}
-                {session.auth_mode === "local-dev" ? " · local" : ""}
+              <span className={`min-w-0 text-left leading-tight ${rail ? "lg:hidden" : ""}`}>
+                <span className="block text-[15px] font-semibold tracking-[-0.01em]">Agent Portal</span>
+                <span className="block truncate text-[12px]" style={{ color: "var(--side-faint)" }}>
+                  AI assistants for your team
+                </span>
               </span>
-            </span>
+            </button>
+            <button
+              type="button"
+              className="side-icon-btn ml-auto lg:hidden"
+              onClick={() => setDrawer(false)}
+              aria-label="Close menu"
+            >
+              <CloseIcon />
+            </button>
           </div>
-          <ThemeToggle />
-        </div>
-      </header>
 
-      <Main wide={!!open}>
-        {open ? (
-          <Chat
-            agent={open}
-            agents={agents || []}
-            historyEnabled={session.chat_history}
-            models={models || []}
-            onBack={() => setOpen(null)}
-            onSwitch={setOpen}
-          />
-        ) : (
-          <>
-            <Tabs.Content value="agents">
-              <div className="mb-6">
-                <h1 className="text-2xl font-semibold tracking-tight">
-                  Hi {firstName(session.display_name)}, how can we help today?
-                </h1>
-                <p className="mt-1.5 text-[15px] muted">
-                  Choose an assistant below, then type your question the way you would ask a
-                  colleague.
-                </p>
+          <div className={`px-3 ${rail ? "lg:px-[18px]" : ""}`}>
+            <button
+              type="button"
+              className={`side-search ${rail ? "lg:justify-center lg:px-0" : ""}`}
+              onClick={() => setSwitcher(true)}
+              title="Search assistants and pages"
+            >
+              <SearchIcon size={18} />
+              <span className={`flex-1 ${rail ? "lg:hidden" : ""}`}>Search</span>
+              <span className={`kbd hidden ${rail ? "" : "lg:inline-flex"}`}>{mac ? "⌘K" : "Ctrl K"}</span>
+            </button>
+          </div>
+
+          <nav className="mt-2 min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4 [scrollbar-width:thin]">
+            <Tabs.List aria-label="Sections" className="flex flex-col gap-0.5">
+              <p className={`side-label ${rail ? "lg:sr-only" : ""}`}>Workspace</p>
+              <NavItem value="agents" icon={<GridIcon />} label="Assistants" rail={rail} count={agents?.length} />
+              <NavItem value="dashboard" icon={<ChartIcon />} label="My dashboard" rail={rail} />
+              {session.is_admin ? (
+                <>
+                  <p className={`side-label ${rail ? "lg:sr-only" : ""}`}>Manage</p>
+                  <NavItem value="build" icon={<WandIcon />} label="Create an assistant" rail={rail} />
+                  <NavItem value="admin" icon={<ShieldIcon />} label="Admin console" rail={rail} />
+                </>
+              ) : null}
+            </Tabs.List>
+
+            {sideRecents.length ? (
+              <div className={rail ? "lg:hidden" : ""}>
+                <p className="side-label">Recent</p>
+                <ul className="flex flex-col gap-0.5">
+                  {sideRecents.map((c) => {
+                    const a = byName.get(c.endpoint)!;
+                    return (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          className="side-recent"
+                          onClick={() => resumeChat(a, c.id)}
+                          title={`${c.title} · ${a.display_name}`}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate" style={{ color: "var(--side-ink)" }}>
+                              {c.title || "Untitled conversation"}
+                            </span>
+                            <span className="block truncate text-[12px]" style={{ color: "var(--side-faint)" }}>
+                              {a.display_name} · {whenAgo(c.updated)}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-              <ErrorBox>{agentsErr}</ErrorBox>
-              {agents === null ? (
-                <Spinner label="Loading your assistants…" />
-              ) : agents.length === 0 ? (
-                <Empty
-                  title="You do not have any assistants yet"
-                  hint="An admin needs to give you access before anything appears here."
-                />
+            ) : null}
+          </nav>
+
+          {/* Who is signed in, and the fold control */}
+          <div className="shrink-0 border-t p-3" style={{ borderColor: "var(--side-line)" }}>
+            <div className={`flex items-center gap-3 rounded-lg p-1.5 ${rail ? "lg:flex-col lg:gap-2 lg:p-0" : ""}`} title={session.user_name}>
+              <span
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold"
+                style={{ background: "linear-gradient(135deg, #2ecfc7, #058ea8)", color: "#fff" }}
+                aria-hidden
+              >
+                {initials(session.display_name)}
+              </span>
+              <span className={`min-w-0 flex-1 leading-tight ${rail ? "lg:hidden" : ""}`}>
+                <span className="block truncate text-sm font-semibold">{shortName}</span>
+                <span className="block truncate text-[12px]" style={{ color: "var(--side-faint)" }}>
+                  {role}
+                </span>
+              </span>
+              {!open ? (
+                <button
+                  type="button"
+                  className="side-icon-btn hidden lg:inline-flex"
+                  onClick={toggleCollapsed}
+                  title={collapsed ? "Expand menu" : "Collapse menu"}
+                  aria-label={collapsed ? "Expand menu" : "Collapse menu"}
+                  aria-expanded={!collapsed}
+                >
+                  {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header ref={headerRef} className="topbar sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 px-4 lg:px-8">
+            <button
+              type="button"
+              className="icon-btn lg:hidden"
+              onClick={() => setDrawer(true)}
+              aria-label="Open menu"
+              aria-expanded={drawer}
+            >
+              <MenuIcon />
+            </button>
+            <nav aria-label="You are here" className="flex min-w-0 items-center gap-2 text-sm">
+              {open ? (
+                <>
+                  <button type="button" className="shrink-0 muted hover:underline" onClick={() => setOpen(null)}>
+                    Assistants
+                  </button>
+                  <span className="faint" aria-hidden>
+                    <ChevronRightIcon size={14} />
+                  </span>
+                  <span className="flex min-w-0 items-center gap-2 font-semibold">
+                    <span className={`kind-tile !h-6 !w-6 !rounded-md [&_svg]:h-3.5 [&_svg]:w-3.5 ${kindMeta(open.kind).cls}`} aria-hidden>
+                      {kindMeta(open.kind).icon}
+                    </span>
+                    <span className="truncate">{open.display_name}</span>
+                  </span>
+                </>
               ) : (
                 <>
-                  {agents.length > 6 ? (
-                    <input
-                      className="field mb-4 max-w-md"
-                      type="search"
-                      value={find}
-                      onChange={(e) => setFind(e.target.value)}
-                      placeholder="Search your assistants"
-                      aria-label="Search your assistants"
-                    />
-                  ) : null}
-                  {(() => {
-                    const q = find.trim().toLowerCase();
-                    const shown = agents.filter(
-                      (a) =>
-                        !q ||
-                        a.display_name.toLowerCase().includes(q) ||
-                        (a.blurb || "").toLowerCase().includes(q)
-                    );
-                    return shown.length === 0 ? (
-                      <p className="text-sm muted">No assistants match “{find}”.</p>
-                    ) : (
-                      <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-                        {shown.map((a) => (
-                          <AgentCard key={a.name} agent={a} onOpen={setOpen} />
-                        ))}
-                      </div>
-                    );
-                  })()}
+                  <span className="hidden shrink-0 muted sm:inline">Agent Portal</span>
+                  <span className="hidden faint sm:inline" aria-hidden>
+                    <ChevronRightIcon size={14} />
+                  </span>
+                  <span className="truncate font-semibold">{TITLES[tab]}</span>
                 </>
               )}
-            </Tabs.Content>
+            </nav>
+            <div className="ml-auto flex items-center gap-1.5">
+              <button
+                type="button"
+                className="btn btn-quiet hidden !min-h-[36px] !py-1 md:inline-flex"
+                onClick={() => setSwitcher(true)}
+              >
+                <SearchIcon size={16} />
+                <span className="text-[13px]">Search</span>
+                <span className="kbd">{mac ? "⌘K" : "Ctrl K"}</span>
+              </button>
+              <button type="button" className="icon-btn md:hidden" onClick={() => setSwitcher(true)} aria-label="Search">
+                <SearchIcon />
+              </button>
+              <ThemeToggle />
+            </div>
+          </header>
 
-            <Tabs.Content value="dashboard">
-              <Dashboard isAdmin={session.is_admin} />
-            </Tabs.Content>
+          <main className={open ? "w-full" : "mx-auto w-full max-w-[1440px] px-4 pb-20 pt-6 sm:px-6 lg:px-10 lg:pt-8"}>
+            {open ? (
+              <Chat
+                agent={open}
+                agents={agents || []}
+                historyEnabled={session.chat_history}
+                resumeId={resumeId}
+                onBack={() => setOpen(null)}
+                onSwitch={openAgent}
+              />
+            ) : (
+              <>
+                <Tabs.Content value="agents" className="outline-none">
+                  <Home
+                    session={session}
+                    agents={agents}
+                    agentsErr={agentsErr}
+                    recents={session.chat_history ? recents : []}
+                    onOpen={openAgent}
+                    onResume={resumeChat}
+                  />
+                </Tabs.Content>
 
-            {modelsOffered ? (
-              <Tabs.Content value="models">
-                {models === null ? (
-                  <Spinner label="Loading…" />
-                ) : models.length === 0 ? (
-                  <Empty title="No models are available to you" hint={modelsNote} />
-                ) : (
-                  <ModelChoice models={models} onOpen={setOpen} />
-                )}
-              </Tabs.Content>
-            ) : null}
+                <Tabs.Content value="dashboard" className="outline-none">
+                  <Dashboard
+                    isAdmin={session.is_admin}
+                    onGoto={goPage}
+                    agents={agents || []}
+                    onOpen={openAgent}
+                    onResume={resumeChat}
+                  />
+                </Tabs.Content>
 
-            {session.is_admin ? (
-              <Tabs.Content value="build">
-                <Builder onGoto={pickTab} />
-              </Tabs.Content>
-            ) : null}
+                {session.is_admin ? (
+                  <Tabs.Content value="build" className="outline-none">
+                    <Builder onGoto={pickTab} />
+                  </Tabs.Content>
+                ) : null}
 
-            {session.is_admin ? (
-              <Tabs.Content value="admin">
-                <Admin />
-              </Tabs.Content>
-            ) : null}
-          </>
-        )}
-      </Main>
+                {session.is_admin ? (
+                  <Tabs.Content value="admin" className="outline-none">
+                    <PageHead
+                      eyebrow="Manage"
+                      title="Admin console"
+                      text="Who can use each assistant, what they cost, what has changed, and anything that went wrong."
+                    />
+                    <Admin />
+                  </Tabs.Content>
+                ) : null}
+              </>
+            )}
+          </main>
+        </div>
+      </div>
+
+      <QuickSwitcher
+        open={switcher}
+        onClose={() => setSwitcher(false)}
+        agents={agents || []}
+        pages={pages}
+        onAgent={openAgent}
+        onPage={goPage}
+      />
     </Tabs.Root>
   );
 }
 
-/** "Hi Soham" reads better than "Hi soham.kamtikar@databeat.io". */
-function firstName(display: string) {
-  const base = (display || "").split("@")[0].replace(/[._]/g, " ").trim();
-  const first = base.split(/\s+/)[0] || "there";
-  return first.charAt(0).toUpperCase() + first.slice(1);
-}
-
-function TabButton({ value, children }: { value: string; children: React.ReactNode }) {
+function NavItem({
+  value,
+  icon,
+  label,
+  rail,
+  count,
+}: {
+  value: string;
+  icon: ReactNode;
+  label: string;
+  rail: boolean;
+  count?: number;
+}) {
   return (
-    <Tabs.Trigger value={value} className="nav-tab">
-      {children}
+    <Tabs.Trigger value={value} className={`side-link ${rail ? "lg:justify-center lg:px-0" : ""}`} title={label}>
+      <span className="shrink-0">{icon}</span>
+      <span className={`flex-1 truncate ${rail ? "lg:sr-only" : ""}`}>{label}</span>
+      {count ? (
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${rail ? "lg:hidden" : ""}`}
+          style={{ background: "rgba(255,255,255,0.08)", color: "var(--side-dim)" }}
+        >
+          {count}
+        </span>
+      ) : null}
     </Tabs.Trigger>
   );
 }
 
-function Main({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
-  // A conversation gets the whole window, edge to edge; the card grids and admin
-  // pages stay in a centred column, where long lines would be hard to scan.
+function PageHead({ eyebrow, title, text }: { eyebrow: string; title: string; text: string }) {
   return (
-    <main
-      className={
-        wide
-          ? "w-full"
-          : "w-full px-5 pb-20 pt-8 lg:px-10"
-      }
-    >
+    <div className="mb-7">
+      <p className="text-[13px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--brand-deep)" }}>
+        {eyebrow}
+      </p>
+      <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.02em]">{title}</h1>
+      <p className="mt-1.5 max-w-2xl text-[15px] muted">{text}</p>
+    </div>
+  );
+}
+
+function Splash({ children }: { children: ReactNode }) {
+  return (
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-4">
+      <span className="side-mark !h-12 !w-12 !rounded-2xl" aria-hidden>
+        <SparkleIcon size={26} />
+      </span>
+      <p className="text-lg font-semibold tracking-[-0.01em]">Agent Portal</p>
       {children}
     </main>
   );

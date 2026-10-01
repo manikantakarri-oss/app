@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { AdminAgent, api } from "@/lib/api";
 import { CostChart } from "./CostChart";
-import { ErrorBox, Notice, SectionHead, Spinner, StatusDot } from "./bits";
+import { CardList, ErrorBox, Notice, SectionHead, Spinner, StatusDot } from "./bits";
+import { middleShort } from "@/lib/people";
 import { Activity } from "./Activity";
 import { Logs } from "./Logs";
 
@@ -80,11 +81,13 @@ export function Admin() {
           ) : !data?.agents.length ? (
             <p className="text-sm muted">No assistants have been shared with the portal yet.</p>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-              {data.agents.map((a) => (
-                <AgentTile key={a.name} agent={a} onOpen={() => setOpenName(a.name)} />
-              ))}
-            </div>
+            <CardList
+              items={data.agents}
+              noun="assistants"
+              keyOf={(a) => a.name}
+              text={(a) => `${a.display_name} ${a.name} ${a.blurb || ""}`}
+              render={(a) => <AgentTile agent={a} onOpen={() => setOpenName(a.name)} />}
+            />
           )}
         </div>
       ) : null}
@@ -113,10 +116,11 @@ function AgentTile({ agent, onOpen }: { agent: AdminAgent; onOpen: () => void })
     <button
       type="button"
       onClick={onOpen}
-      className="card w-full p-5 text-left transition hover:border-[var(--brand)]"
+      title={agent.display_name}
+      className="card flex w-full flex-col p-5 text-left transition hover:border-[var(--brand)]"
     >
       <div className="flex items-start justify-between gap-3">
-        <h3 className="text-base font-semibold leading-snug">{agent.display_name}</h3>
+        <h3 className="line-clamp-2 text-base font-semibold leading-snug">{middleShort(agent.display_name)}</h3>
         {readOnly ? <span className="tag shrink-0 whitespace-nowrap">View only</span> : null}
       </div>
 

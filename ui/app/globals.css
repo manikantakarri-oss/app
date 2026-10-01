@@ -39,6 +39,26 @@
   --chart-on: #ffffff;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.04);
   --shadow-lg: 0 12px 32px -12px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.06);
+  /* The side navigation is dark in both themes: a fixed, calm frame around a
+     content area that changes. Values are tuned for contrast on --side-bg. */
+  --side-bg: #0c1a19;
+  --side-ink: #eef5f4;
+  --side-dim: #9fb3b0;
+  --side-faint: #8399a6;
+  --side-line: rgba(255, 255, 255, 0.08);
+  --side-hover: rgba(255, 255, 255, 0.06);
+  --side-active: rgba(46, 207, 199, 0.16);
+  --side-accent: #2ecfc7;
+  /* The home banner: deep teal into near-black, white text on top. */
+  --hero-from: #058ea8;
+  --hero-to: #0b3b3f;
+  --page: #f6f5f4;
+  /* Primary button: deep enough teal for white text to read (about 4.5:1 on
+     average across the gradient), unlike the light brand teal itself. */
+  --btn-from: #0a948f;
+  --btn-to: #06738a;
+  --btn-ink: #ffffff;
+  --btn-glow: rgba(5, 142, 168, 0.55);
 }
 /* Follow the OS unless the viewer has explicitly asked for light. */
 @media (prefers-color-scheme: dark) {
@@ -66,6 +86,15 @@
   --chart-on: #06110f;
   --shadow: none;
   --shadow-lg: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  --side-bg: #0a1110;
+  --side-line: rgba(255, 255, 255, 0.06);
+  --hero-from: #0b5e66;
+  --hero-to: #0a1d1e;
+  --page: #0f1413;
+  --btn-from: #3fd8d0;
+  --btn-to: #17aea7;
+  --btn-ink: #04201e;
+  --btn-glow: rgba(46, 207, 199, 0.35);
   }
 }
 
@@ -93,6 +122,20 @@
   --chart-on: #06110f;
   --shadow: none;
   --shadow-lg: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  --side-bg: #0a1110;
+  --side-line: rgba(255, 255, 255, 0.06);
+  --hero-from: #0b5e66;
+  --hero-to: #0a1d1e;
+  --page: #0f1413;
+  --btn-from: #3fd8d0;
+  --btn-to: #17aea7;
+  --btn-ink: #04201e;
+  --btn-glow: rgba(46, 207, 199, 0.35);
+}
+
+/* Fingers need bigger targets than mouse pointers. */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
 }
 
 html, body { background: var(--canvas); color: var(--ink); }
@@ -103,10 +146,7 @@ html, body { background: var(--canvas); color: var(--ink); }
   :root:not([data-theme="light"]) { color-scheme: dark; }
 }
 body {
-  /* A faint wash of the brand colour at the top of the page, so the header and
-     first screen feel like one surface instead of a white bar on grey. */
-  background-image: radial-gradient(900px 320px at 50% -120px, var(--brand-soft), transparent 70%);
-  background-repeat: no-repeat;
+  background: var(--page);
   /* Inter is what MediaMint uses for body text. Their headings are Roc
      Grotesk, which is a licensed font we cannot ship, so Inter carries both
      at a heavier weight. */
@@ -114,6 +154,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 h1, h2, h3 { letter-spacing: -0.015em; }
+/* Names in Databricks are often one long token (`a_b.c|d_e (auto-created)`)
+   with nowhere to wrap. `anywhere` lets them break only when they would
+   otherwise overflow, and - unlike `break-word` - also lets the card shrink. */
+h1, h2, h3, h4,
+.card, .agent-card, .choice, .recent-tile, .palette-item, .side-recent { overflow-wrap: anywhere; min-width: 0; }
+/* Card grids: never demand more width than the screen has. */
+.card-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+}
+.card-grid > * { min-width: 0; }
 
 @layer components {
   .card {
@@ -123,24 +175,49 @@ h1, h2, h3 { letter-spacing: -0.015em; }
     box-shadow: var(--shadow);
   }
   button.card:hover, a.card:hover { box-shadow: var(--shadow-lg); }
+  /* Buttons: compact pills with a soft gradient, a hairline highlight on top
+     and a coloured glow, lifting a pixel on hover. Touch screens keep a 44px
+     target (see the pointer: coarse rule below). */
   .btn {
-    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition;
+    @apply inline-flex min-h-[38px] select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] px-3.5 py-1.5 text-[14px] font-semibold tracking-[-0.005em];
+    transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease, color .15s ease, border-color .15s ease;
   }
+  .btn svg { flex-shrink: 0; stroke-width: 2.4; }
   .btn:focus-visible, .tab:focus-visible, .row-btn:focus-visible, .icon-btn:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
-  .btn-lg { @apply min-h-[52px] px-6 text-base font-semibold; }
-  .btn-primary { background: var(--brand); color: var(--brand-ink); }
-  .btn-primary:hover { background: var(--brand-deep); }
-  .btn-primary:disabled { opacity: .5; }
+  .btn-lg { @apply min-h-[42px] rounded-xl px-[18px] text-[14.5px]; }
+  .btn-primary {
+    color: var(--btn-ink);
+    background: linear-gradient(180deg, var(--btn-from), var(--btn-to));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 1px 2px rgba(16, 24, 40, 0.12),
+      0 6px 16px -6px var(--btn-glow);
+  }
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      0 2px 4px rgba(16, 24, 40, 0.12),
+      0 10px 22px -8px var(--btn-glow);
+  }
+  .btn-primary:active:not(:disabled) { transform: translateY(0); filter: brightness(0.96); }
+  .btn-primary:disabled { opacity: .45; box-shadow: none; cursor: not-allowed; }
   .btn-quiet {
     color: var(--ink-dim);
     border: 1px solid var(--line);
-    background: transparent;
+    background: var(--surface);
+    box-shadow: var(--shadow);
   }
-  .btn-quiet:hover { color: var(--ink); }
-  .btn-quiet:disabled { opacity: .5; }
+  .btn-quiet:hover:not(:disabled) {
+    color: var(--ink);
+    border-color: color-mix(in srgb, var(--brand) 40%, var(--line));
+    background: color-mix(in srgb, var(--brand-soft) 45%, var(--surface));
+  }
+  .btn-quiet:active:not(:disabled) { transform: translateY(1px); }
+  .btn-quiet:disabled { opacity: .5; cursor: not-allowed; }
   .field {
     background: var(--canvas);
     border: 1px solid var(--line);
@@ -344,4 +421,261 @@ h1, h2, h3 { letter-spacing: -0.015em; }
     background: var(--canvas);
     border: 1px solid var(--line);
   }
+}
+
+/* ------------------------------------------------------------------ app shell
+   A dark side navigation (collapsible to an icon rail, a drawer on phones), a
+   slim top bar over the content, and the home page banner and cards. */
+@layer components {
+  .side {
+    background: var(--side-bg);
+    color: var(--side-ink);
+    border-right: 1px solid var(--side-line);
+  }
+  .side-label {
+    @apply px-3 pb-1.5 pt-5 text-[11px] font-semibold uppercase tracking-[0.12em];
+    color: var(--side-faint);
+  }
+  .side-link {
+    @apply relative flex min-h-[40px] w-full items-center gap-3 rounded-lg px-3 text-left text-[14px] font-medium transition-colors;
+    color: var(--side-dim);
+  }
+  .side-link:hover { background: var(--side-hover); color: var(--side-ink); }
+  .side-link:focus-visible { outline: 2px solid var(--side-accent); outline-offset: -2px; }
+  .side-link[data-state="active"] { background: var(--side-active); color: var(--side-ink); }
+  .side-link[data-state="active"]::before {
+    content: "";
+    position: absolute;
+    left: -12px;
+    top: 9px;
+    bottom: 9px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--side-accent);
+  }
+  .side-link[data-state="active"] svg { color: var(--side-accent); }
+  .side-search {
+    @apply flex min-h-[40px] w-full items-center gap-3 rounded-lg px-3 text-left text-[14px] transition-colors;
+    color: var(--side-dim);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--side-line);
+  }
+  .side-search:hover { color: var(--side-ink); background: rgba(255, 255, 255, 0.08); }
+  .side-search:focus-visible { outline: 2px solid var(--side-accent); outline-offset: 1px; }
+  .side-recent {
+    @apply flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition-colors;
+    color: var(--side-dim);
+  }
+  .side-recent:hover { background: var(--side-hover); color: var(--side-ink); }
+  .side-recent:focus-visible { outline: 2px solid var(--side-accent); outline-offset: -2px; }
+  .side-icon-btn {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors;
+    color: var(--side-dim);
+  }
+  .side-icon-btn:hover { background: var(--side-hover); color: var(--side-ink); }
+  .side-icon-btn:focus-visible { outline: 2px solid var(--side-accent); outline-offset: -2px; }
+  .side-mark {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px];
+    background: linear-gradient(135deg, #2ecfc7, #058ea8);
+    color: #fff;
+    box-shadow: 0 4px 14px -4px rgba(46, 207, 199, 0.55);
+  }
+
+  .topbar {
+    background: color-mix(in srgb, var(--page) 82%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .kbd {
+    @apply inline-flex h-5 min-w-[20px] items-center justify-center rounded px-1.5 text-[11px] font-semibold;
+    font-family: inherit;
+    border: 1px solid currentColor;
+    opacity: 0.7;
+  }
+
+  /* Home banner. White text on a deep gradient, with a faint dot grid. */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    color: #fff;
+    background:
+      radial-gradient(600px 260px at 88% -20%, rgba(107, 198, 181, 0.45), transparent 70%),
+      linear-gradient(120deg, var(--hero-from), var(--hero-to));
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+    background-size: 18px 18px;
+    -webkit-mask-image: linear-gradient(90deg, transparent 35%, #000);
+    mask-image: linear-gradient(90deg, transparent 35%, #000);
+    pointer-events: none;
+  }
+  .hero > * { position: relative; z-index: 1; }
+  .hero-search {
+    @apply flex min-h-[54px] w-full items-center gap-3 rounded-xl px-4;
+    background: #fff;
+    color: #212321;
+    box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.45);
+  }
+  .hero-search:focus-within { outline: 3px solid rgba(46, 207, 199, 0.6); outline-offset: 2px; }
+  .hero-search input { @apply h-full w-full bg-transparent text-[15px] outline-none; color: #212321; }
+  .hero-search input::placeholder { color: #667085; }
+  .hero-stat {
+    @apply rounded-xl px-4 py-3;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+  }
+
+  /* Filter chips above the card grid. */
+  .filter-chip {
+    @apply inline-flex min-h-[36px] items-center gap-2 rounded-full px-3.5 text-[13px] font-medium transition;
+    color: var(--ink-dim);
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .filter-chip:hover { color: var(--ink); border-color: color-mix(in srgb, var(--brand) 50%, var(--line)); }
+  .filter-chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .filter-chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .filter-chip .count {
+    @apply rounded-full px-1.5 text-[11px] font-semibold tabular-nums;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+  }
+
+  /* Assistant cards. */
+  .agent-card {
+    @apply relative flex w-full flex-col overflow-hidden rounded-2xl p-5 text-left transition duration-200;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+  .agent-card:hover:not(:disabled) {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--brand) 55%, var(--line));
+    box-shadow: var(--shadow-lg);
+  }
+  .agent-card:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .agent-card:disabled { cursor: not-allowed; opacity: 0.72; }
+  .agent-card .go { color: var(--brand-deep); transition: transform 0.2s ease; }
+  .agent-card:hover:not(:disabled) .go { transform: translateX(3px); }
+  .kind-tile { @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl; }
+  .kind-supervisor { background: color-mix(in srgb, #058ea8 14%, transparent); color: #058ea8; }
+  .kind-knowledge { background: color-mix(in srgb, #7c5cd6 14%, transparent); color: #6a4cc4; }
+  .kind-agent { background: color-mix(in srgb, #d9822b 16%, transparent); color: #b0601a; }
+  :root[data-theme="dark"] .kind-supervisor { color: #2ecfc7; }
+  :root[data-theme="dark"] .kind-knowledge { color: #a993ee; }
+  :root[data-theme="dark"] .kind-agent { color: #f0a659; }
+  .cap {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium;
+    background: var(--canvas);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .status-pill { @apply inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[12px] font-semibold; }
+  .status-ready { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+  .status-wait { background: var(--bubble); color: var(--ink-faint); }
+
+  /* Recent conversation tiles on the home page. */
+  .recent-tile {
+    @apply flex w-full min-w-0 items-start gap-3 rounded-xl p-4 text-left transition;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .recent-tile:hover { border-color: color-mix(in srgb, var(--brand) 55%, var(--line)); box-shadow: var(--shadow-lg); }
+  .recent-tile:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+  /* Quick switcher (Ctrl/Cmd + K). */
+  .palette-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(8, 14, 13, 0.5);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
+  .palette {
+    @apply overflow-hidden rounded-2xl;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.5);
+  }
+  .palette-item {
+    @apply flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm;
+    color: var(--ink);
+  }
+  .palette-item[aria-selected="true"] { background: var(--brand-soft); }
+}
+/* Dashboard: the headline-number strip, delta badges and rank badges. */
+@layer components {
+  /* Hairlines between cells: each cell draws its left and top edge and the
+     card clips the outer ones, so the dividers are right at every wrap. */
+  .kpi-strip {
+    display: grid;
+    /* Two per row on a phone, one row of five on a laptop. */
+    grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    margin: -1px 0 0 -1px;
+  }
+  .kpi {
+    min-width: 0;
+    padding: 1.25rem 1.5rem;
+    border-left: 1px solid var(--line);
+    border-top: 1px solid var(--line);
+  }
+  .kpi-icon {
+    @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg;
+    background: var(--brand-soft);
+    color: var(--brand-deep);
+  }
+  .delta {
+    @apply inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[12px] font-semibold tabular-nums;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .rank {
+    @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[12px] font-semibold tabular-nums;
+    background: var(--canvas);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  li:first-child > .rank { background: var(--brand-soft); border-color: transparent; color: var(--brand-deep); }
+
+  /* File type badge in the files table. */
+  .file-badge {
+    @apply relative inline-flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg;
+    background: var(--brand-soft);
+    color: var(--brand-deep);
+  }
+  .file-badge > span {
+    @apply absolute -bottom-1 rounded px-1 text-[9px] font-bold leading-[14px] tracking-wide;
+    background: var(--brand-deep);
+    color: #fff;
+  }
+}
+@media (max-width: 640px) {
+  .kpi { padding: 1rem 1.1rem; }
+}
+
+/* Week heatmap: one hue (the chart token) stepped light to dark over the
+   surface; level 0 is the neutral empty cell, not a colour. Kept outside
+   @layer on purpose: the level class is built at runtime (`heat-${n}`), which
+   Tailwind cannot see, so a layered rule would be purged from the build. */
+.heat { display: block; aspect-ratio: 1 / 1; min-height: 10px; border-radius: 3px; }
+.heat-0 { background: var(--bubble); }
+.heat-1 { background: color-mix(in srgb, var(--chart-1) 22%, var(--surface)); }
+.heat-2 { background: color-mix(in srgb, var(--chart-1) 45%, var(--surface)); }
+.heat-3 { background: color-mix(in srgb, var(--chart-1) 70%, var(--surface)); }
+.heat-4 { background: var(--chart-1); }
+/* Summary card: its four numbers sit two by two, so each has room. */
+.kpi-strip.kpi-2x2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .kind-supervisor { color: #2ecfc7; }
+  :root:not([data-theme="light"]) .kind-knowledge { color: #a993ee; }
+  :root:not([data-theme="light"]) .kind-agent { color: #f0a659; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-card, .agent-card .go { transition: none; }
+  .agent-card:hover:not(:disabled) { transform: none; }
 }

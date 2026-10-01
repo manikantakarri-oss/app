@@ -64,6 +64,7 @@ def ensure_table() -> None:
     with _lock:
         if _ready:
             return
+        store.ensure_schema(QUALIFIED)
         store.run(
             "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
             "conversation_id STRING, user_name STRING, endpoint STRING, idx INT, "
