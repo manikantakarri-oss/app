@@ -20,6 +20,8 @@ export type Finished = {
    *  version was also created (Genie only). */
   variant?: "assistant" | "data" | "docs";
   chat?: boolean;
+  /** Ready-made tools still being deployed; each is added to the assistant when it is up. */
+  deploying?: string[];
 };
 
 // ----------------------------------------------------------------- done -----
@@ -80,6 +82,20 @@ export function Done({
           {done.warnings.map((w) => (
             <ErrorBox key={w}>{w}</ErrorBox>
           ))}
+        </div>
+      ) : null}
+
+      {done.deploying?.length ? (
+        <div className="card mt-4 p-6">
+          <h3 className="text-[15px] font-semibold">
+            {done.deploying.length === 1 ? "Getting a tool ready" : "Getting your tools ready"}
+          </h3>
+          <p className="mt-2 text-[15px] muted">
+            We are getting {done.deploying.join(", ")} ready for this assistant. It is added by itself as soon as it
+            is ready, usually within a few minutes. Until then the assistant works without{" "}
+            {done.deploying.length === 1 ? "it" : "them"}. If it has not appeared after a while, open the assistant,
+            check that it is ticked and save it again.
+          </p>
         </div>
       ) : null}
 
@@ -192,6 +208,7 @@ export function WizardFrame({
   onCancel,
   onDelete,
   deleteLabel,
+  status,
   children,
 }: {
   title: string;
@@ -209,6 +226,8 @@ export function WizardFrame({
   onCancel: () => void;
   onDelete?: () => void;
   deleteLabel?: string;
+  /** Shown under the buttons: what is going on while the person waits. */
+  status?: ReactNode;
   children: ReactNode;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -301,6 +320,8 @@ export function WizardFrame({
               )
             ) : null}
           </div>
+
+          {status}
         </div>
       </div>
     </div>

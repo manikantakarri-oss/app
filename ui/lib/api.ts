@@ -47,12 +47,29 @@ export type AdminAgent = Agent & {
 
 export type ToolType = { type: string; label: string; confirmed: boolean };
 export type SourceItem = { value: string; label: string; detail: string };
+export type McpState = "not_deployed" | "deploying" | "running" | "stopped" | "failed";
+export type McpEntry = {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  owner: string;
+  app_name: string;
+  tools: { name: string; description: string; changes_data: boolean }[];
+  needs: { secrets: string[]; volumes: string[] };
+  problem: string;
+  state: McpState;
+  state_note: string;
+  url: string;
+};
 export type BuilderTool = {
   type: string;
   ref: string;
   description: string;
   tool_id?: string;
   readonly?: boolean;
+  /** Folder name of a catalog tool the person ticked; the server decides whether it needs deploying. */
+  mcp?: string;
 };
 export type FileSettings = { upload_volume: string; output_volume: string; accepts: string };
 export type BuilderAgent = {
@@ -69,7 +86,7 @@ export type BuilderSpec = {
   display_name: string;
   description: string;
   instructions: string;
-  tools: { type: string; ref: string; description: string }[];
+  tools: { type: string; ref: string; description: string; mcp?: string }[];
   files: FileSettings;
   access: { kind: "group" | "user"; principal: string }[];
 };
@@ -336,6 +353,13 @@ export const api = {
         catalog
       )}&schema=${encodeURIComponent(schema)}`
     ),
+  mcps: (refresh = false) =>
+    request<{ repo: string; ref: string; mcps: McpEntry[]; note: string; acted_as: string }>(
+      `/api/admin/builder/mcps${refresh ? "?refresh=true" : ""}`
+    ),
+  /** Start getting ticked tools ready; the wizard then watches `mcps()` until they are. */
+  mcpPrepare: (slugs: string[]) =>
+    request<{ preparing: string[] }>("/api/admin/builder/mcps/prepare", { slugs }),
   builderPrincipals: () =>
     request<{
       groups: { name: string; id: string; local: boolean }[];
@@ -381,12 +405,13 @@ export const api = {
       acted_as: string;
       warnings: string[];
       access_pending: number;
+      deploying: string[];
     }>(
       "/api/admin/builder/agents",
       spec
     ),
   builderUpdate: (id: string, spec: BuilderSpec) =>
-    send<{ agent_id: string; acted_as: string; warnings: string[] }>("PUT", `/api/admin/builder/agents/${id}`, spec),
+    send<{ agent_id: string; acted_as: string; warnings: string[]; deploying: string[] }>("PUT", `/api/admin/builder/agents/${id}`, spec),
   builderDelete: (id: string) => send<{ deleted: string }>("DELETE", `/api/admin/builder/agents/${id}`),
   meta: (payload: Record<string, string>) => request<unknown>("/api/admin/meta", payload),
   logs: (days: number) => request<LogsResult>(`/api/admin/logs?days=${days}`),

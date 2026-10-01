@@ -337,9 +337,9 @@ function sentence(e: PortalEvent): ReactNode {
     case "changed_settings":
       return <>{name} updated the {(d.fields || []).map((f: string) => FIELD[f] || f.replace(/_/g, " ")).join(", ") || "settings"} of {b(label)}</>;
     case "created_assistant":
-      return <>{name} created {b(label)}</>;
+      return <>{name} created {b(label)}{(d.deploying || []).length ? <>, setting up {(d.deploying as string[]).join(", ")}</> : null}</>;
     case "edited_assistant":
-      return <>{name} updated {b(label)}</>;
+      return <>{name} updated {b(label)}{(d.deploying || []).length ? <>, setting up {(d.deploying as string[]).join(", ")}</> : null}</>;
     case "deleted_assistant":
       return <>{name} deleted an assistant</>;
     default:

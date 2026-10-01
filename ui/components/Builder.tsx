@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, BuilderTool, FileSettings, SourceItem, ToolType } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, BuilderTool, FileSettings, McpEntry, SourceItem, ToolType } from "@/lib/api";
 import { CardList, Empty, ErrorBox, Spinner } from "./bits";
 import { middleShort } from "@/lib/people";
 import { PlusIcon } from "./icons";
 import { Access, AccessStep, Done, Finished, Section, VolumeField, WizardFrame } from "./BuilderParts";
 import { KnowledgeWizard } from "./KnowledgeBuilder";
 import { GenieWizard } from "./GenieBuilder";
+import { isCatalogTool, McpPicker, ToolProgress, ToolWait } from "./McpCatalog";
 
 type Row = Awaited<ReturnType<typeof api.builderAgents>>["agents"][number];
 
@@ -67,6 +68,9 @@ const ALL_STEPS = [
 type StepKey = (typeof ALL_STEPS)[number]["key"];
 
 const FILE_MARKER = "File handling:";
+
+/** Thrown to stop waiting for tools when the person leaves the wizard. */
+class Cancelled extends Error {}
 
 const EXAMPLE_PROMPT = [
   "You are a helpful assistant for our team. Your job is to ______.",
@@ -360,7 +364,39 @@ function Wizard({
   const [loading, setLoading] = useState(!!id);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // What the person sees under the button while their tools are got ready.
+  const [wait, setWait] = useState<{ items: ToolWait[]; since: number; creating: boolean; failed: boolean } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false; // leaving the wizard stops the waiting
+    };
+  }, []);
+  useEffect(() => {
+    if (!wait || wait.failed) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [wait]);
   const [showPrompt, setShowPrompt] = useState(false);
+  // Ready-made tools from the team's git repository, with what is already deployed.
+  const [catalog, setCatalog] = useState<McpEntry[] | null>(null);
+  const [catalogErr, setCatalogErr] = useState("");
+  const [catalogNote, setCatalogNote] = useState("");
+
+  useEffect(() => {
+    api
+      .mcps()
+      .then((d) => {
+        setCatalog(d.mcps);
+        setCatalogNote(d.note);
+      })
+      .catch((e) => {
+        setCatalog([]);
+        setCatalogErr(e.message);
+      });
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -410,24 +446,88 @@ function Wizard({
   }
   const goTo = (k: StepKey) => go(Math.max(0, keys.indexOf(k)));
 
+  /** The assistant is only made once every tool it needs is ready, so nobody ends up
+   *  with an assistant that cannot do what they picked. Tools that are not there yet
+   *  are got ready first, which can take a few minutes; the panel under the button
+   *  shows where each one is up to. */
+  async function readyTools(slugs: string[]) {
+    if (!slugs.length) return;
+    const mineOf = (d: { mcps: McpEntry[] }) => d.mcps.filter((m) => slugs.includes(m.slug));
+    const show = (mine: McpEntry[], failed = false) =>
+      setWait((w) => ({
+        since: w?.since ?? Date.now(),
+        creating: false,
+        failed,
+        items: mine.map((m) => ({ slug: m.slug, name: m.name, state: m.state, line: m.state_note })),
+      }));
+    let d = await api.mcps(true);
+    if (mineOf(d).every((m) => m.state === "running")) return;
+    show(mineOf(d));
+    await api.mcpPrepare(slugs);
+    show(mineOf(await api.mcps()));
+    const started = Date.now();
+    let kicked = started;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 6000));
+      if (!alive.current) throw new Cancelled();
+      d = await api.mcps();
+      const mine = mineOf(d);
+      const bad = mine.find((m) => m.state === "failed");
+      show(mine, !!bad);
+      if (bad) {
+        throw new Error(
+          `We could not get “${bad.name}” ready, so nothing was created. You can try again, or untick that tool.`
+        );
+      }
+      if (mine.every((m) => m.state === "running")) return;
+      // Waiting, but nothing is working on it (for example the server restarted
+      // part-way): ask for it again. Asking twice is harmless.
+      const idle = mine.filter((m) => m.state === "not_deployed" || m.state === "stopped");
+      if (idle.length && Date.now() - kicked > 30000) {
+        kicked = Date.now();
+        await api.mcpPrepare(idle.map((m) => m.slug));
+      }
+      if (Date.now() - started > 20 * 60 * 1000) {
+        throw new Error("Getting the tools ready is taking longer than expected. Nothing was created. Please try again in a few minutes.");
+      }
+    }
+  }
+
   async function save() {
     setBusy(true);
     setErr("");
+    setWait(null);
+    try {
+      await readyTools(Array.from(new Set(editable.filter((t) => t.mcp).map((t) => t.mcp as string))));
+    } catch (e: any) {
+      if (e instanceof Cancelled || !alive.current) return;
+      setErr(e.message);
+      setBusy(false);
+      return;
+    }
+    setWait((w) => (w ? { ...w, creating: true } : w));
     const spec = {
       display_name: name,
       description,
       instructions: finalInstructions,
-      tools: editable.map((t) => ({ type: t.type, ref: t.ref, description: t.description })),
+      tools: editable.map((t) => ({ type: t.type, ref: t.ref, description: t.description, mcp: t.mcp })),
       files,
       access,
     };
     try {
       if (id) {
         const r = await api.builderUpdate(id, spec);
-        onFinished({ kind: "saved", name, warnings: r.warnings });
+        onFinished({ kind: "saved", name, warnings: r.warnings, deploying: r.deploying });
       } else {
         const r = await api.builderCreate(spec);
-        onFinished({ kind: "created", name, warnings: r.warnings, by: r.acted_as, access: r.access_pending });
+        onFinished({
+          kind: "created",
+          name,
+          warnings: r.warnings,
+          by: r.acted_as,
+          access: r.access_pending,
+          deploying: r.deploying,
+        });
       }
     } catch (e: any) {
       setErr(e.message);
@@ -461,6 +561,16 @@ function Wizard({
       err={err}
       problem={problem}
       busy={busy}
+      status={
+        wait ? (
+          <ToolProgress
+            items={wait.items}
+            seconds={Math.max(0, Math.floor((now - wait.since) / 1000))}
+            creating={wait.creating}
+            failed={wait.failed}
+          />
+        ) : undefined
+      }
       finishLabel={editing ? "Save changes" : "Create assistant"}
       finishDisabled={!name.trim()}
       onFinish={save}
@@ -474,7 +584,15 @@ function Wizard({
 
       {cur === "behave" ? <Behave instructions={instructions} setInstructions={setInstructions} /> : null}
 
-      {cur === "abilities" ? <Abilities tools={tools} setTools={setTools} /> : null}
+      {cur === "abilities" ? (
+        <Abilities
+          tools={tools}
+          setTools={setTools}
+          catalog={catalog}
+          catalogErr={catalogErr}
+          catalogNote={catalogNote}
+        />
+      ) : null}
 
       {cur === "files" ? (
         <FilesStep
@@ -498,6 +616,7 @@ function Wizard({
           description={description}
           instructions={finalInstructions}
           tools={tools}
+          catalog={catalog}
           files={files}
           access={editing ? null : access}
           showPrompt={showPrompt}
@@ -600,11 +719,19 @@ function Behave({
 function Abilities({
   tools,
   setTools,
+  catalog,
+  catalogErr,
+  catalogNote,
 }: {
   tools: BuilderTool[];
   setTools: (t: BuilderTool[]) => void;
+  catalog: McpEntry[] | null;
+  catalogErr: string;
+  catalogNote: string;
 }) {
   const [adding, setAdding] = useState(false);
+  // Catalog tools are shown (and changed) in the picker above, not repeated here.
+  const others = tools.filter((t) => !isCatalogTool(t, catalog));
   return (
     <div className="space-y-5">
       <div>
@@ -614,13 +741,16 @@ function Abilities({
         </p>
       </div>
 
-      {tools.length === 0 ? (
+      <McpPicker catalog={catalog} err={catalogErr} note={catalogNote} tools={tools} setTools={setTools} />
+
+      <h4 className="pt-2 text-[15px] font-semibold">Other abilities</h4>
+      {others.length === 0 ? (
         <p className="rounded-xl p-4 text-[15px] muted" style={{ background: "var(--canvas)" }}>
-          Nothing added yet.
+          Nothing else added.
         </p>
       ) : (
         <ul className="space-y-3">
-          {tools.map((t) => {
+          {others.map((t) => {
             const a = ABILITY[t.type];
             return (
               <li key={t.type + t.ref} className="rounded-xl p-4" style={{ border: "1px solid var(--line)" }}>
@@ -1057,6 +1187,7 @@ function Review({
   description,
   instructions,
   tools,
+  catalog,
   files,
   access,
   showPrompt,
@@ -1067,6 +1198,7 @@ function Review({
   description: string;
   instructions: string;
   tools: BuilderTool[];
+  catalog: McpEntry[] | null;
   files: FileSettings;
   access: Access[] | null;
   showPrompt: boolean;
@@ -1108,12 +1240,15 @@ function Review({
           <p className="text-[15px] muted">None added.</p>
         ) : (
           <ul className="space-y-1.5">
-            {tools.map((t) => (
-              <li key={t.type + t.ref} className="text-[15px]">
-                <b>{ABILITY[t.type]?.title || t.type.replace(/_/g, " ")}</b>
-                <span className="break-all text-[13px] faint"> — {t.ref}</span>
-              </li>
-            ))}
+            {tools.map((t) => {
+              const m = t.type === "app" ? catalog?.find((c) => c.app_name === t.ref) : undefined;
+              return (
+                <li key={t.type + t.ref} className="text-[15px]">
+                  <b>{m ? m.name : ABILITY[t.type]?.title || t.type.replace(/_/g, " ")}</b>
+                  {m ? null : <span className="break-all text-[13px] faint"> — {t.ref}</span>}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>

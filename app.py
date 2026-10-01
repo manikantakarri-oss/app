@@ -35,6 +35,7 @@ import files as filestore
 import llm
 import logbuf
 import logsink
+import mcps
 from dbx import DbxError, app_token, auth_mode, user_token
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -411,6 +412,44 @@ def builder_sources(
     return builder.sources(kind, tok, catalog, schema)
 
 
+def _folder_access(tools: list, volumes: dict, tok: str) -> list:
+    """Bring the folder access of the assistant's running catalog tools up to date,
+    before the assistant is handed back so the first chat cannot beat it. Never
+    fails the save: what could not be granted comes back as warnings."""
+    if not (volumes["read"] or volumes["write"]):
+        return []
+    try:
+        ready = mcps.users_of_volumes(tools)
+        return mcps.grant_volumes(ready, volumes, tok) if ready else []
+    except DbxError as exc:
+        return ["Could not give the tools access to the folders: " + str(exc)[:160]]
+
+
+@app.get("/api/admin/builder/mcps")
+def mcps_list(refresh: bool = False, x_forwarded_access_token: str = Header(None)):
+    """The tool catalog from git, with what is already deployed as a Databricks App."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    return mcps.listing(tok, refresh)
+
+
+@app.post("/api/admin/builder/mcps/prepare")
+def mcps_prepare(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    """Start getting ticked tools ready. The wizard waits for them (it watches the
+    list above) and only then creates the assistant."""
+    who, tok = _require_admin(x_forwarded_access_token)
+    slugs = [str(s) for s in (payload.get("slugs") or []) if s]
+    if not slugs or len(slugs) > 20:
+        raise HTTPException(400, "choose between 1 and 20 tools")
+    started = mcps.prepare(slugs, tok)
+    for entry in started:
+        background.add_task(mcps.install_quietly, entry, who, tok)
+    return {"preparing": [e["name"] for e in started]}
+
+
 @app.get("/api/admin/builder/principals")
 def builder_principals(x_forwarded_access_token: str = Header(None)):
     """The teams and people that can be given access: the same lists the Manage
@@ -439,9 +478,31 @@ def builder_create(
 ):
     who, tok = _require_admin(x_forwarded_access_token)
     spec = builder.clean_spec(payload)
-    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Combines tools", "tools": len(spec.get("tools") or [])})
-    out = builder.create_agent(spec, who, tok)
+    events.note(action="created_assistant", label=spec.get("display_name"))
+    # Catalog tools whose app is not running yet are installed after the agent
+    # exists and added to it when ready; the rest are attached now.
+    spec["tools"], pending = mcps.plan(spec["tools"], tok, derive=True)
+    try:
+        out = builder.create_agent(spec, who, tok)
+    except DbxError as exc:
+        # Databricks says an app we meant to attach is not there. Whatever made us
+        # think it was is wrong, so install those instead and try once more.
+        if exc.status != 404 or "does not exist" not in str(exc):
+            raise
+        spec["tools"], more = mcps.defer(spec["tools"])
+        if not more:
+            raise
+        pending += more
+        out = builder.create_agent(spec, who, tok)
+    deploying = [p["entry"]["name"] for p in pending]
+    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Combines tools", "tools": len(spec.get("tools") or []), "deploying": deploying})
     events.note(target=out.get("endpoint_name") or out.get("agent_id"))
+    volumes = mcps.volumes_for(spec)
+    if pending:
+        background.add_task(mcps.deploy_and_attach, out["agent_id"], pending, who, tok, volumes)
+    # Tools that are already running only need their folder access brought up to date.
+    out["warnings"] = list(out.get("warnings") or []) + _folder_access(spec["tools"], volumes, tok)
+    out["deploying"] = deploying
     # The serving endpoint appears a few minutes later; tag and share it then.
     background.add_task(builder.finish_provisioning, out["agent_id"], out["endpoint_name"], spec, who)
     return out
@@ -450,13 +511,25 @@ def builder_create(
 @app.put("/api/admin/builder/agents/{agent_id}")
 def builder_update(
     agent_id: str,
+    background: BackgroundTasks,
     payload: dict = Body(...),
     x_forwarded_access_token: str = Header(None),
 ):
     who, tok = _require_admin(x_forwarded_access_token)
     spec = builder.clean_spec(payload)
-    events.note(action="edited_assistant", target=agent_id, label=spec.get("display_name"), detail={"type": "Combines tools"})
-    return builder.update_agent(agent_id, spec, who, tok)
+    spec["tools"], pending = mcps.plan(spec["tools"], tok)
+    deploying = [p["entry"]["name"] for p in pending]
+    events.note(action="edited_assistant", target=agent_id, label=spec.get("display_name"), detail={"type": "Combines tools", "deploying": deploying})
+    out = builder.update_agent(agent_id, spec, who, tok)
+    # Folder access follows the assistant's current folders, for tools attached earlier too.
+    # (spec["tools"] holds the tools to attach now; ones already on the assistant are
+    # recognised by their app name.)
+    volumes = mcps.volumes_for(spec)
+    if pending:
+        background.add_task(mcps.deploy_and_attach, agent_id, pending, who, tok, volumes)
+    out["warnings"] = list(out.get("warnings") or []) + _folder_access(mcps.as_catalog_tools(spec["tools"]), volumes, tok)
+    out["deploying"] = deploying
+    return out
 
 
 @app.delete("/api/admin/builder/agents/{agent_id}")

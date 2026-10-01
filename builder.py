@@ -154,7 +154,15 @@ def clean_spec(payload: dict) -> dict:
         if (kind, ref) in seen:
             continue
         seen.add((kind, ref))
-        tools.append({"type": kind, "ref": ref, "description": (t.get("description") or "").strip()})
+        tool = {"type": kind, "ref": ref, "description": (t.get("description") or "").strip()}
+        # Picked from the MCP catalog (folder name). mcps.plan decides whether it
+        # needs deploying first; the app name is then taken from the catalog.
+        mcp = (t.get("mcp") or "").strip()
+        if mcp:
+            if kind != "app" or not re.match(r"^[a-z0-9][a-z0-9-]{0,60}$", mcp):
+                raise DbxError("Not a valid catalog tool: " + mcp[:40], 400)
+            tool["mcp"] = mcp
+        tools.append(tool)
     if len(tools) > MAX_TOOLS:
         raise DbxError("A supervisor can have at most %d tools." % MAX_TOOLS, 400)
 
