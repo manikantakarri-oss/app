@@ -254,7 +254,7 @@ export default function Page() {
             </button>
           </div>
 
-          <nav className="mt-2 min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4 [scrollbar-width:thin]">
+          <nav className="side-scroll mt-2 min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
             <Tabs.List aria-label="Sections" className="flex flex-col gap-0.5">
               <p className={`side-label ${rail ? "lg:sr-only" : ""}`}>Workspace</p>
               {SECTIONS.filter((s) => !s.admin).map((s) => (
@@ -486,7 +486,7 @@ function NavItem({
       {count ? (
         <span
           className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${rail ? "lg:hidden" : ""}`}
-          style={{ background: "rgba(255,255,255,0.08)", color: "var(--side-dim)" }}
+          style={{ background: "var(--side-chip)", color: "var(--side-dim)" }}
         >
           {count}
         </span>

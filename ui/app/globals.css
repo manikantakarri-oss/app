@@ -41,14 +41,22 @@
   --shadow-lg: 0 12px 32px -12px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.06);
   /* The side navigation is dark in both themes: a fixed, calm frame around a
      content area that changes. Values are tuned for contrast on --side-bg. */
-  --side-bg: #0c1a19;
-  --side-ink: #eef5f4;
-  --side-dim: #9fb3b0;
-  --side-faint: #8399a6;
-  --side-line: rgba(255, 255, 255, 0.08);
-  --side-hover: rgba(255, 255, 255, 0.06);
-  --side-active: rgba(46, 207, 199, 0.16);
-  --side-accent: #2ecfc7;
+  /* Light theme: a light sidebar on the white surface, so the page reads as
+     one calm sheet; the dark sidebar is kept for the dark theme below. */
+  --side-bg: #ffffff;
+  --side-ink: #1d2120;
+  --side-dim: #4b5563;
+  --side-faint: #6b7280;
+  --side-line: #ebe9e6;
+  --side-hover: #f3f2f0;
+  --side-active: #e3f4f3;
+  --side-accent: #058ea8;
+  --side-input: #f6f5f4;
+  --side-input-hover: #efeeec;
+  --side-chip: #eeedeb;
+  /* Scrollbars: thin, rounded, the colour of a hairline. */
+  --scroll: rgba(16, 24, 40, 0.18);
+  --scroll-hover: rgba(16, 24, 40, 0.32);
   /* The home banner: deep teal into near-black, white text on top. */
   --hero-from: #058ea8;
   --hero-to: #0b3b3f;
@@ -87,7 +95,18 @@
   --shadow: none;
   --shadow-lg: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
   --side-bg: #0a1110;
+  --side-ink: #eef5f4;
+  --side-dim: #9fb3b0;
+  --side-faint: #8399a6;
   --side-line: rgba(255, 255, 255, 0.06);
+  --side-hover: rgba(255, 255, 255, 0.06);
+  --side-active: rgba(46, 207, 199, 0.16);
+  --side-accent: #2ecfc7;
+  --side-input: rgba(255, 255, 255, 0.05);
+  --side-input-hover: rgba(255, 255, 255, 0.08);
+  --side-chip: rgba(255, 255, 255, 0.08);
+  --scroll: rgba(255, 255, 255, 0.14);
+  --scroll-hover: rgba(255, 255, 255, 0.26);
   --hero-from: #0b5e66;
   --hero-to: #0a1d1e;
   --page: #0f1413;
@@ -123,7 +142,18 @@
   --shadow: none;
   --shadow-lg: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
   --side-bg: #0a1110;
+  --side-ink: #eef5f4;
+  --side-dim: #9fb3b0;
+  --side-faint: #8399a6;
   --side-line: rgba(255, 255, 255, 0.06);
+  --side-hover: rgba(255, 255, 255, 0.06);
+  --side-active: rgba(46, 207, 199, 0.16);
+  --side-accent: #2ecfc7;
+  --side-input: rgba(255, 255, 255, 0.05);
+  --side-input-hover: rgba(255, 255, 255, 0.08);
+  --side-chip: rgba(255, 255, 255, 0.08);
+  --scroll: rgba(255, 255, 255, 0.14);
+  --scroll-hover: rgba(255, 255, 255, 0.26);
   --hero-from: #0b5e66;
   --hero-to: #0a1d1e;
   --page: #0f1413;
@@ -423,9 +453,32 @@ h1, h2, h3, h4,
   }
 }
 
+/* Scrollbars: thin and themed everywhere (the sidebar, panels, the page),
+   instead of the browser's wide default with arrow buttons, which looked like
+   a white bar dropped onto the dark sidebar. */
+/* Chrome and Edge drop all ::-webkit-scrollbar styling (and draw arrow
+   buttons) as soon as the standard scrollbar-width/-color are set, so the
+   standard properties are given to Firefox only, which understands nothing else. */
+@supports (-moz-appearance: none) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+  .side-scroll:hover { scrollbar-color: var(--scroll-hover) transparent; }
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: padding-box; }
+*::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+*::-webkit-scrollbar-corner { background: transparent; }
+/* The menu's scrollbar stays faint so it never competes with the items, and
+   firms up under the pointer, so it is still clear the menu scrolls. */
+.side-scroll::-webkit-scrollbar { width: 6px; }
+.side-scroll::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--scroll) 55%, transparent); background-clip: padding-box; }
+.side-scroll:hover::-webkit-scrollbar-thumb { background: var(--scroll-hover); background-clip: padding-box; }
+
 /* ------------------------------------------------------------------ app shell
-   A dark side navigation (collapsible to an icon rail, a drawer on phones), a
-   slim top bar over the content, and the home page banner and cards. */
+   The side navigation (light in the light theme, dark in the dark theme;
+   collapsible to an icon rail, a drawer on phones), a slim top bar over the
+   content, and the home page banner and cards. */
 @layer components {
   .side {
     background: var(--side-bg);
@@ -441,8 +494,10 @@ h1, h2, h3, h4,
     color: var(--side-dim);
   }
   .side-link:hover { background: var(--side-hover); color: var(--side-ink); }
-  .side-link:focus-visible { outline: 2px solid var(--side-accent); outline-offset: -2px; }
-  .side-link[data-state="active"] { background: var(--side-active); color: var(--side-ink); }
+  /* Keyboard focus: a soft inner ring, not a box drawn round the item. */
+  .side-link:focus { outline: none; }
+  .side-link:focus-visible { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--side-accent) 55%, transparent); }
+  .side-link[data-state="active"] { background: var(--side-active); color: var(--side-ink); font-weight: 600; }
   .side-link[data-state="active"]::before {
     content: "";
     position: absolute;
@@ -457,10 +512,10 @@ h1, h2, h3, h4,
   .side-search {
     @apply flex min-h-[40px] w-full items-center gap-3 rounded-lg px-3 text-left text-[14px] transition-colors;
     color: var(--side-dim);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--side-input);
     border: 1px solid var(--side-line);
   }
-  .side-search:hover { color: var(--side-ink); background: rgba(255, 255, 255, 0.08); }
+  .side-search:hover { color: var(--side-ink); background: var(--side-input-hover); }
   .side-search:focus-visible { outline: 2px solid var(--side-accent); outline-offset: 1px; }
   .side-recent {
     @apply flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition-colors;
