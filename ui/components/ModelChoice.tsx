@@ -24,12 +24,13 @@ export function ModelChoice({
 
   return (
     <div>
-      <SectionHead title="Ask a general assistant">
-        These answer from general knowledge — they cannot see any of your company&apos;s data.
-        Pick how much thinking you need; each message is charged to the workspace.
+      <SectionHead title="General assistant">
+        For everyday questions and writing help. These do not have access to your company&apos;s
+        data or files. Choose how much thinking you need. Each message has a small cost to your
+        workspace.
       </SectionHead>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
         {list.map((t) => (
           <TierCard key={t.key} tier={t} onOpen={onOpen} />
         ))}
@@ -42,7 +43,7 @@ export function ModelChoice({
           onClick={() => setShowAll(!showAll)}
           aria-expanded={showAll}
         >
-          {showAll ? "▾" : "▸"} Choose a specific model instead ({models.length} available)
+          {showAll ? "▾" : "▸"} I want to choose a specific AI model ({models.length} available)
         </button>
         {showAll ? (
           <div className="mt-3 card divide-y" style={{ borderColor: "var(--line)" }}>

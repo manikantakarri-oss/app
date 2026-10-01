@@ -223,6 +223,7 @@ chat.py         invocation; parses BOTH JSON and SSE replies
 adapters.py     one transport shape per agent protocol, with probe-and-learn
 llm.py          foundation models, the on/off switch, real spend
 files.py        uploads for file-driven agents
+builder.py      create/edit Supervisor Agents and attach tools (admin-only routes)
 sync_agents.py  pulls agent names/settings out of Databricks into tags
 ui/             Next.js 14 + React 18 + Tailwind 3 (see ui/README.md)
 web/            built static export of ui/ - this is what FastAPI serves
@@ -236,6 +237,76 @@ so the API keeps priority. Rebuild with:
 ```bash
 cd ui && npm install && npm run build && cp -r out ../web
 ```
+
+## Building Supervisor Agents
+
+Admins get a **Create an assistant** tab, a guided step-by-step flow (name, instructions, abilities, files, who can use it, review). It creates a real Agent Bricks Supervisor Agent
+(`/api/2.1/supervisor-agents`), so it also shows in the workspace's own Agents page and the
+portal still stores nothing. An admin sets the name, description and instructions (system
+prompt), and attaches tools: Unity Catalog functions, Genie spaces, Knowledge Assistants,
+volumes, MCP servers (UC connections and Databricks apps), and Vector Search indexes.
+Editing reconciles tools (add / remove / re-describe) and leaves tools added in Databricks
+with a type the builder does not model untouched. Creation is all-or-nothing: if a tool is
+rejected the half-built agent is deleted.
+
+**Identity.** The API needs the `supervisor-agents` scope, which an Apps user token cannot
+hold. The admin's own token is tried first (works locally); only if Databricks says the token
+lacks the scope is the call retried as the app's service principal, and the admin is then
+given CAN_MANAGE on the agent. Any other refusal (a real permission error, or a plan that
+does not include Supervisor Agents) is shown, never retried. Every result says which identity
+did the work. Edits and deletes still require the admin to hold CAN_MANAGE on that agent.
+
+**Unverified against a live workspace:** the Supervisor Agent API is Beta and its tool shapes
+are taken from the API reference, not exercised here. Vector Search is the one tool type whose
+nested field is undocumented, so it is flagged in the UI. Run `python test_builder.py` for the
+offline tests; the first real create is the live check.
+
+Teams and people chosen in the wizard get CAN_QUERY through the same `access.set_grant`
+the Manage access screen uses. Because the serving endpoint does not exist yet, this is
+applied by the same background task below, one grant at a time (a bad name is logged and does
+not stop the others). When editing an existing assistant the step is hidden: use
+Admin > People & access, which shows the current list.
+
+After creation the serving endpoint takes a few minutes to appear. A background task then tags
+it (name, description, `agent_id`) and puts the creator and portal on its ACL. If that times
+out, `python sync_agents.py --apply` finishes the job.
+
+### Data assistants (Genie spaces)
+
+The type picker's second option creates a Genie space (`genie.py`): SQL warehouse, tables,
+example questions and a note, stored in the documented `serialized_space` JSON. Editing keeps
+whatever the builder does not model. Create may fall back to the app identity on a missing scope
+(like supervisors); edit and delete use the admin's own token only. Chosen teams and people get
+CAN_RUN on the space straight away. Since the portal chats only with serving endpoints, a
+default-on option also creates a small supervisor around the space so it appears under Your
+assistants. People still need `SELECT` on the tables, which the portal cannot grant. Not yet
+exercised against a live workspace; the `text_instructions` item shape is the one part the
+reference does not show. `python test_genie.py` runs the offline tests.
+
+### Document assistants (Knowledge Assistants)
+
+The type picker's third option creates a Knowledge Assistant (`knowledge.py`): a name and
+description, up to ten folders of documents (each with a description of what is in it), optional
+instructions, and who can use it. The Databricks name allows only letters, numbers and dashes, so
+the friendly name is kept in a tag and the Databricks name is derived from it. Only "Files in a
+Volume" sources are offered. Creation is all-or-nothing and shows Databricks' own message if it
+refuses something. **Not yet run against a live workspace**: the field that carries a folder path
+(`files.path`), the sources sub-path and the sync call are not in the API reference, so the first
+real create is the check. Editing changes the name, description and instructions; documents are
+changed in Databricks. Reading the documents takes minutes, so the assistant appears under Your
+assistants (with its access) once its endpoint exists. `python test_knowledge.py` runs the
+offline tests.
+
+## Dashboards
+
+**My dashboard** shows each person their own activity (questions, conversations, assistants used,
+files in and out, questions per day). Admins also get **Everyone**: a ranked table of people, any
+one person's numbers, and an estimated cost per person. It is built entirely from the saved chat
+history, so it needs `PORTAL_CHAT_TABLE` (or the log table beside it) and only counts chats since
+that was switched on. Admins see counts only, never what anyone asked. Cost per person is an
+estimate: Databricks bills per assistant, so each assistant's real cost is shared by each person's
+share of questions to it, and spend with no portal use behind it is shown separately. Not yet run
+against a live warehouse. `python test_dashboard.py` runs the offline tests.
 
 ## Two traps this PoC already handles
 
@@ -254,6 +325,7 @@ cd ui && npm install && npm run build && cp -r out ../web
   enough for a Genie-backed agent; the *end user* also needs `USE CATALOG` / `USE SCHEMA` /
   `SELECT`. The portal reports the failure clearly but cannot fix it — surfacing UC grants in
   the admin UI is the natural V1.1.
-- **Agent creation is out of scope**, as agreed. Agents, MCP servers, and connectors are still
-  built in Databricks.
+- **Only Supervisor Agents, Genie spaces and Knowledge Assistants can be built here** (see below). Knowledge Assistants, custom
+  Agent Framework agents, MCP servers and UC connections are still created in Databricks - the
+  builder can *attach* them, not make them.
 - Group membership is set by replacing the whole list; there is no incremental add/remove yet.

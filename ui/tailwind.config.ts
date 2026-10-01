@@ -13,6 +13,13 @@ const config: Config = {
         brand: { DEFAULT: "#2f6df6", ink: "#ffffff", soft: "#eaf0fe" },
       },
       borderRadius: { xl2: "14px" },
+      // One step larger than Tailwind's defaults across the whole portal: hints
+      // and secondary text were 12px, which is hard to read for anyone not
+      // staring at software all day. Bumping the scale lifts every screen at once.
+      fontSize: {
+        xs: ["0.8125rem", { lineHeight: "1.25rem" }],
+        sm: ["0.9375rem", { lineHeight: "1.5rem" }],
+      },
     },
   },
   plugins: [],

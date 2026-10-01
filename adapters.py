@@ -34,7 +34,10 @@ TEXT_KEYS = ("output_text", "text", "summary_text")
 # (e.g. an Agent Bricks supervisor's final_response wrapper never carries
 # structured tool-call data at all) - the model itself tends to state the
 # generated file's Volume path in prose, so extract it from there instead.
-VOLUME_PATH_RE = re.compile(r"/Volumes/[\w.\-/]+?\.\w+")
+# Greedy on purpose: a lazy match stops at the first ".word", which truncates
+# names like Report_2026.10.pptx to Report_2026.10. The caller strips the
+# trailing punctuation a sentence puts after a path.
+VOLUME_PATH_RE = re.compile(r"/Volumes/[\w.\-/]+\.\w+")
 
 
 # --------------------------------------------------------------------- requests

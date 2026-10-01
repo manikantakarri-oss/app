@@ -316,13 +316,15 @@ export function Chat({
             <>
               <button
                 type="button"
-                className="icon-btn !h-10 !w-10 !rounded-full"
+                className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition hover:bg-[var(--bubble)] disabled:opacity-50"
+                style={{ color: "var(--ink-dim)" }}
                 onClick={() => fileRef.current?.click()}
                 disabled={!!uploading}
                 title={accepts.length ? `Attach a file (${accepts.join(", ")})` : "Attach a file"}
                 aria-label="Attach a file"
               >
                 <PaperclipIcon size={20} />
+                <span className="hidden sm:inline">Attach a file</span>
               </button>
               <input
                 ref={fileRef}
@@ -340,11 +342,11 @@ export function Chat({
 
           <textarea
             ref={inputRef}
-            className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-2 py-2.5 text-[15px] outline-none placeholder:text-[var(--ink-faint)]"
+            className="max-h-[200px] min-h-[44px] w-full resize-none bg-transparent px-2 py-3 text-base outline-none placeholder:text-[var(--ink-faint)]"
             rows={1}
             value={draft}
             aria-label="Your message"
-            placeholder={`Message ${agent.display_name}`}
+            placeholder="Type your question here…"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               // isComposing: Enter confirms an IME candidate (Japanese, Chinese,
@@ -360,7 +362,7 @@ export function Chat({
             type="button"
             onClick={send}
             disabled={!canSend}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition"
+            className="inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-sm font-semibold transition"
             style={
               canSend
                 ? { background: "var(--brand)", color: "var(--brand-ink)" }
@@ -369,16 +371,17 @@ export function Chat({
             title="Send"
             aria-label="Send message"
           >
-            <ArrowUpIcon size={20} />
+            <span className="hidden sm:inline">Send</span>
+            <ArrowUpIcon size={18} />
           </button>
         </div>
       </div>
       <p className="mt-2 text-center text-xs faint">
-        Enter to send · Shift+Enter for a new line
+        Press Enter to send · Shift+Enter for a new line
         {agent.supports_files
           ? accepts.length
-            ? ` · Files: ${accepts.join(", ")}`
-            : " · Any file type"
+            ? ` · You can attach: ${accepts.join(", ")}`
+            : " · You can attach any kind of file"
           : ""}
       </p>
     </div>
@@ -387,7 +390,7 @@ export function Chat({
   return (
     <div
       className="flex flex-col md:flex-row"
-      style={{ height: "calc(100dvh - 4.25rem)", minHeight: 460 }}
+      style={{ height: "calc(100dvh - var(--header-h, 4rem))", minHeight: 460 }}
     >
       {historyEnabled ? (
         <ChatHistory
@@ -423,10 +426,10 @@ export function Chat({
             type="button"
             onClick={onBack}
             className="inline-flex shrink-0 items-center gap-1 rounded-lg py-1.5 pl-1.5 pr-2.5 text-sm muted transition hover:bg-[var(--bubble)] hover:text-[var(--ink)]"
-            title="Back to all agents"
+            title="Back to all assistants"
           >
             <ChevronLeftIcon size={16} />
-            Agents
+            All assistants
           </button>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-[15px] font-semibold leading-tight">
@@ -444,7 +447,7 @@ export function Chat({
               className="hidden shrink-0 text-sm muted underline hover:text-[var(--ink)] sm:inline"
               onClick={() => onSwitch(models[0])}
             >
-              Ask a general assistant instead
+              Use the general assistant instead
             </button>
           ) : null}
           {!historyEnabled && turns.length > 0 ? (
@@ -462,7 +465,7 @@ export function Chat({
         </div>
 
         {err ? (
-          <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
+          <div className="mx-auto w-full max-w-5xl shrink-0 px-4">
             <ErrorBox>{err}</ErrorBox>
           </div>
         ) : null}
@@ -485,7 +488,21 @@ export function Chat({
                   ? "Attach a file, or just type your question to get started."
                   : "Type a question to get started.")}
             </p>
-            <div className="mt-8 w-full max-w-3xl">{composer}</div>
+            <ol className="mt-6 flex max-w-2xl flex-col gap-2 text-sm muted sm:flex-row sm:gap-8">
+              <li className="flex items-center gap-2 whitespace-nowrap">
+                <span className="step-num">1</span> Type your question
+              </li>
+              {agent.supports_files ? (
+                <li className="flex items-center gap-2 whitespace-nowrap">
+                  <span className="step-num">2</span> Attach a file if needed
+                </li>
+              ) : null}
+              <li className="flex items-center gap-2 whitespace-nowrap">
+                <span className="step-num">{agent.supports_files ? 3 : 2}</span>{" "}
+                {agent.output_volume ? "Download your result" : "Read the answer"}
+              </li>
+            </ol>
+            <div className="mt-8 w-full max-w-5xl">{composer}</div>
           </div>
         ) : (
           <>
@@ -497,7 +514,7 @@ export function Chat({
               aria-live="polite"
               aria-label="Conversation"
             >
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-7 px-4 py-6">
+              <div className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-6">
                 {turns.map((t, i) => (
                   <Message
                     key={i}
@@ -513,7 +530,7 @@ export function Chat({
                 {busy ? <Typing /> : null}
               </div>
             </div>
-            <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-3 pt-1">{composer}</div>
+            <div className="mx-auto w-full max-w-5xl shrink-0 px-4 pb-3 pt-1">{composer}</div>
           </>
         )}
       </div>
@@ -532,7 +549,7 @@ function Typing() {
           <span className="typing-dot" style={{ animationDelay: "0.15s" }} />
           <span className="typing-dot" style={{ animationDelay: "0.3s" }} />
         </div>
-        <p className="mt-1.5 text-xs faint">Working on it — this can take a moment.</p>
+        <p className="mt-1.5 text-xs faint">Working on it. This can take a minute.</p>
       </div>
     </div>
   );
@@ -577,7 +594,7 @@ function Message({
     return (
       <div className="flex flex-col items-end">
         <div
-          className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl px-4 py-2.5 text-[15px]"
+          className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl px-4 py-2.5 text-base"
           style={{ background: "var(--bubble)" }}
         >
           {turn.text}
@@ -599,7 +616,7 @@ function Message({
           <div className="error whitespace-pre-wrap">{turn.text}</div>
           {onRetry ? (
             <button type="button" className="btn btn-quiet mt-2" onClick={onRetry}>
-              <RefreshIcon size={15} /> Try again
+              <RefreshIcon size={15} /> Try that again
             </button>
           ) : null}
         </div>
@@ -612,7 +629,7 @@ function Message({
     <div className="group flex gap-3">
       <Avatar />
       <div className="min-w-0 flex-1">
-        <div className="md break-words text-[15px] leading-relaxed">
+        <div className="md break-words text-base leading-relaxed">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -633,7 +650,7 @@ function Message({
 
         {turn.citations?.length ? (
           <div className="mt-3">
-            <p className="text-xs faint">Based on</p>
+            <p className="text-xs faint">Where this came from</p>
             <ul className="mt-1 space-y-0.5">
               {turn.citations.map((c, i) => (
                 <li key={i} className="text-sm">
@@ -658,26 +675,24 @@ function Message({
         {turn.attachments?.length ? (
           <div className="mt-3">
             <p className="text-xs faint">
-              {turn.attachments.length > 1 ? "Files created" : "File created"}
+              {turn.attachments.length > 1 ? "Your files are ready" : "Your file is ready"}
             </p>
             {turn.attachments.map((f, i) =>
               agent.output_volume && f.path ? (
-                <a
-                  key={i}
-                  href={downloadUrl(agent.name, f.path)}
-                  className="mt-1.5 flex w-fit items-center gap-2 rounded-xl px-3 py-2 text-sm transition hover:bg-[var(--bubble)]"
-                  style={{ border: "1px solid var(--line)" }}
-                >
-                  ⬇ {f.name || f.path}
-                </a>
+                <FileLink key={i} endpoint={agent.name} file={f} />
               ) : (
-                <code
-                  key={i}
-                  className="mt-1.5 block break-all rounded-md px-2 py-1 text-xs"
-                  style={{ background: "var(--bubble)" }}
-                >
-                  {f.path || f.name}
-                </code>
+                <div key={i} className="mt-1.5">
+                  <code
+                    className="block break-all rounded-md px-2 py-1 text-xs"
+                    style={{ background: "var(--bubble)" }}
+                  >
+                    {f.path || f.name}
+                  </code>
+                  <p className="mt-1 text-xs faint">
+                    Not downloadable: this agent has no results folder set. An admin can set one
+                    under Manage access.
+                  </p>
+                </div>
               )
             )}
           </div>
@@ -694,10 +709,69 @@ function Message({
             {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
           </button>
           {turn.tools?.length ? (
-            <p className="text-xs faint">Used: {turn.tools.join(", ")}</p>
+            <p className="text-xs faint">Worked with: {turn.tools.join(", ")}</p>
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A generated file. Checks the response before saving, so a refusal (not in the
+ *  results folder, no READ VOLUME, file not there) is shown here in words rather
+ *  than as a raw error page. */
+function FileLink({ endpoint, file }: { endpoint: string; file: { name: string; path: string } }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function get(e: React.MouseEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch(downloadUrl(endpoint, file.path));
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = "";
+        try {
+          const j = JSON.parse(text);
+          msg = j.error || j.detail || "";
+        } catch {
+          msg = text.slice(0, 200);
+        }
+        throw new Error(msg || `Download failed (${res.status})`);
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name || file.path.split("/").pop() || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (ex: any) {
+      setErr(ex.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-1.5">
+      <a
+        href={downloadUrl(endpoint, file.path)}
+        onClick={get}
+        className="flex w-fit items-center gap-2 rounded-xl px-3 py-2 text-sm transition hover:bg-[var(--bubble)]"
+        style={{ border: "1px solid var(--line)" }}
+        aria-busy={busy}
+      >
+        ⬇ {busy ? "Downloading…" : `Download ${file.name || file.path}`}
+      </a>
+      {err ? (
+        <p className="mt-1 whitespace-pre-wrap text-xs" style={{ color: "var(--err)" }}>
+          {err}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -360,6 +360,18 @@ def _():
     assert [m["role"] for m in payload["input"]] == ["system", "user"], payload
 
 
+@case("volume path in prose: dotted file names are not truncated, sentence punctuation is dropped")
+def _():
+    base = "/Volumes/c/s/v/output/"
+    for name in ("Report_2026.10.pptx", "MidCampaign_abc.pptx", "v1.2.final.pptx"):
+        for tail in (".", ")", ",", "`", ""):
+            body = {"output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "Done! Your file is at `" + base + name + "`" + tail + " Enjoy"}]}]}
+            out = adapters.parse(body)
+            paths = [a["path"] for a in out["attachments"]]
+            assert paths == [base + name], (name, tail, paths)
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:

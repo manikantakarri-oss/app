@@ -12,6 +12,10 @@ from datetime import datetime, timezone
 
 MAX_LINES = 500
 
+# formatException lives on a Formatter, not on a Handler, so a handler that wants a
+# traceback needs one of its own.
+_FMT = logging.Formatter()
+
 
 class RingHandler(logging.Handler):
     def __init__(self, capacity: int = MAX_LINES):
@@ -26,7 +30,7 @@ class RingHandler(logging.Handler):
                     "level": record.levelname,
                     "source": record.name,
                     "message": record.getMessage()
-                    + (("\n" + self.formatException(record.exc_info)) if record.exc_info else ""),
+                    + (("\n" + _FMT.formatException(record.exc_info)) if record.exc_info else ""),
                 }
             )
         except Exception:  # a logging failure must never break a request

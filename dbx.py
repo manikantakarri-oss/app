@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from typing import Any
 
@@ -37,6 +38,30 @@ QUERYABLE = {"CAN_QUERY", "CAN_MANAGE"}
 
 _cli_token: tuple[str, float] | None = None
 _sp_token: tuple[str, float] | None = None
+
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def http() -> httpx.Client:
+    """The one HTTP client every Databricks call goes through.
+
+    `httpx.request(...)` builds a brand-new client for every call, and building
+    one loads the TLS certificate bundle. Measured: about 250 ms of the portal's
+    own CPU per call, which capped a whole process at roughly 8 upstream calls a
+    second however many threads it had. One shared client reuses connections and
+    costs about 1 ms, so the portal stops being the bottleneck. The client is
+    safe to share between threads.
+    """
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client(
+                    limits=httpx.Limits(max_connections=400, max_keepalive_connections=100, keepalive_expiry=30),
+                    timeout=120,
+                )
+    return _client
 
 
 class DbxError(RuntimeError):
@@ -109,7 +134,7 @@ def app_token() -> str:
     global _sp_token
     if _sp_token and _sp_token[1] > time.time() + 60:
         return _sp_token[0]
-    resp = httpx.post(
+    resp = http().post(
         f"{host()}/oidc/v1/token",
         data={"grant_type": "client_credentials", "scope": "all-apis"},
         auth=(os.environ["DATABRICKS_CLIENT_ID"], os.environ["DATABRICKS_CLIENT_SECRET"]),
@@ -149,7 +174,7 @@ def call(method: str, path: str, token: str, **kw) -> Any:
     # For best-effort calls whose failure is expected (and handled by the
     # caller): logged quietly so they do not fill the problem log.
     quiet = kw.pop("quiet", False)
-    resp = httpx.request(method, f"{host()}{path}", headers=headers, timeout=120, **kw)
+    resp = http().request(method, f"{host()}{path}", headers=headers, timeout=120, **kw)
     if resp.status_code >= 400:
         # Logged here as well as in the route handler, because callers often
         # swallow this error (name lookups, "why" labels) and it would vanish.

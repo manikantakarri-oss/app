@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Agent, api, Session } from "@/lib/api";
 import { AgentCard } from "@/components/AgentCard";
 import { ModelChoice } from "@/components/ModelChoice";
 import { Chat } from "@/components/Chat";
 import { Admin } from "@/components/Admin";
+import { Builder } from "@/components/Builder";
+import { Dashboard } from "@/components/Dashboard";
 import { Empty, ErrorBox, SectionHead, Spinner } from "@/components/bits";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { SparkleIcon } from "@/components/icons";
+import { initials, nameOf } from "@/lib/people";
 
 export default function Page() {
   const [session, setSession] = useState<Session | null>(null);
@@ -23,12 +27,14 @@ export default function Page() {
 
   const [open, setOpen] = useState<Agent | null>(null);
   const [tab, setTab] = useState("agents");
+  const [find, setFind] = useState("");
+  const headerRef = useRef<HTMLElement>(null);
 
   // Tabs are reflected in the URL so a section can be linked to and survives
   // a refresh.
   useEffect(() => {
     const want = window.location.hash.replace("#", "");
-    if (want === "models" || want === "admin") setTab(want);
+    if (want === "models" || want === "admin" || want === "build" || want === "dashboard") setTab(want);
   }, []);
 
   function pickTab(next: string) {
@@ -61,6 +67,16 @@ export default function Page() {
       .catch(() => setModelsOffered(false));
   }, [session]);
 
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const set = () => document.documentElement.style.setProperty("--header-h", el.offsetHeight + "px");
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [session]);
+
   if (fatal) {
     return (
       <Main>
@@ -82,18 +98,52 @@ export default function Page() {
   }
 
   return (
-    <>
-      <header
-        className="sticky top-0 z-10 flex flex-wrap items-center gap-3 px-5 py-3.5"
-        style={{ background: "var(--surface)", borderBottom: "1px solid var(--line)" }}
-      >
-        <span className="text-[17px] font-semibold tracking-[-0.01em]">Agent Portal</span>
-        <span className="tag">{session.display_name}</span>
-        <span className="flex-1" />
-        <span className="hidden text-xs faint sm:inline">
-          {session.auth_mode === "local-dev" ? "local development" : "signed in via Databricks"}
-        </span>
-        <ThemeToggle />
+    <Tabs.Root
+      value={tab}
+      onValueChange={(v) => {
+        // Navigating always leaves an open chat, so the bar works from anywhere.
+        setOpen(null);
+        pickTab(v);
+      }}
+    >
+      <header ref={headerRef} className="app-header sticky top-0 z-20 flex flex-wrap items-center gap-x-6 px-5 lg:px-10">
+        <div className="flex h-16 items-center gap-3">
+          <span className="logo-mark" aria-hidden>
+            <SparkleIcon size={20} />
+          </span>
+          <span className="text-[17px] font-semibold tracking-[-0.02em]">Agent Portal</span>
+        </div>
+
+        <nav
+          className="order-last -mx-5 w-full overflow-x-auto px-5 [scrollbar-width:none] lg:order-none lg:mx-0 lg:w-auto lg:flex-1 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden"
+          aria-label="Main"
+        >
+          <Tabs.List className="flex" aria-label="Sections">
+            <TabButton value="agents">Your assistants</TabButton>
+            <TabButton value="dashboard">My dashboard</TabButton>
+            {modelsOffered ? <TabButton value="models">General assistant</TabButton> : null}
+            {session.is_admin ? <TabButton value="build">Create an assistant</TabButton> : null}
+            {session.is_admin ? <TabButton value="admin">Admin</TabButton> : null}
+          </Tabs.List>
+        </nav>
+
+        <div className="ml-auto flex h-16 items-center gap-3 lg:ml-0">
+          <div className="flex items-center gap-3" title={session.user_name}>
+            <span className="avatar" aria-hidden>
+              {initials(session.display_name)}
+            </span>
+            <span className="hidden min-w-0 leading-tight md:block">
+              <span className="block max-w-[220px] truncate text-sm font-semibold">
+                {session.display_name.includes("@") ? nameOf(session.display_name) : session.display_name}
+              </span>
+              <span className="block text-xs faint">
+                {session.is_admin ? "Administrator" : "Member"}
+                {session.auth_mode === "local-dev" ? " · local" : ""}
+              </span>
+            </span>
+          </div>
+          <ThemeToggle />
+        </div>
       </header>
 
       <Main wide={!!open}>
@@ -107,39 +157,61 @@ export default function Page() {
             onSwitch={setOpen}
           />
         ) : (
-          <Tabs.Root value={tab} onValueChange={pickTab}>
-            <Tabs.List
-              className="mb-6 flex gap-1 overflow-x-auto"
-              aria-label="Sections"
-            >
-              <TabButton value="agents">Your agents</TabButton>
-              {modelsOffered ? (
-                <TabButton value="models">
-                  Ask an assistant
-                </TabButton>
-              ) : null}
-              {session.is_admin ? <TabButton value="admin">Manage access</TabButton> : null}
-            </Tabs.List>
-
+          <>
             <Tabs.Content value="agents">
-              <SectionHead title="Your agents">
-                Assistants built for your team. Pick one and ask it a question in plain English.
-              </SectionHead>
+              <div className="mb-6">
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  Hi {firstName(session.display_name)}, how can we help today?
+                </h1>
+                <p className="mt-1.5 text-[15px] muted">
+                  Choose an assistant below, then type your question the way you would ask a
+                  colleague.
+                </p>
+              </div>
               <ErrorBox>{agentsErr}</ErrorBox>
               {agents === null ? (
-                <Spinner label="Loading your agents…" />
+                <Spinner label="Loading your assistants…" />
               ) : agents.length === 0 ? (
                 <Empty
-                  title="You do not have any agents yet"
+                  title="You do not have any assistants yet"
                   hint="An admin needs to give you access before anything appears here."
                 />
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {agents.map((a) => (
-                    <AgentCard key={a.name} agent={a} onOpen={setOpen} />
-                  ))}
-                </div>
+                <>
+                  {agents.length > 6 ? (
+                    <input
+                      className="field mb-4 max-w-md"
+                      type="search"
+                      value={find}
+                      onChange={(e) => setFind(e.target.value)}
+                      placeholder="Search your assistants"
+                      aria-label="Search your assistants"
+                    />
+                  ) : null}
+                  {(() => {
+                    const q = find.trim().toLowerCase();
+                    const shown = agents.filter(
+                      (a) =>
+                        !q ||
+                        a.display_name.toLowerCase().includes(q) ||
+                        (a.blurb || "").toLowerCase().includes(q)
+                    );
+                    return shown.length === 0 ? (
+                      <p className="text-sm muted">No assistants match “{find}”.</p>
+                    ) : (
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+                        {shown.map((a) => (
+                          <AgentCard key={a.name} agent={a} onOpen={setOpen} />
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </>
               )}
+            </Tabs.Content>
+
+            <Tabs.Content value="dashboard">
+              <Dashboard isAdmin={session.is_admin} />
             </Tabs.Content>
 
             {modelsOffered ? (
@@ -155,20 +227,33 @@ export default function Page() {
             ) : null}
 
             {session.is_admin ? (
+              <Tabs.Content value="build">
+                <Builder onGoto={pickTab} />
+              </Tabs.Content>
+            ) : null}
+
+            {session.is_admin ? (
               <Tabs.Content value="admin">
                 <Admin />
               </Tabs.Content>
             ) : null}
-          </Tabs.Root>
+          </>
         )}
       </Main>
-    </>
+    </Tabs.Root>
   );
+}
+
+/** "Hi Soham" reads better than "Hi soham.kamtikar@databeat.io". */
+function firstName(display: string) {
+  const base = (display || "").split("@")[0].replace(/[._]/g, " ").trim();
+  const first = base.split(/\s+/)[0] || "there";
+  return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
 function TabButton({ value, children }: { value: string; children: React.ReactNode }) {
   return (
-    <Tabs.Trigger value={value} className="tab">
+    <Tabs.Trigger value={value} className="nav-tab">
       {children}
     </Tabs.Trigger>
   );
@@ -182,7 +267,7 @@ function Main({ children, wide = false }: { children: React.ReactNode; wide?: bo
       className={
         wide
           ? "w-full"
-          : "mx-auto w-full max-w-5xl px-5 pb-20 pt-6"
+          : "w-full px-5 pb-20 pt-8 lg:px-10"
       }
     >
       {children}

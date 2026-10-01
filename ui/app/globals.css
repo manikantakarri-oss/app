@@ -37,6 +37,8 @@
      against white, so charts use the deeper teal, which passes every check. */
   --chart-1: #058ea8;
   --chart-on: #ffffff;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 12px 32px -12px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.06);
 }
 /* Follow the OS unless the viewer has explicitly asked for light. */
 @media (prefers-color-scheme: dark) {
@@ -62,6 +64,8 @@
      band (0.775), #0fa39c passes every check against #161c1b. */
   --chart-1: #0fa39c;
   --chart-on: #06110f;
+  --shadow: none;
+  --shadow-lg: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
   }
 }
 
@@ -87,6 +91,8 @@
      band (0.775), #0fa39c passes every check against #161c1b. */
   --chart-1: #0fa39c;
   --chart-on: #06110f;
+  --shadow: none;
+  --shadow-lg: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
 }
 
 html, body { background: var(--canvas); color: var(--ink); }
@@ -97,6 +103,10 @@ html, body { background: var(--canvas); color: var(--ink); }
   :root:not([data-theme="light"]) { color-scheme: dark; }
 }
 body {
+  /* A faint wash of the brand colour at the top of the page, so the header and
+     first screen feel like one surface instead of a white bar on grey. */
+  background-image: radial-gradient(900px 320px at 50% -120px, var(--brand-soft), transparent 70%);
+  background-repeat: no-repeat;
   /* Inter is what MediaMint uses for body text. Their headings are Roc
      Grotesk, which is a licensed font we cannot ship, so Inter carries both
      at a heavier weight. */
@@ -110,10 +120,17 @@ h1, h2, h3 { letter-spacing: -0.015em; }
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 14px;
+    box-shadow: var(--shadow);
   }
+  button.card:hover, a.card:hover { box-shadow: var(--shadow-lg); }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition;
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition;
   }
+  .btn:focus-visible, .tab:focus-visible, .row-btn:focus-visible, .icon-btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  .btn-lg { @apply min-h-[52px] px-6 text-base font-semibold; }
   .btn-primary { background: var(--brand); color: var(--brand-ink); }
   .btn-primary:hover { background: var(--brand-deep); }
   .btn-primary:disabled { opacity: .5; }
@@ -128,8 +145,11 @@ h1, h2, h3 { letter-spacing: -0.015em; }
     background: var(--canvas);
     border: 1px solid var(--line);
     color: var(--ink);
-    @apply rounded-lg px-3 py-2 text-sm w-full;
+    @apply min-h-[44px] rounded-lg px-3.5 py-2.5 text-sm w-full;
   }
+  textarea.field { line-height: 1.55; }
+  .label { @apply block text-[15px] font-semibold; }
+  .help { @apply mt-1 block text-[13px] leading-5; color: var(--ink-faint); }
   .field:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
   .tag {
     @apply inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium;
@@ -222,7 +242,7 @@ h1, h2, h3 { letter-spacing: -0.015em; }
   /* Radix sets data-state="active"; keep the styling in CSS so the active
      state can actually win (an inline style would beat a Tailwind variant). */
   .tab {
-    @apply whitespace-nowrap rounded-lg px-3.5 py-2 text-sm transition;
+    @apply inline-flex min-h-[44px] items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm transition;
     border: 1px solid var(--line);
     color: var(--ink-dim);
     background: transparent;
@@ -233,5 +253,95 @@ h1, h2, h3 { letter-spacing: -0.015em; }
     font-weight: 600;
     border-color: var(--brand);
     background: var(--brand-soft);
+  }
+}
+
+/* Guided builder: the step bar and the choice cards. */
+@layer components {
+  .progress { height: 6px; border-radius: 9999px; background: var(--bubble); overflow: hidden; }
+  .progress > span { display: block; height: 100%; background: var(--brand); transition: width .25s ease; }
+  .step-pill {
+    @apply inline-flex min-h-[40px] items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition;
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    background: var(--surface);
+  }
+  .step-pill[aria-current="step"] { border-color: var(--brand); background: var(--brand-soft); color: var(--ink); font-weight: 600; }
+  .step-pill:disabled { opacity: .55; cursor: not-allowed; }
+  .step-num {
+    @apply inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold;
+    background: var(--bubble); color: var(--ink-dim);
+  }
+  .step-pill[aria-current="step"] .step-num, .step-pill[data-done="true"] .step-num { background: var(--brand); color: var(--brand-ink); }
+  .choice {
+    @apply flex w-full items-start gap-3 rounded-xl p-4 text-left transition;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .choice:hover { border-color: var(--brand); }
+  .choice[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); }
+}
+
+/* App shell: the header and its navigation. */
+@layer components {
+  .app-header {
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-tab {
+    @apply relative inline-flex h-12 shrink-0 items-center px-3.5 text-[15px] font-medium transition-colors lg:h-16;
+    color: var(--ink-dim);
+  }
+  .nav-tab:hover { color: var(--ink); }
+  .nav-tab:focus-visible { outline: 2px solid var(--brand); outline-offset: -4px; border-radius: 8px; }
+  .nav-tab[data-state="active"] { color: var(--ink); font-weight: 600; }
+  .nav-tab[data-state="active"]::after {
+    content: "";
+    position: absolute;
+    left: 0.875rem;
+    right: 0.875rem;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--brand);
+  }
+  .logo-mark {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-[10px];
+    background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+    color: #fff;
+    box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--brand-deep) 55%, transparent);
+  }
+  .avatar {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold;
+    background: var(--brand-soft);
+    color: var(--brand-deep);
+    border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+  }
+  /* Segmented control: one choice out of a few, always visible. */
+  .seg {
+    @apply inline-flex rounded-xl p-1;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .seg > button {
+    @apply min-h-[36px] rounded-lg px-3.5 text-sm font-medium transition;
+    color: var(--ink-dim);
+  }
+  .seg > button:hover { color: var(--ink); }
+  .seg > button[aria-selected="true"], .seg > button[aria-pressed="true"] {
+    background: var(--brand);
+    color: var(--brand-ink);
+    font-weight: 600;
+  }
+  .seg > button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+}
+
+@layer components {
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums;
+    background: var(--canvas);
+    border: 1px solid var(--line);
   }
 }

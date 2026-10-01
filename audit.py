@@ -25,7 +25,7 @@ import json
 
 import httpx
 
-from dbx import DbxError, call, host
+from dbx import DbxError, call, host, http
 
 # What a viewer can ask to see. Ordered from "matters to everyone" down to
 # "only matters when something is broken".
@@ -252,7 +252,7 @@ def _sql(days: int, cats: list, limit: int, ws: str) -> str:
 
 def _run(query: str, user_tok: str, warehouse: str) -> list:
     try:
-        resp = httpx.post(
+        resp = http().post(
             host() + "/api/2.0/sql/statements",
             headers={"Authorization": "Bearer " + user_tok},
             json={"statement": query, "warehouse_id": warehouse, "wait_timeout": "50s"},

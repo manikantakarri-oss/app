@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { MoonIcon, SunIcon } from "./icons";
 
 type Choice = "light" | "dark";
 const KEY = "agent-portal-theme";
@@ -33,7 +34,6 @@ function stored(): Choice {
 }
 
 const LABEL: Record<Choice, string> = { light: "Light", dark: "Dark" };
-const ICON: Record<Choice, string> = { light: "☀", dark: "☾" };
 
 export function ThemeToggle() {
   const [choice, setChoice] = useState<Choice>("light");
@@ -60,12 +60,11 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={next}
-      className="btn btn-quiet"
+      className="icon-btn !h-10 !w-10"
       title={`Appearance: ${LABEL[choice]}. Click to switch to ${LABEL[choice === "light" ? "dark" : "light"]}.`}
       aria-label={`Appearance: ${LABEL[choice]}. Click to switch.`}
     >
-      <span aria-hidden>{ICON[choice]}</span>
-      <span className="hidden sm:inline">{LABEL[choice]}</span>
+      {choice === "light" ? <SunIcon size={20} /> : <MoonIcon size={20} />}
     </button>
   );
 }

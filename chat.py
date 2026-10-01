@@ -20,7 +20,7 @@ import json
 import httpx
 
 import adapters
-from dbx import DbxError, host
+from dbx import DbxError, host, http
 
 
 def _detail(body: str, fallback: str) -> str:
@@ -35,7 +35,7 @@ def _detail(body: str, fallback: str) -> str:
 
 def _post(endpoint: str, payload: dict, user_tok: str) -> httpx.Response:
     try:
-        return httpx.post(
+        return http().post(
             host() + "/serving-endpoints/" + endpoint + "/invocations",
             headers={"Authorization": "Bearer " + user_tok, "Content-Type": "application/json"},
             json=payload,

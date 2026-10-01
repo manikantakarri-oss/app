@@ -14,6 +14,7 @@ export function Admin() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [openName, setOpenName] = useState<string | null>(null);
+  const [view, setView] = useState("access");
 
   async function load() {
     setErr("");
@@ -41,32 +42,66 @@ export function Admin() {
   }
 
   return (
-    <div className="space-y-10">
-      <div>
-        <SectionHead title="Who can use each agent">
-          Pick an agent to see who has access and change it. Everything is saved straight into
-          Databricks.
-        </SectionHead>
-        <ErrorBox>{err}</ErrorBox>
-        {loading ? (
-          <Spinner label="Loading…" />
-        ) : !data?.agents.length ? (
-          <p className="text-sm muted">No agents have been shared with the portal yet.</p>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {data.agents.map((a) => (
-              <AgentTile key={a.name} agent={a} onOpen={() => setOpenName(a.name)} />
-            ))}
-          </div>
-        )}
+    <div>
+      <div
+        className="mb-7 inline-flex max-w-full flex-wrap gap-1 rounded-xl p-1"
+        style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+        role="tablist"
+        aria-label="Admin sections"
+      >
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            type="button"
+            role="tab"
+            aria-selected={view === v.key}
+            onClick={() => setView(v.key)}
+            className="rounded-lg px-4 py-2 text-sm transition"
+            style={
+              view === v.key
+                ? { background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 600 }
+                : { color: "var(--ink-dim)" }
+            }
+          >
+            {v.label}
+          </button>
+        ))}
       </div>
 
-      <Spending />
-      <Activity />
-      <Logs />
+      {view === "access" ? (
+        <div>
+          <SectionHead title="Who can use each assistant">
+            Pick an assistant to see who can use it and to change that. Changes are saved straight
+            away.
+          </SectionHead>
+          <ErrorBox>{err}</ErrorBox>
+          {loading ? (
+            <Spinner label="Loading…" />
+          ) : !data?.agents.length ? (
+            <p className="text-sm muted">No assistants have been shared with the portal yet.</p>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+              {data.agents.map((a) => (
+                <AgentTile key={a.name} agent={a} onOpen={() => setOpenName(a.name)} />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {view === "costs" ? <Spending /> : null}
+      {view === "activity" ? <Activity /> : null}
+      {view === "problems" ? <Logs /> : null}
     </div>
   );
 }
+
+const VIEWS = [
+  { key: "access", label: "People & access" },
+  { key: "costs", label: "Costs" },
+  { key: "activity", label: "Activity" },
+  { key: "problems", label: "Problems" },
+];
 
 function AgentTile({ agent, onOpen }: { agent: AdminAgent; onOpen: () => void }) {
   const people = agent.grants.filter(
@@ -81,7 +116,7 @@ function AgentTile({ agent, onOpen }: { agent: AdminAgent; onOpen: () => void })
       className="card w-full p-5 text-left transition hover:border-[var(--brand)]"
     >
       <div className="flex items-start justify-between gap-3">
-        <h3 className="text-[15px] font-semibold leading-snug">{agent.display_name}</h3>
+        <h3 className="text-base font-semibold leading-snug">{agent.display_name}</h3>
         {readOnly ? <span className="tag shrink-0 whitespace-nowrap">View only</span> : null}
       </div>
 
@@ -89,18 +124,18 @@ function AgentTile({ agent, onOpen }: { agent: AdminAgent; onOpen: () => void })
         {agent.acl_error
           ? "Not shared with the portal yet"
           : people.length === 0
-            ? "Nobody has access yet"
+            ? "Nobody can use it yet"
             : `${people.length} ${
-                people.length === 1 ? "person or group has" : "people and groups have"
-              } access`}
+                people.length === 1 ? "person or team can" : "people and teams can"
+              } use it`}
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs faint">
         <span className="inline-flex items-center gap-1.5">
           <StatusDot ok={agent.ready} />
-          {agent.ready ? "Ready" : agent.state}
+          {agent.ready ? "Ready" : "Starting up"}
         </span>
-        {agent.supports_files ? <span>Takes a file</span> : null}
+        {agent.supports_files ? <span>Accepts files</span> : null}
       </div>
     </button>
   );
@@ -164,7 +199,7 @@ function AgentDetail({
     <div>
       <div className="mb-5 flex items-start gap-3">
         <button type="button" onClick={onBack} className="btn btn-quiet shrink-0">
-          ← All agents
+          ← All assistants
         </button>
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold">{agent.display_name}</h2>
@@ -181,23 +216,23 @@ function AgentDetail({
           {readOnly ? (
             <div className="mb-4">
               <Notice>
-                You can see this list but not change it — you do not have Manage permission on
-                this agent in Databricks. Its owner can give you that.
+                You can see this list but not change it, because you do not have Manage permission
+                on this assistant in Databricks. Its owner can give you that.
               </Notice>
             </div>
           ) : null}
 
           <div className="card p-5">
-            <h3 className="text-sm font-semibold">Give someone access</h3>
+            <h3 className="text-base font-semibold">Let someone use this assistant</h3>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <select
                 className="field w-auto"
-                aria-label="A group or one person"
+                aria-label="A team or one person"
                 value={kind}
                 onChange={(e) => setKind(e.target.value as "group" | "user")}
                 disabled={readOnly}
               >
-                <option value="group">A group</option>
+                <option value="group">A team (group)</option>
                 <option value="user">One person</option>
               </select>
               <select
@@ -225,9 +260,9 @@ function AgentDetail({
           </div>
 
           <div className="card mt-4 p-5">
-            <h3 className="text-sm font-semibold">Who has access now</h3>
+            <h3 className="text-base font-semibold">Who can use it now</h3>
             {usable.length === 0 ? (
-              <p className="mt-3 text-sm muted">Nobody yet.</p>
+              <p className="mt-3 text-sm muted">Nobody yet. Add a team or a person above.</p>
             ) : (
               <ul className="mt-2">
                 {usable.map((g) => (
@@ -238,10 +273,10 @@ function AgentDetail({
                   >
                     <span className="min-w-0 flex-1 truncate text-sm">{g.principal}</span>
                     <span className="text-xs faint">
-                      {g.kind === "service_principal" ? "app" : g.kind}
+                      {g.kind === "service_principal" ? "app" : g.kind === "group" ? "team" : g.kind === "user" ? "person" : g.kind}
                     </span>
                     <span className="text-sm muted">
-                      {g.level === "CAN_MANAGE" ? "Use and manage" : "Use"}
+                      {g.level === "CAN_MANAGE" ? "Can use and manage" : "Can use"}
                       {g.inherited ? " (inherited)" : ""}
                     </span>
                     {g.kind !== "service_principal" && !g.inherited && !readOnly ? (
@@ -278,15 +313,17 @@ function Appearance({
   reload: () => void;
   onError: (m: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [name, setName] = useState(agent.display_name);
   const [blurb, setBlurb] = useState(agent.blurb);
   const [vol, setVol] = useState(agent.upload_volume);
+  const [outVol, setOutVol] = useState(agent.output_volume);
   const [accepts, setAccepts] = useState((agent.accepts || []).join(", "));
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   async function save() {
     setBusy(true);
+    setSaved(false);
     onError("");
     try {
       await api.meta({
@@ -294,8 +331,11 @@ function Appearance({
         display_name: name,
         blurb,
         upload_volume: vol,
+        output_volume: outVol,
         accepts,
       });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 4000);
       reload();
     } catch (e: any) {
       onError(e.message);
@@ -306,51 +346,61 @@ function Appearance({
 
   return (
     <div className="card mt-4 p-5">
-      <button
-        type="button"
-        className="text-sm font-semibold"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-      >
-        {open ? "▾" : "▸"} How this agent appears, and what it accepts
-      </button>
-      {open ? (
-        <div className="mt-4 space-y-3">
-          <Row label="Name people see">
-            <input className="field" value={name} onChange={(e) => setName(e.target.value)} />
-          </Row>
-          <Row label="One-line description">
-            <input className="field" value={blurb} onChange={(e) => setBlurb(e.target.value)} />
-          </Row>
-          <Row
-            label="Folder for uploads"
-            hint="Only if this agent reads a file people send it. Format: catalog.schema.volume"
-          >
-            <input
-              className="field"
-              placeholder="catalog.schema.volume"
-              value={vol}
-              onChange={(e) => setVol(e.target.value)}
-            />
-          </Row>
-          <Row label="File types allowed" hint="Leave blank to allow any file.">
-            <input
-              className="field"
-              placeholder="xlsx, csv"
-              value={accepts}
-              onChange={(e) => setAccepts(e.target.value)}
-            />
-          </Row>
+      <h3 className="text-base font-semibold">Name, description and files</h3>
+      <p className="mt-1 text-sm muted">What people see, and what the assistant can take and give back.</p>
+      <div className="mt-4 space-y-4">
+        <Row label="Name people see">
+          <input className="field" value={name} onChange={(e) => setName(e.target.value)} />
+        </Row>
+        <Row label="Short description">
+          <input className="field" value={blurb} onChange={(e) => setBlurb(e.target.value)} />
+        </Row>
+        <Row
+          label="Where files people send are kept"
+          hint="Only if the assistant reads files. Write it as catalog.schema.volume."
+        >
+          <input
+            className="field"
+            placeholder="catalog.schema.volume"
+            value={vol}
+            onChange={(e) => setVol(e.target.value)}
+          />
+        </Row>
+        <Row
+          label="Where files it makes are saved"
+          hint="Only if it creates files people should download. Only files here can be downloaded. Write it as catalog.schema.volume."
+        >
+          <input
+            className="field"
+            placeholder="catalog.schema.volume"
+            value={outVol}
+            onChange={(e) => setOutVol(e.target.value)}
+          />
+        </Row>
+        <Row label="File types allowed" hint="Leave blank to allow any file. For example: xlsx, csv">
+          <input
+            className="field"
+            placeholder="xlsx, csv"
+            value={accepts}
+            onChange={(e) => setAccepts(e.target.value)}
+          />
+        </Row>
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             className="btn btn-primary"
             onClick={save}
             disabled={readOnly || busy}
           >
-            Save
+            {busy ? "Saving…" : "Save these settings"}
           </button>
+          {saved ? (
+            <span className="text-sm font-medium" style={{ color: "var(--ok)" }} role="status">
+              ✓ Saved
+            </span>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
@@ -366,9 +416,9 @@ function Row({
 }) {
   return (
     <label className="block">
-      <span className="text-sm">{label}</span>
-      {hint ? <span className="ml-2 text-xs faint">{hint}</span> : null}
-      <div className="mt-1">{children}</div>
+      <span className="label">{label}</span>
+      <div className="mt-1.5">{children}</div>
+      {hint ? <span className="help block">{hint}</span> : null}
     </label>
   );
 }
@@ -388,9 +438,10 @@ function Spending() {
     <div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em]">What the AI has cost</h2>
+          <h2 className="text-base font-semibold tracking-[-0.01em]">What the AI has cost</h2>
           <p className="mt-1 max-w-2xl text-sm muted">
-            Per model, from your workspace&apos;s own billing records.
+            How much each assistant and AI model has cost, taken from your workspace&apos;s own
+            billing records.
           </p>
         </div>
         <select

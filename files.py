@@ -21,7 +21,7 @@ import time
 
 import httpx
 
-from dbx import DbxError, host
+from dbx import DbxError, host, http
 
 MAX_BYTES = 100 * 1024 * 1024
 SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -90,7 +90,7 @@ def upload(volume: str, filename: str, blob: bytes, user_tok: str) -> dict:
 
     path = volume_path(volume, filename)
     try:
-        resp = httpx.put(
+        resp = http().put(
             host() + "/api/2.0/fs/files" + path,
             headers={
                 "Authorization": "Bearer " + user_tok,
@@ -129,7 +129,7 @@ def download(path: str, user_tok: str) -> bytes:
     fetch a path, not which agent it belongs to.
     """
     try:
-        resp = httpx.get(
+        resp = http().get(
             host() + "/api/2.0/fs/files" + path,
             headers={"Authorization": "Bearer " + user_tok},
             timeout=300,

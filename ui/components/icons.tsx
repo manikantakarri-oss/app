@@ -105,3 +105,54 @@ export const SparkleIcon = ({ size }: P) => (
     <path d="M12 3.5 13.9 9l5.6 1.9-5.6 1.9L12 18.3l-1.9-5.5L4.5 10.9 10.1 9z" />
   </Svg>
 );
+
+export const SunIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" />
+  </Svg>
+);
+
+export const MoonIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
+  </Svg>
+);
+
+export const MessageIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6l-4.5 3.5V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+  </Svg>
+);
+
+export const ThreadsIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M4 6h12M4 11h16M4 16h9" />
+  </Svg>
+);
+
+export const UploadIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M12 16V4M7 9l5-5 5 5" />
+    <path d="M4.5 16v2.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5V16" />
+  </Svg>
+);
+
+export const DownloadIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M12 4v12M7 11l5 5 5-5" />
+    <path d="M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16" />
+  </Svg>
+);
+
+export const ArrowUpRightIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M7 17 17 7M8 7h9v9" />
+  </Svg>
+);
+
+export const ArrowDownRightIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M7 7l10 10M17 8v9H8" />
+  </Svg>
+);

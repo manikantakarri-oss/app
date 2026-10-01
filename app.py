@@ -22,8 +22,12 @@ from fastapi.staticfiles import StaticFiles
 
 import access
 import audit
+import builder
 import chat
+import genie
+import knowledge
 import chats
+import dashboard
 import files as filestore
 import llm
 import logbuf
@@ -60,6 +64,25 @@ def _caller(request: Request) -> str:
 def _ctx(request: Request, status: int) -> dict:
     """Structured fields, so the Delta table can be filtered by user or path."""
     return {"extra": {"actor": _caller(request), "method": request.method, "path": request.url.path, "status": status}}
+
+
+@app.on_event("startup")
+async def _more_threads():
+    """Room for many people to wait on an assistant at once.
+
+    Every route here is a plain `def`, which Starlette runs in a pool of 40 worker
+    threads, and a chat holds one for as long as the assistant takes (seconds to
+    minutes). With the default, the 41st simultaneous chat waits for a free thread,
+    and so does everything else, including opening the page. The threads only wait
+    on the network, so many more are cheap. Tune with PORTAL_THREADS.
+    """
+    import anyio.to_thread
+
+    try:
+        n = max(40, int(os.environ.get("PORTAL_THREADS", "200")))
+    except ValueError:
+        n = 200
+    anyio.to_thread.current_default_thread_limiter().total_tokens = n
 
 
 @app.middleware("http")
@@ -329,6 +352,195 @@ def meta(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)
             "appears. Ask its owner to grant you CAN_MANAGE.",
         )
     return access.set_meta(name, values, tok)
+
+
+@app.get("/api/admin/builder/types")
+def builder_types(x_forwarded_access_token: str = Header(None)):
+    _require_admin(x_forwarded_access_token)
+    return {"types": builder.tool_types()}
+
+
+@app.get("/api/admin/builder/sources")
+def builder_sources(
+    kind: str,
+    catalog: str = "",
+    schema: str = "",
+    x_forwarded_access_token: str = Header(None),
+):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return builder.sources(kind, tok, catalog, schema)
+
+
+@app.get("/api/admin/builder/principals")
+def builder_principals(x_forwarded_access_token: str = Header(None)):
+    """The teams and people that can be given access: the same lists the Manage
+    access screen offers."""
+    _require_admin(x_forwarded_access_token)
+    return access.principals(app_token())
+
+
+@app.get("/api/admin/builder/agents")
+def builder_list(x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return builder.list_agents(tok)
+
+
+@app.get("/api/admin/builder/agents/{agent_id}")
+def builder_get(agent_id: str, x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return builder.get_agent(agent_id, tok)
+
+
+@app.post("/api/admin/builder/agents")
+def builder_create(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    who, tok = _require_admin(x_forwarded_access_token)
+    spec = builder.clean_spec(payload)
+    out = builder.create_agent(spec, who, tok)
+    # The serving endpoint appears a few minutes later; tag and share it then.
+    background.add_task(builder.finish_provisioning, out["agent_id"], out["endpoint_name"], spec, who)
+    return out
+
+
+@app.put("/api/admin/builder/agents/{agent_id}")
+def builder_update(
+    agent_id: str,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    who, tok = _require_admin(x_forwarded_access_token)
+    return builder.update_agent(agent_id, builder.clean_spec(payload), who, tok)
+
+
+@app.delete("/api/admin/builder/agents/{agent_id}")
+def builder_delete(agent_id: str, x_forwarded_access_token: str = Header(None)):
+    who, tok = _require_admin(x_forwarded_access_token)
+    return builder.delete_agent(agent_id, who, tok)
+
+
+@app.get("/api/admin/builder/genie")
+def genie_list(x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return {"spaces": genie.list_spaces(tok)}
+
+
+@app.get("/api/admin/builder/genie/{space_id}")
+def genie_get(space_id: str, x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return genie.get_space(space_id, tok)
+
+
+@app.post("/api/admin/builder/genie")
+def genie_create(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    who, tok = _require_admin(x_forwarded_access_token)
+    out = genie.create(genie.clean(payload), who, tok)
+    chat_ = out.pop("_chat", None)
+    if chat_:
+        # Same follow-up as any supervisor: tag and share its endpoint once it exists.
+        background.add_task(builder.finish_provisioning, chat_["agent_id"], chat_["endpoint_name"], chat_["spec"], who)
+    return out
+
+
+@app.put("/api/admin/builder/genie/{space_id}")
+def genie_update(space_id: str, payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return genie.update_space(space_id, genie.clean(payload), tok)
+
+
+@app.delete("/api/admin/builder/genie/{space_id}")
+def genie_delete(space_id: str, x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return genie.delete_space(space_id, tok)
+
+
+def _names(tok: str) -> dict:
+    """Endpoint name -> the friendly name people know it by (cosmetic only)."""
+    try:
+        return {a["name"]: a["display_name"] for a in access.all_agents(tok)}
+    except DbxError:
+        return {}
+
+
+@app.get("/api/dashboard/me")
+def dashboard_me(days: int = 30, x_forwarded_access_token: str = Header(None)):
+    """The signed-in person's own activity. The name comes from their token, never
+    from the request, so nobody can ask for someone else's."""
+    who, _ = _who(x_forwarded_access_token)
+    return dashboard.activity(who["user_name"], days, _names(app_token()))
+
+
+@app.get("/api/admin/dashboard/people")
+def dashboard_people(days: int = 30, x_forwarded_access_token: str = Header(None)):
+    _require_admin(x_forwarded_access_token)
+    return dashboard.everyone(days)
+
+
+@app.get("/api/admin/dashboard/person")
+def dashboard_person(user: str, days: int = 30, x_forwarded_access_token: str = Header(None)):
+    """Counts for one person, for admins. Never their questions or chat titles."""
+    _require_admin(x_forwarded_access_token)
+    if not user.strip() or len(user) > 200:
+        raise HTTPException(400, "user is required")
+    return dashboard.activity(user.strip(), days, _names(app_token()))
+
+
+@app.get("/api/admin/dashboard/costs")
+def dashboard_costs(days: int = 30, x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return dashboard.costs(days, tok)
+
+
+@app.get("/api/admin/builder/knowledge")
+def knowledge_list(x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return {"assistants": knowledge.list_assistants(tok)}
+
+
+@app.get("/api/admin/builder/knowledge/{ka_id}")
+def knowledge_get(ka_id: str, x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return knowledge.get_assistant(ka_id, tok)
+
+
+@app.post("/api/admin/builder/knowledge")
+def knowledge_create(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    who, tok = _require_admin(x_forwarded_access_token)
+    spec = knowledge.clean(payload)
+    out = knowledge.create(spec, who, tok)
+    # Reading the documents takes minutes; tag and share the endpoint when it exists.
+    background.add_task(knowledge.finish, out["ka_id"], spec, who)
+    return out
+
+
+@app.put("/api/admin/builder/knowledge/{ka_id}")
+def knowledge_update(ka_id: str, payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    # Editing needs only the text fields; documents are changed in Databricks.
+    spec = {
+        "display_name": (payload.get("display_name") or "").strip(),
+        "description": (payload.get("description") or "").strip(),
+        "instructions": (payload.get("instructions") or "").strip(),
+    }
+    if not spec["display_name"] or not spec["description"]:
+        raise HTTPException(400, "a name and a description are required")
+    return knowledge.update_assistant(ka_id, spec, tok)
+
+
+@app.delete("/api/admin/builder/knowledge/{ka_id}")
+def knowledge_delete(ka_id: str, x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return knowledge.delete_assistant(ka_id, tok)
 
 
 @app.get("/api/models")

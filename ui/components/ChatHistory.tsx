@@ -82,7 +82,7 @@ export function ChatHistory({
 
       <div className={collapsed ? "contents md:hidden" : "contents"}>
         <div className="flex h-12 shrink-0 items-center justify-between pl-4 pr-2">
-          <span className="text-sm font-semibold">Chats</span>
+          <span className="text-sm font-semibold">Your past chats</span>
           {onToggle ? (
             <button
               type="button"
@@ -126,7 +126,7 @@ export function ChatHistory({
             </p>
           ) : items.length === 0 ? (
             <p className="px-3 py-3 text-sm muted">
-              Your conversations with this agent are listed here, so you can pick one up again.
+              Your conversations with this assistant are listed here, so you can pick one up again.
             </p>
           ) : shown.length === 0 ? (
             <p className="px-3 py-3 text-sm muted">No chats match “{query}”.</p>

@@ -10,7 +10,7 @@ import os
 
 import httpx
 
-from dbx import DbxError, app_token, host
+from dbx import DbxError, app_token, host, http
 
 WAREHOUSE = os.environ.get("PORTAL_LOG_WAREHOUSE", "").strip()
 
@@ -22,7 +22,7 @@ def run(statement: str, params: list | None = None) -> list:
     body = {"statement": statement, "warehouse_id": wh, "wait_timeout": "30s"}
     if params:
         body["parameters"] = params
-    resp = httpx.post(
+    resp = http().post(
         host() + "/api/2.0/sql/statements",
         headers={"Authorization": "Bearer " + tok},
         json=body,
@@ -38,7 +38,7 @@ def run(statement: str, params: list | None = None) -> list:
 
 
 def _first_warehouse(tok: str) -> str:
-    resp = httpx.get(
+    resp = http().get(
         host() + "/api/2.0/sql/warehouses", headers={"Authorization": "Bearer " + tok}, timeout=30
     )
     if resp.status_code >= 400:
