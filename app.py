@@ -17,8 +17,10 @@ import os
 import time
 
 from fastapi import BackgroundTasks, Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import access
 import audit
@@ -28,6 +30,7 @@ import genie
 import knowledge
 import chats
 import dashboard
+import events
 import files as filestore
 import llm
 import logbuf
@@ -91,12 +94,16 @@ async def _access_log(request: Request, call_next):
     if not request.url.path.startswith("/api/") or request.url.path in ("/api/health", "/api/admin/logs"):
         return await call_next(request)
     start = time.monotonic()
+    # Routes that do something worth recording fill this in (events.note).
+    rec = events.begin()
     try:
         response = await call_next(request)
     except Exception:
         log.exception("%s %s user=%s -> unhandled error", request.method, request.url.path, _caller(request), **_ctx(request, 500))
+        events.finish(rec, 500, int((time.monotonic() - start) * 1000), _caller(request))
         raise
     ms = int((time.monotonic() - start) * 1000)
+    events.finish(rec, response.status_code, ms, _caller(request))
     level = logging.WARNING if response.status_code >= 400 else logging.INFO
     log.log(level, "%s %s user=%s -> %s (%d ms)", request.method, request.url.path, _caller(request), response.status_code, ms,
             **_ctx(request, response.status_code))
@@ -110,13 +117,24 @@ async def _dbx_error(request: Request, exc: DbxError):
     log.warning("databricks call failed: %s %s user=%s status=%s: %s",
                 request.method, request.url.path, _caller(request), exc.status, str(exc)[:500],
                 **_ctx(request, exc.status))
+    events.failed(str(exc), exc.status)
     return JSONResponse({"error": str(exc)}, status_code=exc.status)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException):
+    # Our own refusals ("You do not have access to that agent"): put the reason on
+    # the activity record, then answer exactly as FastAPI would have.
+    events.failed(str(exc.detail), exc.status_code)
+    return await http_exception_handler(request, exc)
 
 
 def _who(forwarded):
     """Resolve the caller. Fails closed if the OBO token is missing in Apps."""
     tok = user_token(forwarded)
-    return access.identity(tok), tok
+    who = access.identity(tok)
+    events.note(actor=who.get("user_name"))
+    return who, tok
 
 
 def _require_admin(forwarded):
@@ -129,6 +147,7 @@ def _require_admin(forwarded):
 @app.get("/api/session")
 def session(x_forwarded_access_token: str = Header(None)):
     who, _ = _who(x_forwarded_access_token)
+    events.note(action="opened_portal")
     return {**who, "auth_mode": auth_mode(), "chat_history": chats.enabled()}
 
 
@@ -159,12 +178,25 @@ def send(
         raise HTTPException(400, "endpoint is required")
 
     who, tok = _who(x_forwarded_access_token)
+    # Recorded for agent health: which assistant, how long, did it work. Never
+    # the question or the answer.
+    events.note(action="asked", target=endpoint, detail={"files": len(uploads)})
     # Confirm the agent is one this user may see before spending a call on it.
     # The invocation below still runs under the user's own token, so this check
     # is a courtesy for clearer errors, not the security boundary.
     agent = _allowed_agent(who, endpoint, tok)
+    # `known`: the assistant exists and this person may use it, so the outcome
+    # says something about the assistant. A refused or unknown name only says
+    # something about the request, and stays out of per-assistant reliability.
+    events.note(label=agent.get("display_name"), detail={"files": len(uploads), "known": True})
     output_dir = filestore.output_dir_path(agent["output_volume"]) if agent.get("output_volume") else ""
     out = chat.ask(endpoint, agent["task"], history, tok, files=uploads, output_dir=output_dir)
+    # A reply can arrive fine while a tool inside it failed; count that too.
+    broken = events.tool_failure(out.get("reply") or "")
+    events.note(
+        detail={"files": len(uploads), "known": True, "tools": (out.get("tools") or [])[:10], "files_back": len(out.get("attachments") or [])},
+        **({"status": "tool_error", "error": broken} if broken else {}),
+    )
 
     # Saved after the reply has gone out, and only for a successful exchange, so
     # history never slows a chat and never holds a failed attempt.
@@ -215,6 +247,7 @@ def chat_open(cid: str, x_forwarded_access_token: str = Header(None)):
 @app.delete("/api/chats/{cid}")
 def chat_delete(cid: str, x_forwarded_access_token: str = Header(None)):
     who, _ = _who(x_forwarded_access_token)
+    events.note(action="deleted_conversation")
     if chats.enabled():
         chats.delete_chat(who["user_name"], cid)
     return {"deleted": cid}
@@ -228,18 +261,21 @@ async def upload(
 ):
     """Put a file where a file-driven agent can read it, as the signed-in user."""
     who, tok = _who(x_forwarded_access_token)
+    name = file.filename or "upload"
+    events.note(action="uploaded", target=endpoint.strip(), detail={"name": name})
     agent = _allowed_agent(who, endpoint.strip(), tok)
+    events.note(label=agent.get("display_name"))
     if not agent.get("upload_volume"):
         raise HTTPException(400, "This agent does not accept file uploads.")
 
     accepts = agent.get("accepts") or []
-    name = file.filename or "upload"
     if accepts and not any(name.lower().endswith("." + a.lstrip(".")) for a in accepts):
         raise HTTPException(
             400, "This agent accepts only: " + ", ".join("." + a.lstrip(".") for a in accepts)
         )
 
     blob = await file.read()
+    events.note(detail={"name": name, "bytes": len(blob)})
     return filestore.upload(agent["upload_volume"], name, blob, tok)
 
 
@@ -251,7 +287,9 @@ def download(
 ):
     """Fetch a file an agent generated, as the signed-in user."""
     who, tok = _who(x_forwarded_access_token)
+    events.note(action="downloaded", target=endpoint.strip(), detail={"name": path.rsplit("/", 1)[-1]})
     agent = _allowed_agent(who, endpoint.strip(), tok)
+    events.note(label=agent.get("display_name"))
     if not agent.get("output_volume"):
         raise HTTPException(400, "This agent does not produce downloadable files.")
     if not filestore.in_volume(path, agent["output_volume"]):
@@ -293,6 +331,12 @@ def grant(payload: dict = Body(...), x_forwarded_access_token: str = Header(None
     target = next((a for a in access.all_agents(tok) if a["id"] == endpoint_id), None)
     if not target:
         target = {"id": endpoint_id}
+    events.note(
+        action="granted" if level else "revoked",
+        target=target.get("name") or endpoint_id,
+        label=target.get("display_name"),
+        detail={"principal": principal, "kind": kind, "level": level or ""},
+    )
     # The portal must not lend the app's CAN_MANAGE to its users.
     if not access.may_manage(target, who, tok):
         raise HTTPException(
@@ -307,6 +351,7 @@ def grant(payload: dict = Body(...), x_forwarded_access_token: str = Header(None
 def new_group(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
     _require_admin(x_forwarded_access_token)
     name = (payload.get("name") or "").strip()
+    events.note(action="created_team", target=name, label=name)
     if not name:
         raise HTTPException(400, "name is required")
     # Also grants the group permission to open the portal, so setting up access
@@ -319,6 +364,7 @@ def group_members(payload: dict = Body(...), x_forwarded_access_token: str = Hea
     _require_admin(x_forwarded_access_token)
     group_id = (payload.get("group_id") or "").strip()
     users = payload.get("users") or []
+    events.note(action="changed_team", target=group_id, label=(payload.get("name") or group_id), detail={"members": len(users)})
     if not group_id:
         raise HTTPException(400, "group_id is required")
     return access.set_group_members(group_id, [u for u in users if u], app_token())
@@ -331,12 +377,14 @@ def meta(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)
     if not name:
         raise HTTPException(400, "name is required")
     values = {k: payload[k] for k in access.META_TAGS if k in payload}
+    events.note(action="changed_settings", target=name, detail={"fields": sorted(values)})
     if not values:
         raise HTTPException(400, "nothing to update")
     tok = app_token()
     target = next((a for a in access.all_agents(tok) if a["name"] == name), None)
     if not target:
         raise HTTPException(404, "no such agent")
+    events.note(label=target.get("display_name"))
     if not access.may_manage(target, who, tok):
         raise HTTPException(
             403,
@@ -391,7 +439,9 @@ def builder_create(
 ):
     who, tok = _require_admin(x_forwarded_access_token)
     spec = builder.clean_spec(payload)
+    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Combines tools", "tools": len(spec.get("tools") or [])})
     out = builder.create_agent(spec, who, tok)
+    events.note(target=out.get("endpoint_name") or out.get("agent_id"))
     # The serving endpoint appears a few minutes later; tag and share it then.
     background.add_task(builder.finish_provisioning, out["agent_id"], out["endpoint_name"], spec, who)
     return out
@@ -404,12 +454,15 @@ def builder_update(
     x_forwarded_access_token: str = Header(None),
 ):
     who, tok = _require_admin(x_forwarded_access_token)
-    return builder.update_agent(agent_id, builder.clean_spec(payload), who, tok)
+    spec = builder.clean_spec(payload)
+    events.note(action="edited_assistant", target=agent_id, label=spec.get("display_name"), detail={"type": "Combines tools"})
+    return builder.update_agent(agent_id, spec, who, tok)
 
 
 @app.delete("/api/admin/builder/agents/{agent_id}")
 def builder_delete(agent_id: str, x_forwarded_access_token: str = Header(None)):
     who, tok = _require_admin(x_forwarded_access_token)
+    events.note(action="deleted_assistant", target=agent_id, detail={"type": "Combines tools"})
     return builder.delete_agent(agent_id, who, tok)
 
 
@@ -432,7 +485,10 @@ def genie_create(
     x_forwarded_access_token: str = Header(None),
 ):
     who, tok = _require_admin(x_forwarded_access_token)
-    out = genie.create(genie.clean(payload), who, tok)
+    gspec = genie.clean(payload)
+    events.note(action="created_assistant", label=gspec.get("title"), detail={"type": "Answers from data"})
+    out = genie.create(gspec, who, tok)
+    events.note(target=out.get("space_id"))
     chat_ = out.pop("_chat", None)
     if chat_:
         # Same follow-up as any supervisor: tag and share its endpoint once it exists.
@@ -443,12 +499,15 @@ def genie_create(
 @app.put("/api/admin/builder/genie/{space_id}")
 def genie_update(space_id: str, payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
     _, tok = _require_admin(x_forwarded_access_token)
-    return genie.update_space(space_id, genie.clean(payload), tok)
+    gspec = genie.clean(payload)
+    events.note(action="edited_assistant", target=space_id, label=gspec.get("title"), detail={"type": "Answers from data"})
+    return genie.update_space(space_id, gspec, tok)
 
 
 @app.delete("/api/admin/builder/genie/{space_id}")
 def genie_delete(space_id: str, x_forwarded_access_token: str = Header(None)):
     _, tok = _require_admin(x_forwarded_access_token)
+    events.note(action="deleted_assistant", target=space_id, detail={"type": "Answers from data"})
     return genie.delete_space(space_id, tok)
 
 
@@ -524,7 +583,9 @@ def knowledge_create(
 ):
     who, tok = _require_admin(x_forwarded_access_token)
     spec = knowledge.clean(payload)
+    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Answers from documents", "folders": len(spec.get("sources") or [])})
     out = knowledge.create(spec, who, tok)
+    events.note(target=out.get("ka_id"))
     # Reading the documents takes minutes; tag and share the endpoint when it exists.
     background.add_task(knowledge.finish, out["ka_id"], spec, who)
     return out
@@ -539,6 +600,7 @@ def knowledge_update(ka_id: str, payload: dict = Body(...), x_forwarded_access_t
         "description": (payload.get("description") or "").strip(),
         "instructions": (payload.get("instructions") or "").strip(),
     }
+    events.note(action="edited_assistant", target=ka_id, label=spec["display_name"] or None, detail={"type": "Answers from documents"})
     if not spec["display_name"] or not spec["description"]:
         raise HTTPException(400, "a name and a description are required")
     return knowledge.update_assistant(ka_id, spec, tok)
@@ -547,6 +609,7 @@ def knowledge_update(ka_id: str, payload: dict = Body(...), x_forwarded_access_t
 @app.delete("/api/admin/builder/knowledge/{ka_id}")
 def knowledge_delete(ka_id: str, x_forwarded_access_token: str = Header(None)):
     _, tok = _require_admin(x_forwarded_access_token)
+    events.note(action="deleted_assistant", target=ka_id, detail={"type": "Answers from documents"})
     return knowledge.delete_assistant(ka_id, tok)
 
 
@@ -595,6 +658,26 @@ def activity(
         workspace_id=os.environ.get("DATABRICKS_WORKSPACE_ID", "")
         or str(access.identity(user_tok).get("workspace_id") or ""),
     )
+
+
+@app.get("/api/admin/activity")
+def portal_activity(
+    days: int = 7,
+    category: str = "",
+    status: str = "",
+    actor: str = "",
+    x_forwarded_access_token: str = Header(None),
+):
+    """What people did in the portal: actions, never what anyone typed."""
+    _require_admin(x_forwarded_access_token)
+    return events.activity(days, category.strip(), status.strip(), actor.strip())
+
+
+@app.get("/api/admin/agent-health")
+def agent_health(days: int = 7, x_forwarded_access_token: str = Header(None)):
+    """Each assistant's failure rate, response time and recent problems."""
+    _require_admin(x_forwarded_access_token)
+    return events.health(days)
 
 
 @app.get("/api/health")

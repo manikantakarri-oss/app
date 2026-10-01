@@ -111,8 +111,8 @@ export function Done({
                 {chat && onGoto ? (
                   <>
                     {" "}
-                    <button type="button" className="underline" onClick={() => onGoto("admin")}>
-                      Go to “People &amp; access”
+                    <button type="button" className="underline" onClick={() => onGoto("access")}>
+                      Go to Access
                     </button>
                   </>
                 ) : null}
@@ -353,7 +353,7 @@ export function AccessStep({
         <h3 className="text-lg font-semibold">Who should be able to use it?</h3>
         <p className="mt-1 text-[15px] muted">
           Choose the teams or people who can chat with it. You can also skip this and do it later
-          under Admin → People &amp; access.
+          on the Access page.
         </p>
       </div>
 

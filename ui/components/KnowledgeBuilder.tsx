@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, KnowledgeDetail, KnowledgeSource } from "@/lib/api";
 import { Spinner } from "./bits";
+import { PlusIcon } from "./icons";
 import { Access, AccessStep, Finished, Section, VolumeField, WizardFrame } from "./BuilderParts";
 
 const ALL_STEPS = [
@@ -315,7 +316,8 @@ export function KnowledgeWizard({
 
             {sources.length < MAX ? (
               <button type="button" className="btn btn-quiet" onClick={() => setSources([...sources, blank()])}>
-                ＋ Add another folder
+                <PlusIcon size={16} />
+                Add another folder
               </button>
             ) : null}
             <p className="help">
@@ -398,7 +400,7 @@ export function KnowledgeWizard({
           {!editing ? (
             <Section title="Who can use it" onChange={() => goTo("access")}>
               {access.length === 0 ? (
-                <p className="text-[15px] muted">Nobody yet. You can add people later under Admin → People &amp; access.</p>
+                <p className="text-[15px] muted">Nobody yet. You can add people later on the Access page.</p>
               ) : (
                 <ul className="flex flex-wrap gap-2">
                   {access.map((a) => (

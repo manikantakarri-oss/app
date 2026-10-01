@@ -172,6 +172,34 @@ def user_token(forwarded: str | None) -> str:
     return _cli_user_token()
 
 
+def _stale_cli_token(token: str, resp: httpx.Response) -> str:
+    """Local dev only: a fresh CLI token if Databricks rejected the cached one.
+
+    Seen on this workspace: the CLI rotates its OAuth tokens on refresh and the
+    previous access token stops working before its stated expiry, so a cached
+    token can turn into "403 Invalid Token" mid-session and the whole portal
+    shows that error. When that happens, drop the cache, ask the CLI again and
+    hand back the new token for one retry. Returns "" (no retry) in Apps, for
+    any other refusal, or when the CLI hands back the same token.
+    """
+    global _cli_token
+    if in_apps() or os.environ.get("DATABRICKS_TOKEN"):
+        return ""
+    if resp.status_code not in (401, 403) or "invalid token" not in (resp.text or "").lower():
+        return ""
+    if not _cli_token or _cli_token[0] != token:
+        return ""
+    _cli_token = None
+    try:
+        fresh = _cli_user_token()
+    except DbxError:
+        return ""
+    if fresh == token:
+        return ""
+    log.info("CLI token was rejected as invalid; refreshed it and retried")
+    return fresh
+
+
 def call(method: str, path: str, token: str, **kw) -> Any:
     # Merge rather than overwrite: some APIs need extra headers (the Agent
     # Bricks endpoints want X-Databricks-Workspace-Id).
@@ -181,6 +209,10 @@ def call(method: str, path: str, token: str, **kw) -> Any:
     # caller): logged quietly so they do not fill the problem log.
     quiet = kw.pop("quiet", False)
     resp = http().request(method, f"{host()}{path}", headers=headers, timeout=120, **kw)
+    fresh = _stale_cli_token(token, resp)
+    if fresh:
+        headers["Authorization"] = f"Bearer {fresh}"
+        resp = http().request(method, f"{host()}{path}", headers=headers, timeout=120, **kw)
     if resp.status_code >= 400:
         # Logged here as well as in the route handler, because callers often
         # swallow this error (name lookups, "why" labels) and it would vanish.

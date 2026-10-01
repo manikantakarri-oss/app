@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { AdminAgent, api } from "@/lib/api";
-import { CostChart } from "./CostChart";
-import { CardList, ErrorBox, Notice, SectionHead, Spinner, StatusDot } from "./bits";
+import { CardList, ErrorBox, Notice, Spinner, StatusDot } from "./bits";
 import { middleShort } from "@/lib/people";
-import { Activity } from "./Activity";
-import { Logs } from "./Logs";
+import { ShieldIcon } from "./icons";
 
 type Overview = Awaited<ReturnType<typeof api.adminOverview>>;
 
@@ -15,7 +13,6 @@ export function Admin() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [openName, setOpenName] = useState<string | null>(null);
-  const [view, setView] = useState("access");
 
   async function load() {
     setErr("");
@@ -42,69 +39,59 @@ export function Admin() {
     );
   }
 
+  const teams = data?.groups.filter((g) => g.name !== "admins" && g.name !== "users").length || 0;
+
   return (
     <div>
-      <div
-        className="mb-7 inline-flex max-w-full flex-wrap gap-1 rounded-xl p-1"
-        style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
-        role="tablist"
-        aria-label="Admin sections"
-      >
-        {VIEWS.map((v) => (
-          <button
-            key={v.key}
-            type="button"
-            role="tab"
-            aria-selected={view === v.key}
-            onClick={() => setView(v.key)}
-            className="rounded-lg px-4 py-2 text-sm transition"
-            style={
-              view === v.key
-                ? { background: "var(--brand)", color: "var(--brand-ink)", fontWeight: 600 }
-                : { color: "var(--ink-dim)" }
-            }
-          >
-            {v.label}
-          </button>
-        ))}
+      {/* How access works, said once, where people manage it. */}
+      <div className="card mb-6 flex flex-wrap items-start gap-4 p-5">
+        <span className="kind-tile kind-supervisor !h-10 !w-10 !rounded-xl" aria-hidden>
+          <ShieldIcon size={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-semibold">Access comes from Databricks permissions</p>
+          <p className="mt-1 max-w-3xl text-sm muted">
+            Give a person or a team permission to use an assistant here, or in Databricks. Teams are
+            Databricks groups, so a group you create in Databricks shows up here, and adding someone to it
+            gives them that group’s assistants. People see only what they are allowed to use, and changes
+            are saved straight away.
+          </p>
+        </div>
+        {data ? (
+          <dl className="flex shrink-0 gap-6 text-sm">
+            <div>
+              <dt className="text-xs faint">Assistants</dt>
+              <dd className="mt-0.5 text-lg font-semibold">{data.agents.length}</dd>
+            </div>
+            <div>
+              <dt className="text-xs faint">Teams</dt>
+              <dd className="mt-0.5 text-lg font-semibold">{teams}</dd>
+            </div>
+            <div>
+              <dt className="text-xs faint">People</dt>
+              <dd className="mt-0.5 text-lg font-semibold">{data.users.length}</dd>
+            </div>
+          </dl>
+        ) : null}
       </div>
 
-      {view === "access" ? (
-        <div>
-          <SectionHead title="Who can use each assistant">
-            Pick an assistant to see who can use it and to change that. Changes are saved straight
-            away.
-          </SectionHead>
-          <ErrorBox>{err}</ErrorBox>
-          {loading ? (
-            <Spinner label="Loading…" />
-          ) : !data?.agents.length ? (
-            <p className="text-sm muted">No assistants have been shared with the portal yet.</p>
-          ) : (
-            <CardList
-              items={data.agents}
-              noun="assistants"
-              keyOf={(a) => a.name}
-              text={(a) => `${a.display_name} ${a.name} ${a.blurb || ""}`}
-              render={(a) => <AgentTile agent={a} onOpen={() => setOpenName(a.name)} />}
-            />
-          )}
-        </div>
-      ) : null}
-
-      {view === "costs" ? <Spending /> : null}
-      {view === "activity" ? <Activity /> : null}
-      {view === "problems" ? <Logs /> : null}
+      <ErrorBox>{err}</ErrorBox>
+      {loading ? (
+        <Spinner label="Loading…" />
+      ) : !data?.agents.length ? (
+        <p className="text-sm muted">No assistants have been shared with the portal yet.</p>
+      ) : (
+        <CardList
+          items={data.agents}
+          noun="assistants"
+          keyOf={(a) => a.name}
+          text={(a) => `${a.display_name} ${a.name} ${a.blurb || ""}`}
+          render={(a) => <AgentTile agent={a} onOpen={() => setOpenName(a.name)} />}
+        />
+      )}
     </div>
   );
 }
-
-const VIEWS = [
-  { key: "access", label: "People & access" },
-  { key: "costs", label: "Costs" },
-  { key: "activity", label: "Activity" },
-  { key: "problems", label: "Problems" },
-];
 
 function AgentTile({ agent, onOpen }: { agent: AdminAgent; onOpen: () => void }) {
   const people = agent.grants.filter(
@@ -427,56 +414,3 @@ function Row({
   );
 }
 
-function Spending() {
-  const [days, setDays] = useState(30);
-  const [data, setData] = useState<Awaited<ReturnType<typeof api.cost>> | null>(null);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    setData(null);
-    setErr("");
-    api.cost(days).then(setData).catch((e) => setErr(e.message));
-  }, [days]);
-
-  return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold tracking-[-0.01em]">What the AI has cost</h2>
-          <p className="mt-1 max-w-2xl text-sm muted">
-            How much each assistant and AI model has cost, taken from your workspace&apos;s own
-            billing records.
-          </p>
-        </div>
-        <select
-          className="field w-auto text-sm"
-          aria-label="Time period"
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-        >
-          <option value={7}>Last 7 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-        </select>
-      </div>
-
-      <div className="card p-5">
-        <ErrorBox>{err}</ErrorBox>
-        {data === null ? (
-          <Spinner label="Loading…" />
-        ) : !data.available ? (
-          <p className="text-sm muted">Cost figures are not available. {data.note}</p>
-        ) : (
-          <>
-            <CostChart lines={data.lines} total={data.total_usd} days={data.days} />
-            <p className="mt-4 text-xs faint">
-              Supervisor agents appear as their own line (named by their endpoint). Other agents are
-              charged to whichever model they run on, so their cost is included in that model&apos;s
-              line.
-            </p>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}

@@ -3,6 +3,43 @@
 import { ReactNode, useEffect, useState } from "react";
 import { SearchIcon } from "./icons";
 
+/** Page through a list. Resets to the first page whenever `reset` changes
+ *  (a new filter, search or period), and never points past the last page. */
+export function usePage<T>(items: T[], size: number, reset: unknown[] = []) {
+  const [page, setPage] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setPage(0), reset);
+  const pages = Math.max(1, Math.ceil(items.length / size));
+  const p = Math.min(page, pages - 1);
+  return { rows: items.slice(p * size, (p + 1) * size), page: p, pages, setPage, total: items.length, size };
+}
+
+/** The one pager every table and list uses: "1–25 of 230" and Previous/Next.
+ *  Renders nothing when everything fits on one page. */
+export function Pager({ pg, noun = "items" }: { pg: ReturnType<typeof usePage<any>>; noun?: string }) {
+  if (pg.total <= pg.size) return null;
+  const from = pg.page * pg.size + 1;
+  const to = Math.min(pg.total, from + pg.size - 1);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-2.5 text-xs faint" style={{ borderColor: "var(--line)" }}>
+      <span className="tabular-nums">
+        {from.toLocaleString()}–{to.toLocaleString()} of {pg.total.toLocaleString()} {noun}
+      </span>
+      <span className="flex items-center gap-2">
+        <button type="button" className="btn btn-quiet !min-h-[30px] !px-2.5 !text-[12px]" disabled={pg.page === 0} onClick={() => pg.setPage(pg.page - 1)}>
+          Previous
+        </button>
+        <span className="tabular-nums">
+          Page {pg.page + 1} of {pg.pages}
+        </span>
+        <button type="button" className="btn btn-quiet !min-h-[30px] !px-2.5 !text-[12px]" disabled={pg.page >= pg.pages - 1} onClick={() => pg.setPage(pg.page + 1)}>
+          Next
+        </button>
+      </span>
+    </div>
+  );
+}
+
 /** A card list that stays usable at any size: a search box once the list is
  *  long, the first `page` cards, and a "Show more" button for the rest.
  *  Purely presentational - it renders the same cards with the same handlers. */

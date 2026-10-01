@@ -6,8 +6,9 @@ import { Agent, api, SavedChat, Session } from "@/lib/api";
 import { kindMeta } from "@/components/AgentCard";
 import { Chat } from "@/components/Chat";
 import { Admin } from "@/components/Admin";
+import { AuditLogPage, MonitoringPage } from "@/components/Ops";
 import { Builder } from "@/components/Builder";
-import { Dashboard } from "@/components/Dashboard";
+import { Dashboard, Insights } from "@/components/Dashboard";
 import { Home, whenAgo } from "@/components/Home";
 import { Page as SwitcherPage, QuickSwitcher } from "@/components/QuickSwitcher";
 import { ErrorBox, Spinner } from "@/components/bits";
@@ -18,20 +19,32 @@ import {
   ChevronRightIcon,
   CloseIcon,
   GridIcon,
+  ListIcon,
   MenuIcon,
+  PulseIcon,
   SearchIcon,
-  ShieldIcon,
   SparkleIcon,
+  UserIcon,
+  UsersIcon,
   WandIcon,
 } from "@/components/icons";
 import { initials, nameOf } from "@/lib/people";
 
-const TITLES: Record<string, string> = {
-  agents: "Assistants",
-  dashboard: "My dashboard",
-  build: "Create an assistant",
-  admin: "Admin console",
-};
+/** Every section: one place each, in the order people need them. Workspace is
+ *  for everyone; Manage is for admins and replaces the old tabbed admin console
+ *  so nothing is nested two levels deep or shown twice. */
+const SECTIONS: { value: string; label: string; icon: (s?: number) => ReactNode; admin?: boolean }[] = [
+  { value: "agents", label: "Assistants", icon: (s) => <GridIcon size={s} /> },
+  { value: "dashboard", label: "My dashboard", icon: (s) => <UserIcon size={s} /> },
+  { value: "insights", label: "Insights", icon: (s) => <ChartIcon size={s} />, admin: true },
+  { value: "access", label: "Access", icon: (s) => <UsersIcon size={s} />, admin: true },
+  { value: "build", label: "Build", icon: (s) => <WandIcon size={s} />, admin: true },
+  { value: "monitoring", label: "Monitoring", icon: (s) => <PulseIcon size={s} />, admin: true },
+  { value: "audit", label: "Audit log", icon: (s) => <ListIcon size={s} />, admin: true },
+];
+const TITLES: Record<string, string> = Object.fromEntries(SECTIONS.map((s) => [s.value, s.label]));
+// Old links keep working: the tabbed admin console's address now opens Access.
+const LEGACY: Record<string, string> = { admin: "access", activity: "audit", health: "monitoring" };
 
 export default function Page() {
   const [session, setSession] = useState<Session | null>(null);
@@ -53,8 +66,9 @@ export default function Page() {
   // Tabs are reflected in the URL so a section can be linked to and survives
   // a refresh.
   useEffect(() => {
-    const want = window.location.hash.replace("#", "");
-    if (want === "admin" || want === "build" || want === "dashboard") setTab(want);
+    const raw = window.location.hash.replace("#", "");
+    const want = LEGACY[raw] || raw;
+    if (SECTIONS.some((s) => s.value === want)) setTab(want);
     try {
       setCollapsed(localStorage.getItem("agent-portal-nav-collapsed") === "1");
     } catch {
@@ -131,17 +145,11 @@ export default function Page() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const pages = useMemo<SwitcherPage[]>(() => {
-    const p: SwitcherPage[] = [
-      { value: "agents", label: "Assistants", icon: <GridIcon size={18} /> },
-      { value: "dashboard", label: "My dashboard", icon: <ChartIcon size={18} /> },
-    ];
-    if (session?.is_admin) {
-      p.push({ value: "build", label: "Create an assistant", icon: <WandIcon size={18} /> });
-      p.push({ value: "admin", label: "Admin console", icon: <ShieldIcon size={18} /> });
-    }
-    return p;
-  }, [session]);
+  const pages = useMemo<SwitcherPage[]>(
+    () =>
+      SECTIONS.filter((s) => !s.admin || session?.is_admin).map((s) => ({ value: s.value, label: s.label, icon: s.icon(18) })),
+    [session]
+  );
 
   function openAgent(a: Agent) {
     setResumeId("");
@@ -249,13 +257,15 @@ export default function Page() {
           <nav className="mt-2 min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4 [scrollbar-width:thin]">
             <Tabs.List aria-label="Sections" className="flex flex-col gap-0.5">
               <p className={`side-label ${rail ? "lg:sr-only" : ""}`}>Workspace</p>
-              <NavItem value="agents" icon={<GridIcon />} label="Assistants" rail={rail} count={agents?.length} />
-              <NavItem value="dashboard" icon={<ChartIcon />} label="My dashboard" rail={rail} />
+              {SECTIONS.filter((s) => !s.admin).map((s) => (
+                <NavItem key={s.value} value={s.value} icon={s.icon()} label={s.label} rail={rail} count={s.value === "agents" ? agents?.length : undefined} />
+              ))}
               {session.is_admin ? (
                 <>
                   <p className={`side-label ${rail ? "lg:sr-only" : ""}`}>Manage</p>
-                  <NavItem value="build" icon={<WandIcon />} label="Create an assistant" rail={rail} />
-                  <NavItem value="admin" icon={<ShieldIcon />} label="Admin console" rail={rail} />
+                  {SECTIONS.filter((s) => s.admin).map((s) => (
+                    <NavItem key={s.value} value={s.value} icon={s.icon()} label={s.label} rail={rail} />
+                  ))}
                 </>
               ) : null}
             </Tabs.List>
@@ -401,30 +411,42 @@ export default function Page() {
                 </Tabs.Content>
 
                 <Tabs.Content value="dashboard" className="outline-none">
-                  <Dashboard
-                    isAdmin={session.is_admin}
-                    onGoto={goPage}
-                    agents={agents || []}
-                    onOpen={openAgent}
-                    onResume={resumeChat}
-                  />
+                  <Dashboard onGoto={goPage} agents={agents || []} onOpen={openAgent} onResume={resumeChat} />
                 </Tabs.Content>
 
                 {session.is_admin ? (
-                  <Tabs.Content value="build" className="outline-none">
-                    <Builder onGoto={pickTab} />
-                  </Tabs.Content>
-                ) : null}
-
-                {session.is_admin ? (
-                  <Tabs.Content value="admin" className="outline-none">
-                    <PageHead
-                      eyebrow="Manage"
-                      title="Admin console"
-                      text="Who can use each assistant, what they cost, what has changed, and anything that went wrong."
-                    />
-                    <Admin />
-                  </Tabs.Content>
+                  <>
+                    <Tabs.Content value="insights" className="outline-none">
+                      <Insights agents={agents || []} onGoto={goPage} />
+                    </Tabs.Content>
+                    <Tabs.Content value="access" className="outline-none">
+                      <PageHead
+                        eyebrow="Manage"
+                        title="Access"
+                        text="Who can use each assistant. Pick one to add or remove people and teams, or to change its name, description and file settings."
+                      />
+                      <Admin />
+                    </Tabs.Content>
+                    <Tabs.Content value="build" className="outline-none">
+                      <Builder onGoto={pickTab} />
+                    </Tabs.Content>
+                    <Tabs.Content value="monitoring" className="outline-none">
+                      <PageHead
+                        eyebrow="Manage"
+                        title="Monitoring"
+                        text="Reliability and errors for every assistant, with the cause of each error and how to resolve it."
+                      />
+                      <MonitoringPage />
+                    </Tabs.Content>
+                    <Tabs.Content value="audit" className="outline-none">
+                      <PageHead
+                        eyebrow="Manage"
+                        title="Audit log"
+                        text="A record of who did what in the portal, and of access changes recorded by Databricks. Message content is never logged."
+                      />
+                      <AuditLogPage />
+                    </Tabs.Content>
+                  </>
                 ) : null}
               </>
             )}

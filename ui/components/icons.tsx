@@ -210,6 +210,46 @@ export const MenuIcon = ({ size }: P) => (
   </Svg>
 );
 
+/** One person: your own dashboard. */
+export const UserIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <circle cx="12" cy="8.5" r="3.5" />
+    <path d="M5 19.5a7 7 0 0 1 14 0" />
+  </Svg>
+);
+
+/** Two people: access for people and teams. */
+export const UsersIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <circle cx="9" cy="9" r="3.2" />
+    <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+    <path d="M15.5 6.2a3 3 0 0 1 0 5.6M17 14.2a5.5 5.5 0 0 1 3.5 4.8" />
+  </Svg>
+);
+
+/** A list with ticks: the audit log. */
+export const ListIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M9 6.5h11M9 12h11M9 17.5h11" />
+    <path d="m3.5 6.5 1 1 2-2M3.5 12l1 1 2-2M3.5 17.5l1 1 2-2" />
+  </Svg>
+);
+
+/** A pulse line: health. */
+export const PulseIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />
+  </Svg>
+);
+
+/** A coin: spend. */
+export const CoinIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M14.5 9.2c-.5-.8-1.4-1.2-2.5-1.2-1.5 0-2.6.8-2.6 2s1.1 1.7 2.6 2 2.6.8 2.6 2-1.1 2-2.6 2c-1.1 0-2-.4-2.5-1.2M12 6.5V8M12 16v1.5" />
+  </Svg>
+);
+
 export const PlusIcon = ({ size }: P) => (
   <Svg size={size}>
     <path d="M12 5v14M5 12h14" />

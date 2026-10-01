@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { api, BuilderTool, FileSettings, SourceItem, ToolType } from "@/lib/api";
-import { Empty, ErrorBox, Spinner } from "./bits";
+import { CardList, Empty, ErrorBox, Spinner } from "./bits";
+import { middleShort } from "@/lib/people";
+import { PlusIcon } from "./icons";
 import { Access, AccessStep, Done, Finished, Section, VolumeField, WizardFrame } from "./BuilderParts";
 import { KnowledgeWizard } from "./KnowledgeBuilder";
 import { GenieWizard } from "./GenieBuilder";
@@ -172,7 +174,7 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
           </button>
           <h2 className="text-xl font-semibold">What kind of assistant do you want to create?</h2>
         </div>
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-4">
           <button type="button" className="choice !p-6" aria-pressed={false} onClick={() => setView({ v: "assistant", id: null })}>
             <span>
               <span className="block text-lg font-semibold">Combine tools and information</span>
@@ -224,99 +226,105 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
 
   return (
     <div>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-2xl">
-          <h2 className="text-xl font-semibold tracking-[-0.01em]">Create an assistant</h2>
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-5">
+        <div className="min-w-0 max-w-2xl">
+          <p className="text-[13px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--brand-deep)" }}>
+            Manage
+          </p>
+          <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.02em]">Build</h1>
           <p className="mt-1.5 text-[15px] muted">
-            Build your own assistant in a few simple steps. It shows up in Databricks too.
+            Create an assistant in a few simple steps, or change one you already have. Everything you build
+            shows up in Databricks too.
           </p>
         </div>
-        <button type="button" className="btn btn-primary btn-lg shrink-0" onClick={() => setView({ v: "pick" })}>
-          ＋ Create a new assistant
+        <button type="button" className="btn btn-primary shrink-0" onClick={() => setView({ v: "pick" })}>
+          <PlusIcon size={16} />
+          Create assistant
         </button>
       </div>
 
-      <h3 className="mb-3 mt-9 text-[15px] font-semibold">Assistants you have built</h3>
-      <ErrorBox>{err}</ErrorBox>
+      <BuiltSection title="Assistants you have built" sub="Combine tools and information. Supervisor Agents in Databricks.">
+        <ErrorBox>{err}</ErrorBox>
+        {rows === null ? (
+          <Spinner label="Loading…" />
+        ) : rows.length === 0 && !err ? (
+          <Empty title="You have not built any assistants yet" hint="Press “Create assistant” above. It takes a few minutes." />
+        ) : (
+          <CardList
+            items={rows}
+            noun="assistants"
+            keyOf={(r) => r.agent_id}
+            text={(r) => `${r.display_name} ${r.description || ""}`}
+            render={(r) => (
+              <EditCard title={r.display_name} description={r.description} onOpen={() => setView({ v: "assistant", id: r.agent_id })} />
+            )}
+          />
+        )}
+      </BuiltSection>
 
-      {rows === null ? (
-        <Spinner label="Loading…" />
-      ) : rows.length === 0 && !err ? (
-        <Empty
-          title="You have not built any assistants yet"
-          hint="Press “Create a new assistant” above. It takes a few minutes."
-        />
-      ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-          {rows.map((r) => (
-            <button
-              key={r.agent_id}
-              type="button"
-              onClick={() => setView({ v: "assistant", id: r.agent_id })}
-              className="card w-full p-5 text-left transition hover:border-[var(--brand)]"
-            >
-              <h4 className="text-base font-semibold leading-snug">{r.display_name}</h4>
-              <p className="mt-1.5 line-clamp-3 text-sm muted">{r.description || "No description yet"}</p>
-              <p className="mt-4 text-sm font-medium" style={{ color: "var(--brand-deep)" }}>
-                Change settings →
-              </p>
-            </button>
-          ))}
-        </div>
-      )}
+      <BuiltSection title="Document assistants you can edit" sub="Answer questions from folders of documents. Knowledge Assistants in Databricks.">
+        {kasErr ? <p className="help">Could not list them ({kasErr.slice(0, 140)}).</p> : null}
+        {kas === null ? (
+          <Spinner label="Loading…" />
+        ) : kas.length === 0 && !kasErr ? (
+          <p className="text-sm muted">None yet.</p>
+        ) : (
+          <CardList
+            items={kas}
+            noun="document assistants"
+            keyOf={(k) => k.ka_id}
+            text={(k) => `${k.display_name || ""} ${k.description || ""}`}
+            render={(k) => <EditCard title={k.display_name} description={k.description} onOpen={() => setView({ v: "docs", id: k.ka_id })} />}
+          />
+        )}
+      </BuiltSection>
 
-      <h3 className="mb-1 mt-10 text-[15px] font-semibold">Document assistants you can edit</h3>
-      <p className="mb-3 text-sm muted">These answer questions from folders of documents. They are Knowledge Assistants in Databricks.</p>
-      {kasErr ? <p className="help">Could not list them ({kasErr.slice(0, 140)}).</p> : null}
-      {kas === null ? (
-        <Spinner label="Loading…" />
-      ) : kas.length === 0 && !kasErr ? (
-        <p className="text-sm muted">None yet.</p>
-      ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-          {kas.map((k) => (
-            <button
-              key={k.ka_id}
-              type="button"
-              onClick={() => setView({ v: "docs", id: k.ka_id })}
-              className="card w-full p-5 text-left transition hover:border-[var(--brand)]"
-            >
-              <h4 className="text-base font-semibold leading-snug">{k.display_name || "Untitled"}</h4>
-              <p className="mt-1.5 line-clamp-3 text-sm muted">{k.description || "No description yet"}</p>
-              <p className="mt-4 text-sm font-medium" style={{ color: "var(--brand-deep)" }}>
-                Change settings →
-              </p>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <h3 className="mb-1 mt-10 text-[15px] font-semibold">Data assistants you can edit</h3>
-      <p className="mb-3 text-sm muted">These answer questions from tables. They are Genie spaces in Databricks.</p>
-      {spacesErr ? <p className="help">Could not list them ({spacesErr.slice(0, 140)}).</p> : null}
-      {spaces === null ? (
-        <Spinner label="Loading…" />
-      ) : spaces.length === 0 && !spacesErr ? (
-        <p className="text-sm muted">None yet.</p>
-      ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-          {spaces.map((sp) => (
-            <button
-              key={sp.space_id}
-              type="button"
-              onClick={() => setView({ v: "genie", id: sp.space_id })}
-              className="card w-full p-5 text-left transition hover:border-[var(--brand)]"
-            >
-              <h4 className="text-base font-semibold leading-snug">{sp.title || "Untitled"}</h4>
-              <p className="mt-1.5 line-clamp-3 text-sm muted">{sp.description || "No description yet"}</p>
-              <p className="mt-4 text-sm font-medium" style={{ color: "var(--brand-deep)" }}>
-                Change settings →
-              </p>
-            </button>
-          ))}
-        </div>
-      )}
+      <BuiltSection title="Data assistants you can edit" sub="Answer questions from tables. Genie spaces in Databricks.">
+        {spacesErr ? <p className="help">Could not list them ({spacesErr.slice(0, 140)}).</p> : null}
+        {spaces === null ? (
+          <Spinner label="Loading…" />
+        ) : spaces.length === 0 && !spacesErr ? (
+          <p className="text-sm muted">None yet.</p>
+        ) : (
+          <CardList
+            items={spaces}
+            noun="data assistants"
+            keyOf={(sp) => sp.space_id}
+            text={(sp) => `${sp.title || ""} ${sp.description || ""}`}
+            render={(sp) => <EditCard title={sp.title} description={sp.description} onOpen={() => setView({ v: "genie", id: sp.space_id })} />}
+          />
+        )}
+      </BuiltSection>
     </div>
+  );
+}
+
+function BuiltSection({ title, sub, children }: { title: string; sub: string; children: React.ReactNode }) {
+  return (
+    <section className="mt-10 first-of-type:mt-0">
+      <h2 className="text-[15px] font-semibold tracking-[-0.01em]">{title}</h2>
+      <p className="mb-4 mt-0.5 text-sm muted">{sub}</p>
+      {children}
+    </section>
+  );
+}
+
+/** One editable assistant. Long one-word names are shortened in the middle so
+ *  look-alike auto-created names stay distinguishable; the full name is in the tooltip. */
+function EditCard({ title, description, onOpen }: { title: string; description: string; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={title || "Untitled"}
+      className="card flex w-full flex-col p-5 text-left transition hover:border-[var(--brand)]"
+    >
+      <h4 className="line-clamp-2 text-base font-semibold leading-snug">{middleShort(title) || "Untitled"}</h4>
+      <p className="mt-1.5 line-clamp-3 text-sm muted">{description || "No description yet"}</p>
+      <p className="mt-auto pt-4 text-sm font-medium" style={{ color: "var(--brand-deep)" }}>
+        Change settings →
+      </p>
+    </button>
   );
 }
 
@@ -663,7 +671,8 @@ function Abilities({
         />
       ) : (
         <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
-          ＋ Add an ability
+          <PlusIcon size={16} />
+          Add an ability
         </button>
       )}
     </div>
@@ -1134,7 +1143,7 @@ function Review({
         <Section title="Who can use it" onChange={() => go("access")}>
           {access.length === 0 ? (
             <p className="text-[15px] muted">
-              Nobody yet. You can add people later under Admin → People &amp; access.
+              Nobody yet. You can add people later on the Access page.
             </p>
           ) : (
             <ul className="flex flex-wrap gap-2">

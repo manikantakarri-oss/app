@@ -125,6 +125,53 @@ export type Insights = {
   hours: { hour: string; questions: number }[];
   files: FileItem[];
 };
+export type PortalEvent = {
+  at: string;
+  actor: string;
+  action: string;
+  category: string;
+  target: string;
+  label: string;
+  /** "ok", "error", or "tool_error" (the reply came back but a tool inside it failed). */
+  status: string;
+  http_status: number;
+  ms: number;
+  error_kind: string;
+  error: string;
+  detail: Record<string, any>;
+};
+export type ActivityFeed = {
+  stored: boolean;
+  days: number;
+  total: number;
+  people: number;
+  failed: number;
+  categories: Record<string, number>;
+  events: PortalEvent[];
+};
+export type AgentHealthRow = {
+  endpoint: string;
+  label: string;
+  questions: number;
+  failed: number;
+  tool_errors: number;
+  failure_rate: number;
+  avg_ms: number;
+  p90_ms: number;
+  people: number;
+  last_problem: { at: string; kind: string; error: string } | null;
+};
+export type HealthReport = {
+  stored: boolean;
+  days: number;
+  questions: number;
+  failed: number;
+  tool_errors: number;
+  avg_ms: number;
+  kinds: { kind: string; label: string; count: number }[];
+  agents: AgentHealthRow[];
+  recent: PortalEvent[];
+};
 export type OrgOverview = {
   enabled: boolean;
   days: number;
@@ -161,6 +208,17 @@ export type KnowledgeDetail = {
 
 export type LogLine = { at: string; level: string; source: string; message: string };
 export type LogsResult = { stored: boolean; note: string; lines: LogLine[] };
+export type AuditEvent = {
+  at: string;
+  actor: string;
+  category: string;
+  message: string;
+  ok: boolean;
+  status: number;
+  error: string;
+  kind: string;
+  detail: { service: string; action: string; ip: string; params: Record<string, string> };
+};
 
 export type SavedChat = { id: string; endpoint: string; updated: string; count: number; title: string };
 export type SavedMessage = {
@@ -253,6 +311,11 @@ export const api = {
   dashMe: (days: number) => request<Activity>(`/api/dashboard/me?days=${days}`),
   dashInsights: (days: number) => request<Insights>(`/api/dashboard/me/insights?days=${days}`),
   dashOrg: (days: number) => request<OrgOverview>(`/api/admin/dashboard/overview?days=${days}`),
+  activityFeed: (days: number, category = "", status = "", actor = "") =>
+    request<ActivityFeed>(
+      `/api/admin/activity?${new URLSearchParams({ days: String(days), category, status, actor }).toString()}`
+    ),
+  agentHealth: (days: number) => request<HealthReport>(`/api/admin/agent-health?days=${days}`),
   dashPeople: (days: number) =>
     request<{ enabled: boolean; note: string; people: PersonRow[] }>(`/api/admin/dashboard/people?days=${days}`),
   dashPerson: (user: string, days: number) =>
@@ -327,13 +390,19 @@ export const api = {
   builderDelete: (id: string) => send<{ deleted: string }>("DELETE", `/api/admin/builder/agents/${id}`),
   meta: (payload: Record<string, string>) => request<unknown>("/api/admin/meta", payload),
   logs: (days: number) => request<LogsResult>(`/api/admin/logs?days=${days}`),
+  /** Databricks' own audit record (system.access.audit), as sentences. */
+  audit: (days: number, cats: string) =>
+    request<{ available: boolean; note: string; events: AuditEvent[] }>(
+      `/api/admin/audit?days=${days}&cats=${encodeURIComponent(cats)}`
+    ),
   cost: (days: number) =>
     request<{
       days: number;
       available: boolean;
       note: string;
       total_usd: number | null;
-      lines: { sku: string; dbus: number; usd: number | null }[];
+      /** `raw` is the endpoint (or SKU) name the bill is recorded under. */
+      lines: { sku: string; raw: string; dbus: number; usd: number | null }[];
     }>(`/api/admin/cost?days=${days}`),
 };
 

@@ -436,7 +436,7 @@ def update_agent(agent_id: str, spec: dict, who: dict, user_tok: str) -> dict:
         except DbxError as exc:
             warnings.append(
                 "The agent was saved, but its file settings could not be applied (%s). "
-                "Set them under Manage access instead." % str(exc)[:100]
+                "Set them on the Access page instead." % str(exc)[:100]
             )
     log.info("supervisor agent %s updated by %s", agent_id, who.get("user_name"))
     return {"agent_id": agent_id, "acted_as": by, "warnings": warnings}
@@ -497,7 +497,7 @@ def finish_provisioning(agent_id: str, endpoint_name: str, spec: dict, who: dict
         except DbxError:
             time.sleep(6)
     if not ep:
-        log.warning("endpoint %s did not appear, so no tags or access were applied; run sync_agents.py --apply and grant access on People & access", endpoint_name)
+        log.warning("endpoint %s did not appear, so no tags or access were applied; run sync_agents.py --apply and grant access on the Access page", endpoint_name)
         return
     try:
         tags = {

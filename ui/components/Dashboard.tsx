@@ -8,20 +8,21 @@ import {
   CostRow,
   downloadUrl,
   FileItem,
-  Insights,
+  Insights as InsightsData,
   OrgOverview,
   PersonRow,
   SavedChat,
 } from "@/lib/api";
 import { initials, middleShort, nameOf } from "@/lib/people";
 import { kindMeta } from "./AgentCard";
-import { ErrorBox } from "./bits";
+import { ErrorBox, Pager, usePage } from "./bits";
 import {
   ArrowDownRightIcon,
   ArrowRightIcon,
   ArrowUpRightIcon,
   ChevronLeftIcon,
   ClockIcon,
+  CoinIcon,
   DownloadIcon,
   FileIcon,
   MessageIcon,
@@ -31,17 +32,18 @@ import {
   UploadIcon,
 } from "./icons";
 
-/** "My dashboard".
+/** "My dashboard" (everyone) and "Insights" (admins).
  *
- *  Everyone gets a personal workspace summary that is useful, not just counted:
- *  a plain-English summary, activity over time, their go-to assistants with a
- *  one-click "Ask", conversations to pick up again, when in the week they tend
- *  to work, and every file they sent or got back (downloadable again).
+ *  My dashboard is personal and useful, not just counted: a plain-English
+ *  summary, activity over time, go-to assistants with a one-click "Ask",
+ *  conversations to pick up again, when in the week the person works, and every
+ *  file they sent or got back (downloadable again).
  *
- *  Admins also get "Everyone": adoption (active and new people), use per day,
- *  an assistant leaderboard with the ones nobody used, the people table and an
- *  estimated cost per person. Admins only ever see counts - what people asked,
- *  their chat titles and their files stay private to them, and the screen says so.
+ *  Insights is the one admin place for adoption, use and spend: active and new
+ *  people, use per day, an assistant table that carries real billed spend and
+ *  cost per question next to usage, a people table that carries the estimated
+ *  cost per person, and the assistants nobody used. Counts only - what people
+ *  asked, their chat titles, files and hours stay private, and the screen says so.
  *
  *  Charts follow one rule set: one measure per chart, one colour (the validated
  *  --chart-1 token), thin rounded-top columns, solid recessive gridlines, a real
@@ -52,69 +54,78 @@ import {
  *  new ones arrive instead of flashing a skeleton.
  */
 export function Dashboard({
-  isAdmin,
   onGoto,
   agents = [],
   onOpen,
   onResume,
 }: {
-  isAdmin: boolean;
   onGoto?: (tab: string) => void;
   agents?: Agent[];
   onOpen?: (a: Agent) => void;
   onResume?: (a: Agent, id: string) => void;
 }) {
-  const [view, setView] = useState<"me" | "everyone">("me");
   const [days, setDays] = useState(30);
-
   return (
     <div>
-      <div className="mb-7 flex flex-wrap items-end justify-between gap-5">
-        <div className="min-w-0">
-          <p className="text-[13px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--brand-deep)" }}>
-            {view === "me" ? "Your workspace" : "Across the portal"}
-          </p>
-          <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.02em]">
-            {view === "me" ? "My dashboard" : "Everyone’s activity"}
-          </h1>
-          <p className="mt-1.5 max-w-2xl text-[15px] muted">
-            {view === "me"
-              ? "Your activity, the assistants you rely on, and everything you can pick up again."
-              : "How the portal is being adopted and used. You see numbers only. What people asked, and their files, stay private to them."}
-          </p>
-        </div>
+      <PageTop
+        eyebrow="Your workspace"
+        title="My dashboard"
+        text="Your activity, the assistants you rely on, and everything you can pick up again."
+        days={days}
+        setDays={setDays}
+      />
+      <Mine days={days} setDays={setDays} agents={agents} onGoto={onGoto} onOpen={onOpen} onResume={onResume} />
+    </div>
+  );
+}
 
-        {/* One control row scopes everything below it. */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          {isAdmin ? (
-            <div className="seg" role="tablist" aria-label="Whose dashboard">
-              {(
-                [
-                  ["me", "Me"],
-                  ["everyone", "Everyone"],
-                ] as const
-              ).map(([k, label]) => (
-                <button key={k} type="button" role="tab" aria-selected={view === k} onClick={() => setView(k)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="seg" role="group" aria-label="Time period">
-            {[7, 30, 90].map((d) => (
-              <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)}>
-                {d} days
-              </button>
-            ))}
-          </div>
-        </div>
+/** Insights (admins): adoption, use and spend across the portal, in one place. */
+export function Insights({ agents = [], onGoto }: { agents?: Agent[]; onGoto?: (tab: string) => void }) {
+  const [days, setDays] = useState(30);
+  return (
+    <div>
+      <PageTop
+        eyebrow="Manage"
+        title="Insights"
+        text="How the portal is being adopted, which assistants earn their keep, and what they cost. Numbers only: what people asked, and their files, stay private to them."
+        days={days}
+        setDays={setDays}
+      />
+      <Everyone days={days} agents={agents} onGoto={onGoto} />
+    </div>
+  );
+}
+
+/** Page title and the one period control that scopes everything below it. */
+function PageTop({
+  eyebrow,
+  title,
+  text,
+  days,
+  setDays,
+}: {
+  eyebrow: string;
+  title: string;
+  text: string;
+  days: number;
+  setDays: (d: number) => void;
+}) {
+  return (
+    <div className="mb-7 flex flex-wrap items-end justify-between gap-5">
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--brand-deep)" }}>
+          {eyebrow}
+        </p>
+        <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.02em]">{title}</h1>
+        <p className="mt-1.5 max-w-2xl text-[15px] muted">{text}</p>
       </div>
-
-      {view === "me" ? (
-        <Mine days={days} setDays={setDays} agents={agents} onGoto={onGoto} onOpen={onOpen} onResume={onResume} />
-      ) : (
-        <Everyone days={days} agents={agents} />
-      )}
+      <div className="seg" role="group" aria-label="Time period">
+        {[7, 30, 90].map((d) => (
+          <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)}>
+            {d} days
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -161,6 +172,11 @@ function plural(n: number, one: string, many = one + "s") {
   return `${fmt(n)} ${n === 1 ? one : many}`;
 }
 
+function money(n: number) {
+  if (n >= 10000) return "$" + new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
+  return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function Panel({
   title,
   sub,
@@ -179,7 +195,7 @@ function Panel({
       <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4 sm:px-6" style={{ borderColor: "var(--line)" }}>
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold tracking-[-0.01em]">{title}</h2>
-          {sub ? <p className="mt-0.5 text-[13px] faint">{sub}</p> : null}
+          {sub ? <p className="mt-0.5 max-w-3xl text-[13px] faint">{sub}</p> : null}
         </div>
         {right}
       </div>
@@ -200,11 +216,30 @@ function Skeleton() {
   );
 }
 
+/** The one search field the dashboards use, sized for a panel header. */
+function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <label className="field flex w-full items-center gap-2 !py-0 sm:w-56">
+      <span className="faint">
+        <SearchIcon size={16} />
+      </span>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="min-h-[34px] w-full bg-transparent outline-none"
+      />
+    </label>
+  );
+}
+
 function Quiet({ children }: { children: ReactNode }) {
   return <p className="px-5 py-8 text-center text-sm muted sm:px-6">{children}</p>;
 }
 
-/** A whole-dashboard notice (history off, nothing yet) in the same card style. */
+/** A whole-page notice (history off, nothing yet) in the same card style. */
 function Callout({ icon, title, children, actions }: { icon: ReactNode; title: string; children: ReactNode; actions?: ReactNode }) {
   return (
     <div className="card relative overflow-hidden px-6 py-12 text-center sm:py-14">
@@ -221,6 +256,16 @@ function Callout({ icon, title, children, actions }: { icon: ReactNode; title: s
         <div className="mx-auto mt-1.5 max-w-lg text-[15px] muted">{children}</div>
         {actions ? <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">{actions}</div> : null}
       </div>
+    </div>
+  );
+}
+
+function ShowMore({ open, total, few, onToggle }: { open: boolean; total: number; few: number; onToggle: () => void }) {
+  return (
+    <div className="border-t px-6 py-2.5" style={{ borderColor: "var(--line)" }}>
+      <button type="button" className="text-[13px] font-medium" style={{ color: "var(--brand-deep)" }} onClick={onToggle}>
+        {open ? `Show top ${few}` : `Show all ${total}`}
+      </button>
     </div>
   );
 }
@@ -355,10 +400,7 @@ function Mine({
           <span className="mt-px shrink-0">
             <ClockIcon size={14} />
           </span>
-          <span>
-            Counted from saved chats, so it only includes conversations since saved history was turned on.
-            {data.last_active ? ` Last active ${when(data.last_active)}.` : ""}
-          </span>
+          <span>Counted from saved chats, so it only includes conversations since saved history was turned on.</span>
         </p>
       </div>
     </Dim>
@@ -476,7 +518,7 @@ function Kpi({
         {spark && spark.filter((n) => n > 0).length >= 3 ? <Spark values={spark} /> : null}
       </div>
       <div className="mt-3 min-h-[22px]">
-        {delta ? <Delta {...delta} /> : hint ? <span className="text-xs faint">{hint}</span> : null}
+        {delta ? <Delta {...delta} /> : hint ? <span className="block truncate text-xs faint">{hint}</span> : null}
       </div>
     </div>
   );
@@ -708,7 +750,7 @@ const WEEK_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satu
 /** Questions by weekday and hour, placed in the viewer's own time zone. One hue
  *  stepped light to dark (sequential), empty cells in the neutral surface, with
  *  a scale legend, per-cell read-outs and a sentence that says the pattern. */
-function WeekHeat({ hours }: { hours: Insights["hours"] }) {
+function WeekHeat({ hours }: { hours: InsightsData["hours"] }) {
   const [hover, setHover] = useState<{ d: number; h: number } | null>(null);
   const grid = useMemo(() => {
     const g = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
@@ -798,7 +840,7 @@ function GoTo({
   const max = Math.max(...rows.map((r) => r.questions), 1);
   const shown = all ? rows : rows.slice(0, 5);
   return (
-    <Panel title="Your go-to assistants" sub="Where your questions went">
+    <Panel title={onOpen ? "Your go-to assistants" : "Assistants used"} sub="Where the questions went">
       {rows.length === 0 ? (
         <Quiet>No assistants used in this period.</Quiet>
       ) : (
@@ -842,13 +884,7 @@ function GoTo({
           })}
         </ol>
       )}
-      {rows.length > 5 ? (
-        <div className="border-t px-6 py-2.5" style={{ borderColor: "var(--line)" }}>
-          <button type="button" className="text-[13px] font-medium" style={{ color: "var(--brand-deep)" }} onClick={() => setAll(!all)}>
-            {all ? "Show top 5" : `Show all ${rows.length}`}
-          </button>
-        </div>
-      ) : null}
+      {rows.length > 5 ? <ShowMore open={all} total={rows.length} few={5} onToggle={() => setAll(!all)} /> : null}
     </Panel>
   );
 }
@@ -921,7 +957,13 @@ function FilesPanel({
   onResume?: (a: Agent, id: string) => void;
 }) {
   const [dir, setDir] = useState<"all" | "received" | "sent">("all");
-  const [more, setMore] = useState(false);
+  const [q, setQ] = useState("");
+  const s = q.trim().toLowerCase();
+  const list = (files || []).filter(
+    (f) => (dir === "all" || f.direction === dir) && (!s || f.name.toLowerCase().includes(s) || f.label.toLowerCase().includes(s))
+  );
+  const pg = usePage(list, 10, [dir, q, days]);
+  const shown = pg.rows;
   if (files === null) {
     return (
       <Panel title="Your files">
@@ -930,8 +972,6 @@ function FilesPanel({
     );
   }
   const received = files.filter((f) => f.direction === "received").length;
-  const list = files.filter((f) => dir === "all" || f.direction === dir);
-  const shown = more ? list : list.slice(0, 8);
 
   return (
     <Panel
@@ -939,18 +979,21 @@ function FilesPanel({
       sub={files.length ? `Files you sent and got back, last ${days} days` : undefined}
       right={
         files.length ? (
-          <div className="seg !p-0.5" role="group" aria-label="Which files">
-            {(
-              [
-                ["all", `All ${files.length}`],
-                ["received", `Received ${received}`],
-                ["sent", `Sent ${files.length - received}`],
-              ] as const
-            ).map(([k, label]) => (
-              <button key={k} type="button" aria-pressed={dir === k} onClick={() => setDir(k)} className="!min-h-[28px] !px-2.5 !text-[12px]">
-                {label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            {files.length > 10 ? <SearchBox value={q} onChange={setQ} placeholder="Search files" /> : null}
+            <div className="seg !p-0.5" role="group" aria-label="Which files">
+              {(
+                [
+                  ["all", `All ${files.length}`],
+                  ["received", `Received ${received}`],
+                  ["sent", `Sent ${files.length - received}`],
+                ] as const
+              ).map(([k, label]) => (
+                <button key={k} type="button" aria-pressed={dir === k} onClick={() => setDir(k)} className="!min-h-[28px] !px-2.5 !text-[12px]">
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null
       }
@@ -958,7 +1001,7 @@ function FilesPanel({
       {files.length === 0 ? (
         <Quiet>No files sent or received in the last {days} days. Reports and files assistants give you will be kept here.</Quiet>
       ) : list.length === 0 ? (
-        <Quiet>None in this view.</Quiet>
+        <Quiet>No files match.</Quiet>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -1021,25 +1064,24 @@ function FilesPanel({
           </table>
         </div>
       )}
-      {list.length > 8 ? (
-        <div className="border-t px-6 py-2.5" style={{ borderColor: "var(--line)" }}>
-          <button type="button" className="text-[13px] font-medium" style={{ color: "var(--brand-deep)" }} onClick={() => setMore(!more)}>
-            {more ? "Show fewer" : `Show all ${list.length}`}
-          </button>
-        </div>
-      ) : null}
+      <Pager pg={pg} noun="files" />
     </Panel>
   );
 }
 
-// ------------------------------------------------------------- everyone -----
+// ------------------------------------------------------------- insights -----
 
-type SortKey = "questions" | "conversations" | "assistants" | "last_active";
+type SortKey = "questions" | "conversations" | "assistants" | "last_active" | "cost";
 const PEOPLE_PAGE = 25;
+type Spend = Awaited<ReturnType<typeof api.cost>>;
+type PersonCost = Awaited<ReturnType<typeof api.dashCosts>>;
 
-function Everyone({ days, agents }: { days: number; agents: Agent[] }) {
+function Everyone({ days, agents, onGoto }: { days: number; agents: Agent[]; onGoto?: (tab: string) => void }) {
   const org = usePeriod<OrgOverview>(() => api.dashOrg(days), [days]);
   const ppl = usePeriod(() => api.dashPeople(days), [days]);
+  // Billing is slow and can be unreadable; it only ever adds columns, never blocks.
+  const spend = usePeriod<Spend>(() => api.cost(days), [days]);
+  const est = usePeriod<PersonCost>(() => api.dashCosts(days), [days]);
   const [who, setWho] = useState<string | null>(null);
 
   if (who) return <Person user={who} days={days} onBack={() => setWho(null)} />;
@@ -1048,7 +1090,7 @@ function Everyone({ days, agents }: { days: number; agents: Agent[] }) {
   const o = org.data;
   if (!o.enabled) {
     return (
-      <Callout icon={<ClockIcon size={26} />} title="The organisation view needs saved chat history">
+      <Callout icon={<ClockIcon size={26} />} title="Insights need saved chat history">
         {o.note}
       </Callout>
     );
@@ -1056,7 +1098,7 @@ function Everyone({ days, agents }: { days: number; agents: Agent[] }) {
 
   const usedNames = new Set(o.assistants_used.map((a) => a.name));
   const unused = agents.filter((a) => !usedNames.has(a.name));
-  const perPerson = o.people ? o.questions / o.people : 0;
+  const bill = spend.data && spend.data.available ? spend.data : null;
 
   return (
     <Dim busy={org.busy}>
@@ -1069,24 +1111,33 @@ function Everyone({ days, agents }: { days: number; agents: Agent[] }) {
             <Kpi icon={<ArrowUpRightIcon size={16} />} label="New people" value={fmt(o.new_people)} hint="First question since history began" />
             <Kpi
               icon={<ThreadsIcon size={16} />}
-              label="Per person"
-              value={perPerson >= 10 ? fmt(Math.round(perPerson)) : perPerson.toFixed(1)}
-              suffix="questions"
-              hint="Average across active people"
-            />
-            <Kpi
-              icon={<SparkleIcon size={16} />}
               label="Assistants in use"
               value={fmt(o.assistants_used.length)}
               suffix={agents.length ? `of ${agents.length}` : undefined}
               hint={unused.length ? `${unused.length} not used this period` : "All of them were used"}
             />
+            <Kpi
+              icon={<CoinIcon size={16} />}
+              label="Spend"
+              value={bill && bill.total_usd != null ? money(bill.total_usd) : spend.busy && !spend.data ? "…" : "—"}
+              hint={bill ? "Billed by Databricks for AI" : spend.data ? "Billing is not readable" : "Reading billing…"}
+            />
           </div>
         </section>
 
         {o.questions === 0 ? (
-          <Callout icon={<SparkleIcon size={26} />} title={`Nobody asked anything in the last ${days} days`}>
-            Try a longer period, or share an assistant with more people from the Admin console.
+          <Callout
+            icon={<SparkleIcon size={26} />}
+            title={`Nobody asked anything in the last ${days} days`}
+            actions={
+              onGoto ? (
+                <button type="button" className="btn btn-quiet" onClick={() => onGoto("access")}>
+                  Share assistants
+                </button>
+              ) : null
+            }
+          >
+            Try a longer period, or share an assistant with more people.
           </Callout>
         ) : (
           <>
@@ -1099,67 +1150,137 @@ function Everyone({ days, agents }: { days: number; agents: Agent[] }) {
                 <SeriesChart rows={o.per_day.map((d) => ({ day: d.day, value: d.questions }))} one="question" height={160} />
               </Panel>
             </div>
-            <Leaderboard rows={o.assistants_used} unused={unused} />
+            <AssistantsTable rows={o.assistants_used} unused={unused} spend={spend} />
           </>
         )}
 
-        <PeopleTable state={ppl} onPick={setWho} />
-        <CostPerPerson days={days} />
+        <PeopleTable state={ppl} est={est} onPick={setWho} />
       </div>
     </Dim>
   );
 }
 
-function Leaderboard({ rows, unused }: { rows: OrgOverview["assistants_used"]; unused: Agent[] }) {
-  const [all, setAll] = useState(false);
+/** Usage and real spend side by side, so "which assistants earn their keep"
+ *  is one table rather than a usage page and a separate cost page. Spend is
+ *  matched on the endpoint name the bill is recorded under; whatever matches no
+ *  assistant used here (models called directly, unused agents) is "Other". */
+function AssistantsTable({
+  rows,
+  unused,
+  spend,
+}: {
+  rows: OrgOverview["assistants_used"];
+  unused: Agent[];
+  spend: { data: Spend | null; busy: boolean; err: string };
+}) {
+  const [q, setQ] = useState("");
+  const [otherOpen, setOtherOpen] = useState(false);
+  const bill = spend.data && spend.data.available ? spend.data : null;
+  const byRaw = new Map((bill?.lines || []).map((l) => [l.raw, l.usd || 0]));
   const max = Math.max(...rows.map((r) => r.questions), 1);
   const sum = rows.reduce((n, r) => n + r.questions, 0) || 1;
-  const shown = all ? rows : rows.slice(0, 8);
+  const s = q.trim().toLowerCase();
+  const hits = rows.filter((r) => !s || r.label.toLowerCase().includes(s));
+  const pg = usePage(hits, 10, [q, rows.length]);
+  const shown = pg.rows;
+  const rank = (r: (typeof rows)[number]) => rows.indexOf(r) + 1;
+  const used = new Set(rows.map((r) => r.name));
+  const other = (bill?.lines || []).filter((l) => !used.has(l.raw) && (l.usd || 0) > 0);
+  const otherTotal = other.reduce((n, l) => n + (l.usd || 0), 0);
+
   return (
-    <Panel title="Assistants" sub="Which assistants people use, and how widely">
-      <div className="overflow-x-auto">
+    <Panel
+      title="Assistants"
+      sub="Which assistants people use, how widely, and what each one costs."
+      right={
+        <div className="flex flex-wrap items-center gap-2">
+          {spend.data && !spend.data.available ? (
+            <span className="chip shrink-0" style={{ color: "var(--ink-dim)" }} title={spend.data.note}>
+              Spend unavailable
+            </span>
+          ) : null}
+          {rows.length > 10 ? <SearchBox value={q} onChange={setQ} placeholder="Search assistants" /> : null}
+        </div>
+      }
+    >
+      {!hits.length ? <Quiet>No assistants match “{q}”.</Quiet> : null}
+      <div className={hits.length ? "overflow-x-auto" : "hidden"}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs faint" style={{ background: "var(--canvas)" }}>
               <th className="w-12 py-2.5 pl-6 pr-1 font-medium">#</th>
               <th className="px-3 py-2.5 font-medium">Assistant</th>
-              <th className="min-w-[200px] px-3 py-2.5 font-medium">Questions</th>
+              <th className="min-w-[190px] px-3 py-2.5 font-medium">Questions</th>
               <th className="px-3 py-2.5 font-medium">People</th>
+              <th className="px-3 py-2.5 text-right font-medium" title="Billed by Databricks in this period">
+                Spend
+              </th>
+              <th className="px-3 py-2.5 text-right font-medium" title="Spend divided by questions asked through the portal">
+                Per question
+              </th>
               <th className="px-3 py-2.5 pr-6 font-medium">Last used</th>
             </tr>
           </thead>
           <tbody>
-            {shown.map((r, i) => (
-              <tr key={r.name} style={{ borderTop: "1px solid var(--line)" }}>
-                <td className="py-3 pl-6 pr-1 text-xs font-semibold faint tabular-nums">{i + 1}</td>
-                <td className="max-w-[320px] px-3 py-3">
-                  <span className="block truncate font-medium" title={r.label}>
-                    {middleShort(r.label, 44)}
-                  </span>
-                </td>
-                <td className="px-3 py-3">
-                  <div className="flex items-center gap-3">
-                    <span className="w-12 text-right font-semibold tabular-nums">{fmt(r.questions)}</span>
-                    <div className="h-1.5 min-w-[80px] flex-1 overflow-hidden rounded-full" style={{ background: "var(--bubble)" }}>
-                      <div className="h-full rounded-full" style={{ width: `${Math.max(2, (r.questions / max) * 100)}%`, background: "var(--chart-1)" }} />
+            {shown.map((r) => {
+              const usd = bill ? byRaw.get(r.name) : undefined;
+              return (
+                <tr key={r.name} style={{ borderTop: "1px solid var(--line)" }}>
+                  <td className="py-3 pl-6 pr-1 text-xs font-semibold faint tabular-nums">{rank(r)}</td>
+                  <td className="max-w-[300px] px-3 py-3">
+                    <span className="block truncate font-medium" title={r.label}>
+                      {middleShort(r.label, 42)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="w-12 text-right font-semibold tabular-nums">{fmt(r.questions)}</span>
+                      <div className="h-1.5 min-w-[70px] flex-1 overflow-hidden rounded-full" style={{ background: "var(--bubble)" }}>
+                        <div className="h-full rounded-full" style={{ width: `${Math.max(2, (r.questions / max) * 100)}%`, background: "var(--chart-1)" }} />
+                      </div>
+                      <span className="w-9 text-right text-xs faint tabular-nums">{Math.round((r.questions / sum) * 100)}%</span>
                     </div>
-                    <span className="w-9 text-right text-xs faint tabular-nums">{Math.round((r.questions / sum) * 100)}%</span>
-                  </div>
-                </td>
-                <td className="px-3 py-3 tabular-nums muted">{fmt(r.people)}</td>
-                <td className="whitespace-nowrap px-3 py-3 pr-6 muted">{r.last_used ? whenAgo(r.last_used) : "—"}</td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-3 py-3 tabular-nums muted">{fmt(r.people)}</td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
+                    {!spend.data ? <span className="faint">…</span> : usd ? money(usd) : <span className="faint" title="No separate bill line; it may be charged to the model it runs on">—</span>}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums muted">{usd && r.questions ? money(usd / r.questions) : "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-3 pr-6 muted">{r.last_used ? whenAgo(r.last_used) : "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-      {rows.length > 8 ? (
-        <div className="border-t px-6 py-2.5" style={{ borderColor: "var(--line)" }}>
-          <button type="button" className="text-[13px] font-medium" style={{ color: "var(--brand-deep)" }} onClick={() => setAll(!all)}>
-            {all ? "Show top 8" : `Show all ${rows.length}`}
+      <Pager pg={pg} noun="assistants" />
+
+      {otherTotal > 0 ? (
+        <div className="border-t px-6 py-3.5" style={{ borderColor: "var(--line)" }}>
+          <button type="button" className="flex w-full flex-wrap items-center justify-between gap-2 text-left" onClick={() => setOtherOpen(!otherOpen)} aria-expanded={otherOpen}>
+            <span className="text-[13px]">
+              <span className="font-semibold">Other spend {money(otherTotal)}</span>
+              <span className="faint"> · AI models and assistants not used through the portal in this period</span>
+            </span>
+            <span className="text-[13px] font-medium" style={{ color: "var(--brand-deep)" }}>
+              {otherOpen ? "Hide" : `Show ${other.length}`}
+            </span>
           </button>
+          {otherOpen ? (
+            <ul className="mt-3 grid gap-x-8 gap-y-1.5 sm:grid-cols-2">
+              {other.map((l) => (
+                <li key={l.raw} className="flex justify-between gap-3 text-[13px]">
+                  <span className="truncate muted" title={l.raw}>
+                    {middleShort(l.sku, 40)}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{money(l.usd || 0)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
+
       {unused.length ? (
         <div className="border-t px-6 py-4" style={{ borderColor: "var(--line)" }}>
           <p className="text-[13px] font-semibold">Not used in this period ({unused.length})</p>
@@ -1178,32 +1299,39 @@ function Leaderboard({ rows, unused }: { rows: OrgOverview["assistants_used"]; u
   );
 }
 
+/** People ranked by use, with the estimated cost per person as a column. The
+ *  estimate shares each assistant's real bill by questions asked; it is labelled
+ *  as an estimate in the header and the footer, never presented as exact. */
 function PeopleTable({
   state,
+  est,
   onPick,
 }: {
   state: { data: { enabled: boolean; note: string; people: PersonRow[] } | null; err: string; busy: boolean };
+  est: { data: PersonCost | null; busy: boolean; err: string };
   onPick: (user: string) => void;
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "questions", desc: true });
-  const [limit, setLimit] = useState(PEOPLE_PAGE);
-  useEffect(() => setLimit(PEOPLE_PAGE), [q, sort]);
-
   const list = state.data?.people || [];
+  const costOk = !!(est.data && est.data.available);
+  const costBy = useMemo(() => new Map<string, number>(((est.data?.rows || []) as CostRow[]).map((r) => [r.user, r.est_usd])), [est.data]);
   const ranked = useMemo(() => {
     const s = q.trim().toLowerCase();
     const rows = list.filter((p) => !s || p.user.toLowerCase().includes(s) || nameOf(p.user).toLowerCase().includes(s));
-    const val = (p: PersonRow) => (sort.key === "last_active" ? Date.parse(p.last_active) || 0 : p[sort.key]);
+    const val = (p: PersonRow) =>
+      sort.key === "last_active" ? Date.parse(p.last_active) || 0 : sort.key === "cost" ? costBy.get(p.user) || 0 : p[sort.key];
     return [...rows].sort((a, b) => (sort.desc ? val(b) - val(a) : val(a) - val(b)));
-  }, [list, q, sort]);
+  }, [list, q, sort, costBy]);
   const max = Math.max(...list.map((p) => p.questions), 1);
-  const shown = ranked.slice(0, limit);
+  const pg = usePage(ranked, PEOPLE_PAGE, [q, sort]);
+  const shown = pg.rows;
+  const attributed = ((est.data?.rows || []) as CostRow[]).reduce((n, r) => n + r.est_usd, 0);
 
-  function head(key: SortKey, label: string, cls = "") {
+  function head(key: SortKey, label: string, cls = "", title?: string) {
     const active = sort.key === key;
     return (
-      <th className={`px-3 py-2.5 font-medium ${cls}`} aria-sort={active ? (sort.desc ? "descending" : "ascending") : "none"}>
+      <th className={`whitespace-nowrap px-3 py-2.5 font-medium ${cls}`} aria-sort={active ? (sort.desc ? "descending" : "ascending") : "none"} title={title}>
         <button
           type="button"
           className={`inline-flex items-center gap-1 transition hover:text-[var(--ink)] ${active ? "text-[var(--ink)]" : ""}`}
@@ -1221,22 +1349,10 @@ function PeopleTable({
   return (
     <Panel
       title="People"
-      sub="Pick a person to see their numbers. Click a column to sort."
+      sub="Who uses the portal and how much. Pick a person to see their numbers; click a column to sort."
       right={
         list.length > 6 ? (
-          <label className="field flex w-full items-center gap-2 !py-0 sm:w-64">
-            <span className="faint">
-              <SearchIcon size={16} />
-            </span>
-            <input
-              type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Find a person"
-              aria-label="Find a person"
-              className="min-h-[36px] w-full bg-transparent outline-none"
-            />
-          </label>
+          <SearchBox value={q} onChange={setQ} placeholder="Search people" />
         ) : null
       }
     >
@@ -1254,10 +1370,11 @@ function PeopleTable({
             <thead>
               <tr className="text-left text-xs faint" style={{ background: "var(--canvas)" }}>
                 <th className="w-12 py-2.5 pl-6 pr-1 font-medium">#</th>
-                <th className="px-3 py-2.5 font-medium">Person</th>
-                {head("questions", "Questions", "min-w-[200px]")}
+                <th className="min-w-[220px] px-3 py-2.5 font-medium">Person</th>
+                {head("questions", "Questions", "min-w-[190px]")}
                 {head("conversations", "Conversations")}
                 {head("assistants", "Assistants")}
+                {costOk ? head("cost", "Est. cost", "text-right", "An estimate: each assistant’s real cost shared by questions asked") : null}
                 {head("last_active", "Last active")}
                 <th className="px-6 py-2.5" />
               </tr>
@@ -1265,7 +1382,7 @@ function PeopleTable({
             <tbody>
               {shown.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center muted">
+                  <td colSpan={8} className="px-6 py-8 text-center muted">
                     Nobody matches “{q}”.
                   </td>
                 </tr>
@@ -1277,9 +1394,9 @@ function PeopleTable({
                   style={{ borderTop: "1px solid var(--line)" }}
                   onClick={() => onPick(p.user)}
                 >
-                  <td className="py-3 pl-6 pr-1 text-xs font-semibold faint tabular-nums">{i + 1}</td>
+                  <td className="py-3 pl-6 pr-1 text-xs font-semibold faint tabular-nums">{pg.page * pg.size + i + 1}</td>
                   <td className="px-3 py-3">
-                    <span className="flex max-w-[300px] items-center gap-3">
+                    <span className="flex max-w-[280px] items-center gap-3">
                       <span className="avatar" aria-hidden>
                         {initials(p.user)}
                       </span>
@@ -1292,13 +1409,18 @@ function PeopleTable({
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-3">
                       <span className="w-12 text-right font-semibold tabular-nums">{fmt(p.questions)}</span>
-                      <div className="h-1.5 min-w-[80px] flex-1 overflow-hidden rounded-full" style={{ background: "var(--bubble)" }}>
+                      <div className="h-1.5 min-w-[70px] flex-1 overflow-hidden rounded-full" style={{ background: "var(--bubble)" }}>
                         <div className="h-full rounded-full" style={{ width: `${Math.max(2, (p.questions / max) * 100)}%`, background: "var(--chart-1)" }} />
                       </div>
                     </div>
                   </td>
                   <td className="px-3 py-3 tabular-nums muted">{fmt(p.conversations)}</td>
                   <td className="px-3 py-3 tabular-nums muted">{p.assistants}</td>
+                  {costOk ? (
+                    <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
+                      {costBy.has(p.user) ? `≈ ${money(costBy.get(p.user) || 0)}` : <span className="faint">—</span>}
+                    </td>
+                  ) : null}
                   <td className="whitespace-nowrap px-3 py-3 muted">{p.last_active ? when(p.last_active) : "—"}</td>
                   <td className="px-6 py-3 text-right">
                     <button
@@ -1319,16 +1441,18 @@ function PeopleTable({
           </table>
         </div>
       )}
-      {ranked.length > shown.length ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-6 py-3 text-xs faint" style={{ borderColor: "var(--line)" }}>
-          <span>
-            Showing {shown.length} of {ranked.length} people
-          </span>
-          <button type="button" className="btn btn-quiet !min-h-[32px] !text-[13px]" onClick={() => setLimit((l) => l + PEOPLE_PAGE)}>
-            Show {Math.min(PEOPLE_PAGE, ranked.length - shown.length)} more
-          </button>
-        </div>
-      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-6 py-3 text-xs faint" style={{ borderColor: "var(--line)" }}>
+        <span>
+          {costOk
+            ? `Est. cost is an estimate, not a bill: Databricks bills per assistant, so each assistant’s cost is shared by the questions people asked it. ≈ ${money(attributed)} matched to people.`
+            : est.data && !est.data.available
+              ? "Estimated cost per person is not available: billing could not be read."
+              : est.busy
+                ? "Working out the estimated cost per person…"
+                : ""}
+        </span>
+      </div>
+      <Pager pg={pg} noun="people" />
     </Panel>
   );
 }
@@ -1343,7 +1467,7 @@ function Person({ user, days, onBack }: { user: string; days: number; onBack: ()
       <div className="card mb-6 flex flex-wrap items-center gap-4 p-4 pr-6">
         <button type="button" className="btn btn-quiet" onClick={onBack}>
           <ChevronLeftIcon size={16} />
-          Everyone
+          All people
         </button>
         <span className="hidden h-8 w-px sm:block" style={{ background: "var(--line)" }} aria-hidden />
         <span className="avatar !h-11 !w-11" aria-hidden>
@@ -1380,96 +1504,6 @@ function Person({ user, days, onBack }: { user: string; days: number; onBack: ()
           </div>
         </Dim>
       )}
-    </div>
-  );
-}
-
-// ----------------------------------------------------------------- cost -----
-
-function money(n: number) {
-  return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function CostPerPerson({ days }: { days: number }) {
-  const { data, err, busy } = usePeriod(() => api.dashCosts(days), [days]);
-  const [all, setAll] = useState(false);
-
-  const rows: CostRow[] = data?.rows || [];
-  const max = Math.max(...rows.map((r) => r.est_usd), 0.0001);
-  const attributed = rows.reduce((n, r) => n + r.est_usd, 0);
-  const shown = all ? rows : rows.slice(0, 10);
-
-  return (
-    <Panel
-      title="Estimated cost per person"
-      sub="Databricks bills per assistant, not per person. This shares each assistant’s real cost between the people who used it, by how many questions each asked. Use it to see roughly where the spend comes from, not as an exact bill."
-      right={
-        <span className="chip shrink-0" style={{ color: "var(--ink-dim)" }}>
-          Estimate
-        </span>
-      }
-    >
-      <div className="px-5 py-5 sm:px-6" style={{ opacity: busy && data ? 0.55 : 1, transition: "opacity .15s" }}>
-        <ErrorBox>{err}</ErrorBox>
-        {!data && !err ? (
-          <div className="h-24 animate-pulse rounded-lg" style={{ background: "var(--bubble)" }} aria-label="Working it out" />
-        ) : data && !data.available ? (
-          <p className="text-sm muted">{data.note}</p>
-        ) : data ? (
-          rows.length === 0 ? (
-            <p className="text-sm muted">No cost could be matched to anyone in this period.</p>
-          ) : (
-            <>
-              <dl className="mb-6 grid gap-3 sm:grid-cols-3">
-                <CostTile label="Matched to people" value={money(attributed)} />
-                <CostTile
-                  label="Not from the portal"
-                  value={money(data.unattributed_usd || 0)}
-                  title="Spend on assistants nobody used through the portal in this period, or calls made outside it."
-                />
-                {data.total_usd != null ? <CostTile label="Total spend" value={money(data.total_usd)} /> : null}
-              </dl>
-              <ul className="space-y-4">
-                {shown.map((r) => (
-                  <li key={r.user} className="flex items-center gap-3">
-                    <span className="avatar" aria-hidden>
-                      {initials(r.user)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <span className="truncate text-[14.5px] font-medium" title={r.user}>
-                          {nameOf(r.user) || r.user}
-                        </span>
-                        <span className="shrink-0 text-sm font-semibold tabular-nums">
-                          ≈ {money(r.est_usd)}
-                          <span className="ml-1.5 hidden text-xs font-normal faint sm:inline">{plural(r.questions, "question")}</span>
-                        </span>
-                      </div>
-                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full" style={{ background: "var(--bubble)" }}>
-                        <div className="h-full rounded-full" style={{ width: `${Math.max(2, (r.est_usd / max) * 100)}%`, background: "var(--chart-1)" }} />
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {rows.length > 10 ? (
-                <button type="button" className="mt-4 text-[13px] font-medium" style={{ color: "var(--brand-deep)" }} onClick={() => setAll(!all)}>
-                  {all ? "Show top 10" : `Show all ${rows.length}`}
-                </button>
-              ) : null}
-            </>
-          )
-        ) : null}
-      </div>
-    </Panel>
-  );
-}
-
-function CostTile({ label, value, title }: { label: string; value: string; title?: string }) {
-  return (
-    <div className="rounded-xl px-4 py-3" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }} title={title}>
-      <dt className="text-xs faint">{label}</dt>
-      <dd className="mt-1 text-[20px] font-semibold tracking-[-0.015em]">{value}</dd>
     </div>
   );
 }

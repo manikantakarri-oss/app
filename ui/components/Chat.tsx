@@ -5,7 +5,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Agent, api, downloadUrl, Reply, SavedChat, upload } from "@/lib/api";
 import { ErrorBox } from "./bits";
-import { TierSwitch } from "./ModelChoice";
 import { ChatHistory } from "./ChatHistory";
 import {
   ArrowUpIcon,
@@ -47,16 +46,17 @@ function newId(): string {
 
 export function Chat({
   agent,
-  models,
   agents,
   historyEnabled,
+  resumeId = "",
   onBack,
   onSwitch,
 }: {
   agent: Agent;
-  models: Agent[];
   agents: Agent[];
   historyEnabled: boolean;
+  /** Open this saved conversation straight away (from "Recent" on the home page). */
+  resumeId?: string;
   onBack: () => void;
   onSwitch: (a: Agent) => void;
 }) {
@@ -110,6 +110,13 @@ export function Chat({
     stickRef.current = true;
     inputRef.current?.focus();
   }, [agent.name]);
+
+  // Declared after the reset above, so on open the reset runs first and the
+  // requested conversation is then loaded on top of the empty chat.
+  useEffect(() => {
+    if (resumeId && historyEnabled) resume(resumeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.name, resumeId]);
 
   useEffect(() => {
     try {
@@ -439,17 +446,6 @@ export function Chat({
               {agent.blurb || agent.kind_hint}
             </p>
           </div>
-          {agent.metered ? (
-            <TierSwitch models={models} current={agent} onSwitch={onSwitch} />
-          ) : models.length ? (
-            <button
-              type="button"
-              className="hidden shrink-0 text-sm muted underline hover:text-[var(--ink)] sm:inline"
-              onClick={() => onSwitch(models[0])}
-            >
-              Use the general assistant instead
-            </button>
-          ) : null}
           {!historyEnabled && turns.length > 0 ? (
             <button
               type="button"
@@ -690,7 +686,7 @@ function Message({
                   </code>
                   <p className="mt-1 text-xs faint">
                     Not downloadable: this agent has no results folder set. An admin can set one
-                    under Manage access.
+                    on the Access page.
                   </p>
                 </div>
               )
