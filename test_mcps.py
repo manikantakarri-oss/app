@@ -584,7 +584,8 @@ def _():
     assert problems == []
     assert sorted(grants(f)) == sorted([
         ("catalog", "main", "USE_CATALOG"), ("schema", "main.sales", "USE_SCHEMA"),
-        ("volume", "main.sales.uploads", "READ_VOLUME"), ("volume", "main.sales.results", "WRITE_VOLUME")])
+        ("volume", "main.sales.uploads", "READ_VOLUME"), ("volume", "main.sales.results", "READ_VOLUME"),
+        ("volume", "main.sales.results", "WRITE_VOLUME")])
     assert all(c[2] == "USER" for c in f.of("PATCH", "/unity-catalog/"))  # as the admin, not the portal
 
 
@@ -651,7 +652,7 @@ def _():
     order = [(c[0], c[1]) for c in f.calls]
     last_grant = max(i for i, c in enumerate(order) if c[0] == "PATCH" and "/unity-catalog/" in c[1])
     attach = order.index(("POST", "/api/2.1/supervisor-agents/abc123/tools"))
-    assert len(grants(f)) == 4 and last_grant < attach
+    assert len(grants(f)) == 5 and last_grant < attach
 
 
 @case("create and save both top up folder access for a tool that is already running")

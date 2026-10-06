@@ -84,9 +84,14 @@ def _read(resp: httpx.Response) -> dict:
 # The portal always approves - the agent's own ToolApprovalPlugin/governance
 # already decides what it may call; this is not a second consent gate the
 # user asked for, just the API round-trip Playground makes transparently.
-# Capped so a misbehaving endpoint that keeps re-requesting approval cannot
-# loop forever.
-MAX_APPROVAL_ROUNDS = 4
+# Every tool call is its own round (seen live, Oct 2026: a media plan is
+# find inventory -> rates -> availability -> plan -> export, five or more), so
+# the cap must allow a real multi-step task. It is still capped so a
+# misbehaving endpoint that keeps re-requesting approval cannot loop forever;
+# hitting it is said in the reply, never silently cut short.
+MAX_APPROVAL_ROUNDS = 12
+STOPPED_NOTE = ("\n\n_The assistant stopped part-way: it needed more steps than one question allows. "
+                "Ask it to continue._")
 
 
 def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str) -> dict:
@@ -96,10 +101,12 @@ def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str) 
     never produce an mcp_approval_request and pending_approvals() is a no-op
     for them.
     """
+    tools: list = []
     for _ in range(MAX_APPROVAL_ROUNDS):
         approvals = adapters.pending_approvals(data)
         if not approvals:
-            return data
+            return dict(data, _tools=tools)
+        tools += [a.get("name") for a in approvals if a.get("name")]
         payload = {
             "input": adapters.build_approval_replay(payload.get("input") or [], data.get("output") or [], approvals)
         }
@@ -109,9 +116,9 @@ def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str) 
             raise DbxError("approving a tool call failed: " + detail, resp.status_code)
         next_data = _body(resp)
         if next_data is None:
-            return data
+            return dict(data, _tools=tools)
         data = next_data
-    return data
+    return dict(data, _tools=tools, _stopped=bool(adapters.pending_approvals(data)))
 
 
 def ask(
@@ -169,6 +176,10 @@ def ask(
     if data is not None and adapters.pending_approvals(data):
         data = _resolve_approvals(endpoint, payload, data, user_tok)
         out = adapters.parse(data)
+        # Each round only returns its own step; name every tool that ran.
+        out["tools"] = list(dict.fromkeys(list(data.get("_tools") or []) + list(out.get("tools") or [])))
+        if data.get("_stopped"):
+            out["reply"] = (out["reply"] or "").rstrip() + STOPPED_NOTE
     else:
         out = _read(resp)
     if not out["reply"] and not out["attachments"]:

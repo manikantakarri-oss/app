@@ -174,6 +174,36 @@ def _():
     assert adapters.pending_approvals("not a dict") == []
 
 
+@case("a multi-step task approves each tool in turn, names every tool that ran, and says so if it hit the cap")
+def _():
+    import httpx
+    import chat
+
+    def step(n, last):
+        out = [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "step %d" % n}]}]
+        if not last:
+            out.append({"type": "mcp_approval_request", "id": "t%d" % n, "name": "tool_%d" % n, "arguments": "{}"})
+        return {"output": out}
+
+    saved = chat._post
+    for steps, stopped in ((6, False), (chat.MAX_APPROVAL_ROUNDS + 3, True)):
+        n = {"i": 0}
+
+        def post(endpoint, payload, tok, steps=steps, n=n):
+            n["i"] += 1
+            return httpx.Response(200, json=step(n["i"], n["i"] >= steps))
+        chat._post = post
+        try:
+            out = chat.ask("e", "agent/v1/responses", [{"role": "user", "content": "plan"}], "TOK")
+        finally:
+            chat._post = saved
+        if not stopped:
+            assert n["i"] == 6 and out["tools"][:5] == ["tool_1", "tool_2", "tool_3", "tool_4", "tool_5"], out["tools"]
+            assert "stopped part-way" not in out["reply"] and "step 6" in out["reply"], out["reply"]
+        else:
+            assert n["i"] == chat.MAX_APPROVAL_ROUNDS + 1 and "stopped part-way" in out["reply"], (n, out["reply"])
+
+
 @case("approval replay resends the original turn, the prior output, and an approval response")
 def _():
     # Verified by hand against mas-77773ac2-endpoint: sending only the

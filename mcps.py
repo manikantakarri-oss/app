@@ -20,7 +20,8 @@ Folder access: a freshly installed app runs as its own new service principal, wh
 has no access to anyone's volumes. The card's `needs.volumes` (read / write) says
 what the tool uses, and the assistant's Files step says which folders, so once the
 app exists `grant_volumes` gives that principal just that access (READ_VOLUME on
-the folders people upload to, WRITE_VOLUME on the folder results go to, plus the
+the folders people upload to, READ_VOLUME + WRITE_VOLUME on the folder results go to
+(a file write is refused without both), plus the
 USE_CATALOG / USE_SCHEMA that reaching a volume takes). It runs as the admin, so
 Databricks only allows what that admin could grant themselves; a refusal is logged
 with the exact grant to make by hand.
@@ -767,7 +768,10 @@ def grant_volumes(entries: list, volumes: dict, user_tok: str) -> list:
         if "read" in needs:
             want += [(v, "READ_VOLUME") for v in volumes.get("read") or []]
         if "write" in needs:
-            want += [(v, "WRITE_VOLUME") for v in volumes.get("write") or []]
+            # Seen live (Oct 2026): writing a file through the Files API with only
+            # WRITE_VOLUME is a 403; Databricks needs READ_VOLUME on it as well.
+            for v in volumes.get("write") or []:
+                want += [(v, "READ_VOLUME"), (v, "WRITE_VOLUME")]
         if not want:
             continue
         try:
