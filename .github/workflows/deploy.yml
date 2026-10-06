@@ -80,6 +80,7 @@ jobs:
           PORTAL_LOG_TABLE: ${{ vars.PORTAL_LOG_TABLE }}
           WAREHOUSE_ID: ${{ vars.WAREHOUSE_ID }}
           USERS_GROUP: ${{ vars.USERS_GROUP }}
+          SHARE_AGENTS: ${{ vars.SHARE_AGENTS }}
           BRAND_NAME: ${{ vars.BRAND_NAME }}
           BRAND_COLOR: ${{ vars.BRAND_COLOR }}
           BRAND_LOGO: ${{ vars.BRAND_LOGO }}

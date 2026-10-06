@@ -85,6 +85,9 @@ def clean(payload: dict, *, new: bool) -> dict:
         if g and g.lower() not in ("-", "none") and not GROUP_RE.match(g):
             raise DeployError("That group name is not valid.")
         out["USERS_GROUP"] = g
+    if "share_agents" in payload:
+        # Stored only when switched off; empty (the default) means share them.
+        out["SHARE_AGENTS"] = "" if payload.get("share_agents") in (True, "true", "all", "") else "none"
     out.update(clean_brand(payload))
     secret = (payload.get("secret") or "").strip()
     if new and not secret:
@@ -134,6 +137,7 @@ def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: 
         "log_table": v.get("PORTAL_LOG_TABLE", ""),
         "warehouse_id": v.get("WAREHOUSE_ID", ""),
         "users_group": v.get("USERS_GROUP", ""),
+        "share_agents": (v.get("SHARE_AGENTS") or "").lower() != "none",
         "brand_name": v.get("BRAND_NAME", ""),
         "brand_color": v.get("BRAND_COLOR", ""),
         "brand_logo": v.get("BRAND_LOGO", ""),
@@ -230,8 +234,29 @@ def test(payload: dict, *, http_api=Api) -> dict:
         catalogs = []
     hidden = {"system", "samples", "hive_metastore", "__databricks_internal"}
     catalogs = sorted({c for c in catalogs if c and c not in hidden and not c.startswith("__")}, key=str.lower)
+    access = {c: catalog_access(api, c, cid, admin) for c in catalogs[:40]}
     return {"ok": all(c["ok"] for c in checks), "checks": checks, "who": me.get("displayName") or me.get("userName") or cid,
-            "catalogs": catalogs}
+            "catalogs": catalogs, "catalog_access": access}
+
+
+def catalog_access(api, catalog: str, sp: str, admin: bool) -> str:
+    """Can this login create the history schema in `catalog`? "ready",
+    "needs_grant" or "unknown". Seen live: a catalog owned by the workspace
+    admins group (the default `workspace` catalog) lists no effective
+    privileges for an admin service principal, yet ownership through the group
+    lets it create schemas; a catalog where it only has USE_CATALOG does not."""
+    try:
+        info = api.call("GET", "/api/2.1/unity-catalog/catalogs/" + catalog) or {}
+        owner = info.get("owner") or ""
+        if owner == sp or (admin and owner.startswith("_workspace_admins")):
+            return "ready"
+        eff = api.call("GET", "/api/2.1/unity-catalog/effective-permissions/catalog/" + catalog, params={"principal": sp}) or {}
+        privs = {p.get("privilege") for a in eff.get("privilege_assignments") or [] for p in a.get("privileges") or []}
+        if "ALL_PRIVILEGES" in privs or {"USE_CATALOG", "CREATE_SCHEMA"} <= privs:
+            return "ready"
+        return "needs_grant"
+    except DeployError:
+        return "unknown"
 
 
 # --- changing ---------------------------------------------------------------

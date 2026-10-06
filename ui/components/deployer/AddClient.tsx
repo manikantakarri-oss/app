@@ -23,6 +23,8 @@ const ASK = `Hi! To set up the Agent Portal in your Databricks workspace, we nee
 4. For chat history, pick a catalog and run in the SQL editor:
    GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <your_catalog> TO \`<application id>\`;
 
+About your AI assistants: we share the ones this login can see with the portal automatically. For any assistant owned by someone else, its owner gives the portal app "Can manage" on it after we install (we will send you the app's id).
+
 Then please send us, through a password manager or another secure channel (not plain email):
 - your workspace URL
 - the application (client) id
@@ -64,6 +66,7 @@ export function AddClient({
   const [history, setHistory] = useState(true);
   const [catalog, setCatalog] = useState("");
   const [everyone, setEveryone] = useState(true);
+  const [share, setShare] = useState(true);
   const [group, setGroup] = useState("");
   const [appName, setAppName] = useState("agent-portal");
   const [warehouse, setWarehouse] = useState("");
@@ -106,8 +109,11 @@ export function AddClient({
       const r = await dapi.test({ host, client_id: clientId.trim(), secret: secret.trim(), app_name: appName, log_table: logTable });
       setTest(r);
       // One catalog: nothing to choose. Otherwise a typed name stays, if real.
+      // Preselect the only catalog it can use, if there is exactly one.
       const cats = r.catalogs || [];
-      if (cats.length === 1) setCatalog(cats[0]);
+      const ready = cats.filter((c) => r.catalog_access?.[c] === "ready");
+      if (ready.length === 1) setCatalog(ready[0]);
+      else if (cats.length === 1) setCatalog(cats[0]);
       else if (catalog && cats.length && !cats.includes(catalog)) setCatalog("");
     } catch (e: any) {
       setTestErr(e.message);
@@ -130,6 +136,7 @@ export function AddClient({
         log_table: logTable,
         warehouse_id: warehouse.trim(),
         users_group: everyone ? "" : group.trim(),
+        share_agents: share,
         brand_name: brand.name.trim(),
         brand_color: brand.color,
         brand_logo: brand.logo,
@@ -263,12 +270,38 @@ export function AddClient({
           <Intro title="Options" text="Sensible defaults. Change them only if the client asks." />
           <Choice label="Chat history and dashboards" hint="Keeps each person's conversations and powers the dashboards. Stored in the client's own workspace." on={history} onChange={setHistory}>
             {test?.catalogs?.length ? (
+              <>
               <Field
                 label="Catalog in their workspace"
                 hint={catalog ? `Kept in ${catalog}.agent_portal, created on the first deploy.` : `${test.catalogs.length} catalogs the service principal can see.`}
               >
-                <Select value={catalog} onChange={setCatalog} options={test.catalogs.map((c) => ({ value: c, label: c }))} placeholder="Choose a catalog" />
+                <Select
+                  value={catalog}
+                  onChange={setCatalog}
+                  placeholder="Choose a catalog"
+                  options={[...test.catalogs]
+                    .sort((a, b) => Number(test.catalog_access?.[b] === "ready") - Number(test.catalog_access?.[a] === "ready"))
+                    .map((c) => {
+                      const a = test.catalog_access?.[c];
+                      return { value: c, label: c, detail: a === "ready" ? "Ready" : a === "needs_grant" ? "Their admin must allow this first" : undefined };
+                    })}
+                />
               </Field>
+              {catalog && test.catalog_access?.[catalog] === "needs_grant" ? (
+                <div className="mt-3 rounded-lg px-3 py-2.5 text-[13px]" style={{ background: "var(--warn-bg)" }}>
+                  <p>
+                    Their service principal may use <b>{catalog}</b> but not create in it, so chat history would not be set up. Ask their admin to run this,
+                    or pick a catalog marked Ready:
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <code className="break-all rounded-md px-2 py-1 font-mono text-[12px]" style={{ background: "var(--surface)" }}>
+                      {`GRANT USE CATALOG, CREATE SCHEMA ON CATALOG \`${catalog}\` TO \`${clientId.trim()}\`;`}
+                    </code>
+                    <CopyButton text={`GRANT USE CATALOG, CREATE SCHEMA ON CATALOG \`${catalog}\` TO \`${clientId.trim()}\`;`} label="Copy" />
+                  </div>
+                </div>
+              ) : null}
+              </>
             ) : (
               <Field
                 label="Catalog in their workspace"
@@ -278,6 +311,14 @@ export function AddClient({
                 <input className="field font-mono !text-[13px]" value={catalog} onChange={(e) => setCatalog(e.target.value.trim())} placeholder="Catalog name" />
               </Field>
             )}
+          </Choice>
+          <Choice
+            label="Share their assistants with the portal"
+            hint="On each deploy, every assistant the installer can see is shared with the portal, so it is not empty. People still only see the ones they may use. Assistants owned by others are shared by their owner."
+            on={share}
+            onChange={setShare}
+          >
+            {null}
           </Choice>
           <div>
             <p className="text-[13px] font-medium muted">Who can open the portal</p>
@@ -352,6 +393,7 @@ export function AddClient({
           <Summary title="Options" onEdit={() => go(2)}>
             <Row k="Chat history">{history ? `On, in ${catalog}.agent_portal` : "Off"}</Row>
             <Row k="Who can open it">{everyone ? "Everyone in their workspace" : `The group ${group.trim()}`}</Row>
+            <Row k="Assistants">{share ? "Shared with the portal on each deploy" : "Shared by hand in their workspace"}</Row>
             <Row k="App">
               <span className="font-mono text-[13px]">{appName}</span>
               {warehouse.trim() ? <span className="faint"> · warehouse {warehouse.trim()}</span> : null}
@@ -449,7 +491,7 @@ function Choice({ label, hint, on, onChange, children }: { label: string; hint: 
           <span className="block text-[13px] muted">{hint}</span>
         </span>
       </label>
-      {on ? <div className="mt-3 max-w-sm pl-7">{children}</div> : null}
+      {on && children ? <div className="mt-3 max-w-xl pl-7">{children}</div> : null}
     </div>
   );
 }

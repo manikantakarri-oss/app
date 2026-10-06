@@ -414,6 +414,39 @@ def _():
     raises(ws.ensure_app, FakeApi(), "Bad_Name", [], lambda s: None, contains="not allowed")
 
 
+@case("deploy shares the client's assistants with the portal; ones it may not share are named in a warning")
+def _():
+    api = FakeApi(live="v1.0.0")
+    eps = [{"id": "e1", "name": "mas-1", "task": "agent/v1/responses", "tags": [{"key": "agent_id", "value": "a1"}, {"key": "display_name", "value": "Sales"}]},
+           {"id": "e2", "name": "ka-2", "task": "agent/v1/responses", "tags": [{"key": "display_name", "value": "Policies"}]},
+           {"id": "e3", "name": "gpt", "task": "llm/v1/chat", "tags": []},
+           {"id": "e4", "name": "tagged", "task": "llm/v1/chat", "tags": [{"key": "portal", "value": "true"}]}]
+    orig = api.call
+
+    def call(method, path, **kw):
+        if path == "/api/2.0/serving-endpoints":
+            return {"endpoints": eps}
+        if method == "PATCH" and path.endswith("/e2"):
+            raise DeployError("no Manage permission", 403)
+        return orig(method, path, **kw)
+    api.call = call
+    n, warns = ws.share_agents(api, api.app, lambda s: None)
+    patched = [c[1] for c in api.calls if c[0] == "PATCH"]
+    assert n == 2 and "/api/2.0/permissions/serving-endpoints/e1" in patched and "/api/2.0/permissions/supervisor-agents/a1" in patched
+    assert not any(p.endswith("/e3") for p in patched)  # a plain chat model is not an assistant
+    assert len(warns) == 1 and "Policies" in warns[0] and "sp-1" in warns[0], warns
+
+
+@case("health: a portal with no assistants shared is degraded, with the identity to share them with")
+def _():
+    api = FakeApi(live="v1.0.0")
+    empty = FakeHttp({"/api/health": (200, {"ok": True, "version": "v1.0.0", "assistants": 0})})
+    h = ws.check(api, "agent-portal", "v1.0.0", http=empty)
+    assert h["status"] == "degraded" and "no assistants" in h["summary"] and "sp-1" in h["summary"], h
+    some = FakeHttp({"/api/health": (200, {"ok": True, "version": "v1.0.0", "assistants": 3})})
+    assert ws.check(api, "agent-portal", "v1.0.0", http=some)["status"] == "healthy"
+
+
 # --- GitHub --------------------------------------------------------------------
 
 @case("secrets are sealed with the environment's public key (only the private key opens them)")

@@ -245,7 +245,7 @@ def pick_warehouse(api: Api, wanted: str) -> str:
     return whs[0]["id"] if whs else ""
 
 
-def grant_access(api: Api, app: dict, log_table: str, warehouse: str, users_group: str, say) -> list[str]:
+def grant_access(api: Api, app: dict, log_table: str, warehouse: str, users_group: str, say, share: bool = True) -> list[str]:
     """What the app's own identity needs, plus who may open the app. Each grant
     is tried on its own; a refusal becomes a warning, never a failed deploy (the
     portal runs without history, it just cannot save chats)."""
@@ -264,6 +264,8 @@ def grant_access(api: Api, app: dict, log_table: str, warehouse: str, users_grou
                 warnings.append("Could not let %s open the portal: %s" % (users_group, exc))
     if not sp:
         return warnings + ["Databricks did not say which identity the app runs as, so its data access was not set up."]
+    if share:
+        warnings += share_agents(api, app, say)[1]
     if warehouse:
         try:
             api.call("PATCH", "/api/2.0/permissions/warehouses/" + warehouse,
@@ -287,6 +289,49 @@ def grant_access(api: Api, app: dict, log_table: str, warehouse: str, users_grou
     return warnings
 
 
+def share_agents(api: Api, app: dict, say) -> tuple[int, list[str]]:
+    """Give the portal's own identity CAN_MANAGE on every assistant this login
+    can see, so they appear in the portal (the portal only lists what is shared
+    with it; each person still only sees what they may use). Returns (how many
+    were shared, warnings). An Agent Bricks assistant is also shared on its own
+    list (`agent_id` tag). Assistants this login cannot see, typically ones
+    other people own (workspace admins get no automatic access to them), must
+    be shared by their owner: the health check reports how many the portal sees."""
+    sp = app.get("service_principal_client_id") or ""
+    if not sp:
+        return 0, []
+    ace = {"access_control_list": [{"service_principal_name": sp, "permission_level": "CAN_MANAGE"}]}
+    try:
+        eps = api.call("GET", "/api/2.0/serving-endpoints").get("endpoints") or []
+    except DeployError as exc:
+        return 0, ["Could not list their assistants to share them with the portal: %s" % exc]
+    shared, refused = 0, []
+    for e in eps:
+        tags = {t.get("key"): t.get("value") for t in e.get("tags") or []}
+        if not ((e.get("task") or "").startswith("agent/") or str(tags.get("portal", "")).lower() in ("true", "1", "yes")):
+            continue
+        label = tags.get("display_name") or e.get("name", "")
+        try:
+            api.call("PATCH", "/api/2.0/permissions/serving-endpoints/" + e["id"], json=ace)
+            shared += 1
+        except DeployError:
+            refused.append(label)
+            continue
+        if tags.get("agent_id"):
+            try:
+                api.call("PATCH", "/api/2.0/permissions/supervisor-agents/" + tags["agent_id"], json=ace)
+            except DeployError:
+                pass  # the endpoint grant is what lets people use it
+    if shared:
+        say("Shared %d assistant%s with the portal" % (shared, "" if shared == 1 else "s"))
+    warnings = []
+    if refused:
+        warnings.append("%d assistant%s could not be shared with the portal (%s%s): their owner must give the app's "
+                        "service principal %s Can manage." % (len(refused), "" if len(refused) == 1 else "s",
+                                                               ", ".join(refused[:5]), " and more" if len(refused) > 5 else "", sp))
+    return shared, warnings
+
+
 # --- health -----------------------------------------------------------------
 
 def check(api: Api, name: str, expect: str = "", http=httpx) -> dict:
@@ -303,7 +348,8 @@ def check(api: Api, name: str, expect: str = "", http=httpx) -> dict:
     active = app.get("active_deployment") or {}
     live = version_of(active.get("source_code_path", ""))
     out = {"url": app.get("url", ""), "app_state": app_state, "compute_state": compute, "version": live,
-           "deployment_state": (active.get("status") or {}).get("state", "")}
+           "deployment_state": (active.get("status") or {}).get("state", ""),
+           "app_sp": app.get("service_principal_client_id", "")}
     if compute != "ACTIVE" or app_state != "RUNNING":
         msg = (app.get("app_status") or {}).get("message") or (app.get("compute_status") or {}).get("message") or ""
         return {**out, "status": "down", "summary": "The app is %s%s." % ((app_state or compute or "unknown").lower(),
@@ -336,7 +382,13 @@ def check(api: Api, name: str, expect: str = "", http=httpx) -> dict:
     if expect and served and served != expect:
         return {**out, "status": "degraded", "summary": "The portal serves %s, expected %s." % (served, expect)}
     out["version"] = served or live
+    if isinstance(h.get("assistants"), int):
+        out["assistants"] = h["assistants"]
     out.update(errors(get))
+    if out.get("assistants") == 0:
+        return {**out, "status": "degraded", "summary": "Up, but no assistants are shared with it yet, so people see an "
+                                                          "empty portal. Share them with the app's service principal %s."
+                                                          % (out["app_sp"] or "(see the app in Databricks)")}
     rate = out.get("failure_rate", 0)
     if out.get("questions", 0) >= 3 and rate >= 0.25:
         return {**out, "status": "degraded", "summary": "Up, but %d%% of questions failed in the last day." % round(rate * 100)}

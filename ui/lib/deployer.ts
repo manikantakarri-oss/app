@@ -40,6 +40,10 @@ export type HealthDetail = {
   failed?: number;
   failure_rate?: number;
   api_errors?: number;
+  /** Assistants shared with the portal (it can only show these). */
+  assistants?: number;
+  /** The portal app's own identity in the client's workspace. */
+  app_sp?: string;
   error_kinds?: { label: string; count: number }[];
   failing_assistants?: { label: string; failure_rate: number; questions: number }[];
   recent_errors?: { at: string; message: string }[];
@@ -67,6 +71,8 @@ export type Client = {
   log_table: string;
   warehouse_id: string;
   users_group: string;
+  /** Share their assistants with the portal on each deploy (default on). */
+  share_agents: boolean;
   brand_name: string;
   brand_color: string;
   /** PNG data URL, or "". */
@@ -93,7 +99,14 @@ export type Release = {
 export type Check = { label: string; ok: boolean; detail: string };
 /** The connection check: what is in place, who it signed in as, and the
  *  catalogs that login can see (offered for chat history). */
-export type TestResult = { ok: boolean; checks: Check[]; who: string; catalogs?: string[] };
+export type TestResult = {
+  ok: boolean;
+  checks: Check[];
+  who: string;
+  catalogs?: string[];
+  /** Whether that login can create the history area in each catalog. */
+  catalog_access?: Record<string, "ready" | "needs_grant" | "unknown">;
+};
 
 export type SetupCheck = { key: string; label: string; status: "ok" | "fail" | "blocked"; detail: string; fix: string };
 export type Setup = { ready: boolean; problems: number; checks: SetupCheck[]; repo: string; checked_at: number };
@@ -108,6 +121,7 @@ export type ClientForm = {
   log_table?: string;
   warehouse_id?: string;
   users_group?: string;
+  share_agents?: boolean;
   brand_name?: string;
   brand_color?: string;
   brand_logo?: string;

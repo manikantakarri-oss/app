@@ -55,6 +55,8 @@ def config(env: dict) -> dict:
         "log_table": env.get("PORTAL_LOG_TABLE", ""),
         "warehouse": env.get("WAREHOUSE_ID", ""),
         "users_group": "" if (env.get("USERS_GROUP") or "users").lower() in ("-", "none") else (env.get("USERS_GROUP") or "users"),
+        # Share the client's assistants with the portal on each deploy unless switched off.
+        "share_agents": (env.get("SHARE_AGENTS") or "all").strip().lower() != "none",
         "brand": {"name": (env.get("BRAND_NAME") or "").strip()[:40], "color": (env.get("BRAND_COLOR") or "").strip(),
                   "logo": (env.get("BRAND_LOGO") or "").strip()},
     }
@@ -131,7 +133,7 @@ def ship(api: Api, c: dict, rec: Recorder, scopes: list[str], workdir: str, **kw
     except DeployError as exc:
         warehouse = ""
         rec.warnings.append("Could not find a SQL warehouse: %s" % exc)
-    rec.warnings += ws.grant_access(api, app, c["log_table"], warehouse, c["users_group"], rec.say)
+    rec.warnings += ws.grant_access(api, app, c["log_table"], warehouse, c["users_group"], rec.say, c.get("share_agents", True))
     path = ws.release_path(c["client_id"], c["app"], c["version"])
     ws.stage(REPO, c["version"], os.path.join(workdir, "release"), c["log_table"], warehouse, c.get("brand"))
     ws.upload(os.path.join(workdir, "release"), path, rec.say)

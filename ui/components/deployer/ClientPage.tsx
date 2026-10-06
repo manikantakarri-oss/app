@@ -18,6 +18,7 @@ import {
 import {
   ago,
   compareVersions,
+  CopyButton,
   DeployTag,
   Dialog,
   ExtLink,
@@ -196,6 +197,44 @@ export function ClientPage({
         action={
           <button type="button" className="btn btn-quiet" onClick={() => { setTab("history"); setFocus(last.deploy_id); }}>
             See what happened
+          </button>
+        }
+      />
+    );
+  } else if (c.health?.detail?.assistants === 0) {
+    const sp = c.health.detail.app_sp || "";
+    next = (
+      <NextStep
+        tone="warn"
+        icon={<SparkleIcon size={20} />}
+        title="The portal is up, but no assistants are shared with it"
+        text={
+          <>
+            People see an empty portal. In their workspace, give the portal&apos;s service principal{" "}
+            {sp ? <code className="font-mono text-[12px]">{sp}</code> : "(see the app in Databricks)"} Can manage on each assistant, then check again.
+          </>
+        }
+        action={
+          <>
+            {sp ? <CopyButton text={sp} label="Copy its id" /> : null}
+            <button type="button" className="btn btn-quiet" onClick={checkNow} disabled={!!checking}>
+              {checking ? "Checking…" : "Check again"}
+            </button>
+          </>
+        }
+      />
+    );
+  } else if (last && last.status === "succeeded" && (last.detail?.warnings || []).length) {
+    const w = last.detail.warnings || [];
+    next = (
+      <NextStep
+        tone="warn"
+        icon={<SparkleIcon size={20} />}
+        title={`${last.version} is live, with ${w.length} thing${w.length > 1 ? "s" : ""} to fix`}
+        text={w[0] + (w.length > 1 ? ` (and ${w.length - 1} more)` : "")}
+        action={
+          <button type="button" className="btn btn-quiet" onClick={() => { setTab("history"); setFocus(last.deploy_id); }}>
+            See all
           </button>
         }
       />
@@ -951,6 +990,7 @@ function Settings({
     log_table: c.log_table,
     warehouse_id: c.warehouse_id,
     users_group: c.users_group,
+    share_agents: c.share_agents,
     brand_name: c.brand_name,
     brand_color: c.brand_color,
     brand_logo: c.brand_logo,
@@ -978,7 +1018,7 @@ function Settings({
     try {
       const changed: ClientForm = {};
       (Object.keys(f) as (keyof ClientForm)[]).forEach((k) => {
-        if (f[k] !== initial[k]) changed[k] = f[k];
+        if (f[k] !== initial[k]) (changed as Record<string, unknown>)[k] = f[k];
       });
       await dapi.edit(c.id, changed);
       setMsg(changed.secret ? "Saved. The new secret is used from the next deploy or check." : "Saved.");
@@ -1046,6 +1086,21 @@ function Settings({
           <Field label="SQL warehouse id" hint="Empty picks one automatically.">
             <input className="field font-mono !text-[13px]" value={f.warehouse_id} onChange={set("warehouse_id")} />
           </Field>
+          <label className="flex cursor-pointer items-start gap-3 md:col-span-2">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 accent-[var(--brand)]"
+              checked={f.share_agents !== false}
+              onChange={(e) => {
+                setF({ ...f, share_agents: e.target.checked });
+                setMsg("");
+              }}
+            />
+            <span className="min-w-0">
+              <span className="block text-[14px] font-medium">Share their assistants with the portal on each deploy</span>
+              <span className="block text-[13px] faint">Every assistant the installer can see. People still only see the ones they may use; ones owned by others are shared by their owner.</span>
+            </span>
+          </label>
         </div>
       </Card>
       <div className="flex flex-wrap items-center gap-3">

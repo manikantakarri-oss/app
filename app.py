@@ -799,9 +799,31 @@ def brand_logo():
         "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
 
+_shared: dict = {}
+
+
+def _assistants_shared() -> int | None:
+    """How many assistants the portal's own identity can see, i.e. have been
+    shared with it. Zero means an empty portal for everyone, which the
+    deployer's health check reports. Cached a minute; None if unknown."""
+    hit = _shared.get("n")
+    if hit and hit[0] > time.time():
+        return hit[1]
+    try:
+        n = len(access.all_agents(app_token()))
+    except Exception:  # noqa: BLE001 - health must answer even if Databricks does not
+        n = None
+    _shared["n"] = (time.time() + 60, n)
+    return n
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "auth_mode": auth_mode(), "version": VERSION}
+    out = {"ok": True, "auth_mode": auth_mode(), "version": VERSION}
+    n = _assistants_shared()
+    if n is not None:
+        out["assistants"] = n
+    return out
 
 
 # Mounted last on purpose: every /api route above is registered first and so
