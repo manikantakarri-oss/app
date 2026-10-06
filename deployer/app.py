@@ -147,6 +147,31 @@ def rollback(env: str, payload: dict = Body(default={}), x_forwarded_access_toke
     return clients.start(env, (payload.get("version") or "").strip(), "rollback", who["user_name"])
 
 
+@app.post("/api/gam/test")
+def gam_test(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Check a Google Ad Manager key and list the networks it can see (nothing is saved)."""
+    import gamconn
+
+    allowed(x_forwarded_access_token)
+    return gamconn.test(payload.get("key_json") or "")
+
+
+@app.put("/api/clients/{env}/gam")
+def gam_save(env: str, payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    who = allowed(x_forwarded_access_token)
+    out = clients.save_gam(env, payload.get("key_json") or "", payload.get("network") or "")
+    log.info("client %s: GAM connection saved by %s (network %s%s)", env, who["user_name"], out["network"],
+             ", new key" if payload.get("key_json") else "")
+    return out
+
+
+@app.delete("/api/clients/{env}/gam")
+def gam_remove(env: str, x_forwarded_access_token: str = Header(None)):
+    who = allowed(x_forwarded_access_token)
+    log.info("client %s: GAM connection removed by %s", env, who["user_name"])
+    return clients.remove_gam(env)
+
+
 @app.post("/api/rollouts")
 def start_rollout(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
     """Deploy one version to many clients: a canary first, then the rest in a wave."""

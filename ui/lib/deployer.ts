@@ -85,6 +85,9 @@ export type Client = {
   mcp_tools: string[] | null;
   brand_name: string;
   brand_color: string;
+  /** Google Ad Manager connection (for the media planner tool): network code, signed-in account. */
+  gam_network: string;
+  gam_account: string;
   /** PNG data URL, or "". */
   brand_logo: string;
   ready: boolean;
@@ -94,7 +97,9 @@ export type Client = {
   health: HealthRow | null;
 };
 
-export type ClientDetail = Client & { secret_set_at: string; deploys: DeployRow[]; checks: HealthRow[] };
+export type GamNetwork = { code: string; name: string; currency: string; time_zone: string };
+
+export type ClientDetail = Client & { secret_set_at: string; gam_key_set_at: string; deploys: DeployRow[]; checks: HealthRow[] };
 
 export type Release = {
   version: string;
@@ -193,5 +198,8 @@ export const dapi = {
       canary,
       parallel,
     }),
+  gamTest: (key_json: string) => send<{ account: string; networks: GamNetwork[] }>("POST", "/api/gam/test", { key_json }),
+  gamSave: (id: string, key_json: string, network: string) => send<{ ok: boolean }>("PUT", `/api/clients/${enc(id)}/gam`, { key_json, network }),
+  gamRemove: (id: string) => send<{ ok: boolean }>("DELETE", `/api/clients/${enc(id)}/gam`),
   setup: (fresh = false) => send<Setup>("GET", `/api/setup${fresh ? "?fresh=true" : ""}`),
 };

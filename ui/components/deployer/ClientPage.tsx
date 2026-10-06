@@ -36,6 +36,7 @@ import {
 import { Notes } from "./Notes";
 import { BrandingEditor } from "./Branding";
 import { ToolsPicker } from "./Tools";
+import { GamConnection } from "./Connections";
 
 const FINAL = ["succeeded", "failed", "rolled_back"];
 const POLL_MS = 4000;
@@ -1089,6 +1090,11 @@ function Settings({
               setMsg("");
             }}
           />
+        </div>
+      </Card>
+      <Card title="Google Ad Manager" sub="Their own Ad Manager, for the media planner tool. Applied on the next deploy.">
+        <div className="p-5">
+          <GamConnection clientId={c.id} network={c.gam_network} account={c.gam_account} keySetAt={c.gam_key_set_at} onSaved={onSaved} />
         </div>
       </Card>
       <Card title="Portal options" sub="Applied on the next deploy.">

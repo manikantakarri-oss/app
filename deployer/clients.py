@@ -154,6 +154,8 @@ def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: 
         "warehouse_id": v.get("WAREHOUSE_ID", ""),
         "users_group": v.get("USERS_GROUP", ""),
         "share_agents": (v.get("SHARE_AGENTS") or "").lower() != "none",
+        "gam_network": v.get("GAM_NETWORK_CODE", ""),
+        "gam_account": v.get("GAM_ACCOUNT", ""),
         # "" = newest catalog version; tools None = all, [] = none.
         "mcp_catalog": v.get("MCP_CATALOG", ""),
         "mcp_tools": None if not v.get("MCP_ALLOW") else ([] if v["MCP_ALLOW"] == "none" else v["MCP_ALLOW"].split(",")),
@@ -200,11 +202,13 @@ def detail(env: str) -> dict:
         raise DeployError("There is no client %s." % env, 404)
     f_d, f_h, f_s = (_pool.submit(registry.latest_deploys, env, 100), _pool.submit(registry.latest_health, env, 30),
                      _pool.submit(ghub.secret_set, env, SECRET))
+    f_g = _pool.submit(ghub.secret_set, env, GAM_SECRET)
     v = ghub.variables(env)
     deploys, health = f_d.result(), f_h.result()
     current = next((d["version"] for d in deploys if d["status"] == "succeeded"), "")
     view = _view(env, v, deploys, health[0] if health else None, current)
     view["secret_set_at"] = f_s.result()
+    view["gam_key_set_at"] = f_g.result()
     return {**view, "deploys": deploys, "checks": health}
 
 
@@ -458,6 +462,46 @@ def rollout(version: str, envs: list, canary: str, parallel: int, actor: str) ->
                           detail={"rollout_id": rid})
         raise
     return {"rollout_id": rid, "started": [p["client"] for p in plan], "canary": canary, "skipped": skipped}
+
+
+GAM_SECRET = "GAM_KEY_JSON"
+
+
+def save_gam(env: str, key_text: str, network: str) -> dict:
+    """Connect a client to its Google Ad Manager. The key (if a new one is
+    given) is checked against GAM, must see the chosen network, and is stored
+    encrypted in the client's GitHub environment like its Databricks secret;
+    each deploy then puts it in the client's own secret scope."""
+    import gamconn
+
+    if env not in ghub.clients():
+        raise DeployError("There is no client %s." % env, 404)
+    network = (network or "").strip()
+    if not network.isdigit() or len(network) > 20:
+        raise DeployError("Choose the Google Ad Manager network.")
+    account = ""
+    if key_text:
+        seen = gamconn.test(key_text)
+        if network not in {n["code"] for n in seen["networks"]}:
+            raise DeployError("This key cannot see network %s. Add %s as a user in that Google Ad Manager network."
+                              % (network, seen["account"]))
+        account = seen["account"]
+        ghub.set_secret(env, GAM_SECRET, key_text)
+    elif not ghub.secret_set(env, GAM_SECRET):
+        raise DeployError("Upload the service account key.")
+    vals = {"GAM_NETWORK_CODE": network}
+    if account:
+        vals["GAM_ACCOUNT"] = account
+    ghub.set_vars(env, vals)
+    return {"ok": True, "network": network}
+
+
+def remove_gam(env: str) -> dict:
+    if env not in ghub.clients():
+        raise DeployError("There is no client %s." % env, 404)
+    ghub.delete_secret(env, GAM_SECRET)
+    ghub.set_vars(env, {"GAM_NETWORK_CODE": "", "GAM_ACCOUNT": ""})
+    return {"ok": True}
 
 
 def check_now(env: str, actor: str) -> dict:

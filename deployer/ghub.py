@@ -182,6 +182,12 @@ def set_secret(env: str, name: str, value: str) -> None:
     call("PUT", base + "/" + name, json={"encrypted_value": seal(key["key"], value), "key_id": key["key_id"]})
 
 
+def delete_secret(env: str, name: str) -> None:
+    if not VAR_RE.match(name):
+        raise DeployError("Bad secret name %r." % name, 400)
+    call("DELETE", "/repos/%s/environments/%s/secrets/%s" % (repo(), _check(env), name), ok404=True)
+
+
 # --- releases and runs ------------------------------------------------------
 
 def releases() -> list[dict]:

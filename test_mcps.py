@@ -290,6 +290,56 @@ def _():
     assert mcps._progress["mcp-good"]["phase"] == "copying"
 
 
+@case("a tool that needs secrets: not offered until they exist; then its app gets them as resources")
+def _():
+    repo = {**REPO, "gam/mcp.yaml": "name: GAM\ntools: [{name: plan}]\nneeds: {secrets: [gam-key, gam-network]}",
+            "gam/app.yaml": "command: ['python', 'server.py']"}
+
+    class WithSecrets(Fake):
+        def __init__(self, keys):
+            super().__init__()
+            self.keys = keys
+
+        def __call__(self, method, path, token, **kw):
+            if path == "/api/2.0/secrets/list":
+                self.calls.append((method, path, token, kw.get("params")))
+                return {"secrets": [{"key": k} for k in self.keys]}
+            return super().__call__(method, path, token, **kw)
+
+    for keys, connected in ((["gam-key"], False), (["gam-key", "gam-network"], True)):
+        f = WithSecrets(keys)
+        wire(f)
+        mcps._cache = (time.time(), mcps.parse_catalog(archive(repo)))
+        mcps._secrets_seen = None
+        row = next(r for r in mcps.listing("USER")["mcps"] if r["slug"] == "gam")
+        if not connected:
+            assert "not connected yet" in row["problem"] and "gam-network" in row["problem"], row["problem"]
+            try:
+                mcps.start("gam", WHO, "USER")
+            except DbxError as exc:
+                assert exc.status == 409 and "gam-network" in str(exc)
+            else:
+                raise AssertionError("installed without its secrets")
+            assert not f.of("POST", "/api/2.0/apps")
+        else:
+            assert not row["problem"], row["problem"]
+            mcps.start("gam", WHO, "USER")
+            body = f.of("POST", "/api/2.0/apps")[0][3]
+            assert body["resources"] == [
+                {"name": "gam-key", "secret": {"scope": "agent-portal", "key": "gam-key", "permission": "READ"}},
+                {"name": "gam-network", "secret": {"scope": "agent-portal", "key": "gam-network", "permission": "READ"}}]
+    # an app made before the secrets were wired gets them added
+    f = WithSecrets(["gam-key", "gam-network"])
+    f.apps["mcp-gam"] = {"name": "mcp-gam", "compute_status": {"state": "ACTIVE"}, "resources": []}
+    wire(f)
+    mcps._cache = (time.time(), mcps.parse_catalog(archive(repo)))
+    mcps._secrets_seen = None
+    mcps.start("gam", WHO, "USER")
+    patched = [c for c in f.calls if c[0] == "PATCH" and c[1] == "/api/2.0/apps/mcp-gam"]
+    assert patched and len(patched[0][3]["resources"]) == 2
+    mcps._secrets_seen = None
+
+
 @case("start refuses a folder with a problem")
 def _():
     wire(Fake())

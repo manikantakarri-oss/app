@@ -403,6 +403,49 @@ def share_agents(api: Api, app: dict, say) -> tuple[int, list[str]]:
     return shared, warnings
 
 
+TOOL_SCOPE = "agent-portal"
+
+
+def sync_tool_secrets(api: Api, app: dict, values: dict, say) -> list[str]:
+    """Put the client's tool secrets (e.g. its Google Ad Manager key) in the
+    secret scope `agent-portal` of its own workspace, and remove ones that were
+    disconnected. The portal's identity gets MANAGE on the scope so it can give
+    a tool's app access when that tool is installed; values never leave the
+    client's workspace after this. Problems are warnings: tools needing a
+    missing secret say so in the portal."""
+    warnings: list[str] = []
+    wanted = {k: v for k, v in values.items() if v}
+    try:
+        scopes = {s.get("name") for s in (api.call("GET", "/api/2.0/secrets/scopes/list") or {}).get("scopes") or []}
+        if TOOL_SCOPE not in scopes:
+            if not wanted:
+                return []
+            api.call("POST", "/api/2.0/secrets/scopes/create", json={"scope": TOOL_SCOPE})
+        have = {s.get("key") for s in (api.call("GET", "/api/2.0/secrets/list", params={"scope": TOOL_SCOPE}) or {}).get("secrets") or []}
+    except DeployError as exc:
+        return ["Could not prepare the secret scope %s for tools: %s" % (TOOL_SCOPE, exc)]
+    for key, value in wanted.items():
+        try:
+            api.call("POST", "/api/2.0/secrets/put", json={"scope": TOOL_SCOPE, "key": key, "string_value": value})
+        except DeployError as exc:
+            warnings.append("Could not store %s for tools: %s" % (key, exc))
+    for key in sorted(set(values) - set(wanted)):
+        if key in have:
+            try:
+                api.call("POST", "/api/2.0/secrets/delete", json={"scope": TOOL_SCOPE, "key": key})
+            except DeployError as exc:
+                warnings.append("Could not remove %s: %s" % (key, exc))
+    sp = app.get("service_principal_client_id") or ""
+    if sp and wanted:
+        try:
+            api.call("POST", "/api/2.0/secrets/acls/put", json={"scope": TOOL_SCOPE, "principal": sp, "permission": "MANAGE"})
+        except DeployError as exc:
+            warnings.append("Could not let the portal use the tool secrets: %s" % exc)
+    if wanted:
+        say("Connected tools: %s" % ", ".join(sorted(wanted)))
+    return warnings
+
+
 # --- health -----------------------------------------------------------------
 
 def check(api: Api, name: str, expect: str = "", http=httpx) -> dict:

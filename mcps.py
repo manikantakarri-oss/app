@@ -68,6 +68,46 @@ SOURCE_ROOT = "/Workspace/Shared/agent-portal-mcps"
 # installed, nothing is read from GitHub, and no token is needed. Without it
 # (a checkout, older releases) the repo is read as before.
 LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_catalog")
+# Secrets a tool needs (its card's `needs.secrets`, e.g. gam-key) live in this
+# scope in the client's workspace. The Portal Deployer puts them there on each
+# deploy (e.g. a client's Google Ad Manager connection). A tool's app gets each
+# one as a Databricks app resource of the same name, so Databricks hands the
+# value to the tool itself and it never passes through the portal.
+SECRET_SCOPE = os.environ.get("PORTAL_SECRET_SCOPE", "agent-portal")
+_secrets_seen: tuple[float, set] | None = None
+
+
+def secrets_present(user_tok: str = "") -> set:
+    """Secret names in SECRET_SCOPE (names only, never values). Cached a minute."""
+    global _secrets_seen
+    if _secrets_seen and _secrets_seen[0] > time.time():
+        return _secrets_seen[1]
+    names: set = set()
+    for tok in ([user_tok] if user_tok else []) + [app_token()]:
+        try:
+            data = call("GET", "/api/2.0/secrets/list", tok, params={"scope": SECRET_SCOPE}, quiet=True)
+            names = {x.get("key", "") for x in data.get("secrets") or []}
+            break
+        except DbxError:
+            continue
+    _secrets_seen = (time.time() + 60, names)
+    return names
+
+
+def missing_secrets(entry: dict, user_tok: str = "") -> list:
+    want = entry["needs"]["secrets"]
+    if not want:
+        return []
+    have = secrets_present(user_tok)
+    return [x for x in want if x not in have]
+
+
+def _resources(entry: dict) -> list:
+    return [{"name": x, "secret": {"scope": SECRET_SCOPE, "key": x, "permission": "READ"}}
+            for x in entry["needs"]["secrets"] if SECRET_RE.match(x)]
+
+
+SECRET_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 CACHE_SECONDS = 300
 MAX_ARCHIVE = 60 * 1024 * 1024
 # The workspace import API takes the file base64-encoded inside a 10 MB request.
@@ -173,6 +213,10 @@ def _tools(raw) -> list:
                 "changes_data": bool(t.get("changes_data")),
             })
     return out[:50]
+
+
+NOT_CONNECTED = ("This tool is not connected yet: it needs %s, which your platform team sets up in the Portal "
+                 "Deployer (the client's connection settings), then deploys the portal again.")
 
 
 def _needs(raw) -> dict:
@@ -324,6 +368,9 @@ def listing(user_tok: str, refresh: bool = False) -> dict:
     for e in entries:
         state, line = _state(apps.get(e["app_name"]), _progress.get(e["app_name"]))
         app = apps.get(e["app_name"]) or {}
+        missing = missing_secrets(e, user_tok) if not e["problem"] and state != "running" else []
+        if missing:
+            e = {**e, "problem": NOT_CONNECTED % ", ".join(missing)}
         rows.append({**e, "state": state, "state_note": line, "url": app.get("url") or ""})
     # Name where the list really came from: the shipped catalog when there is one.
     src = shipped()
@@ -379,8 +426,13 @@ def start(slug: str, who: dict, user_tok: str) -> dict:
     if app is not None and ((app.get("compute_status") or {}).get("state") in GONE
                             or (app.get("app_status") or {}).get("state") in GONE):
         raise Removing("The previous copy is still being removed.", 409)
+    missing = missing_secrets(entry, user_tok)
+    if missing:
+        raise DbxError(NOT_CONNECTED % ", ".join(missing), 409)
     if app is None:
         body = {"name": name, "description": entry["description"][:500]}
+        if _resources(entry):
+            body["resources"] = _resources(entry)
         app, by = act("POST", "/api/2.0/apps", user_tok, json=body)
         if by != "you" and who.get("user_name"):
             # Whoever created it owns it; the admin who asked must still be able to manage it.
@@ -389,7 +441,10 @@ def start(slug: str, who: dict, user_tok: str) -> dict:
                     "access_control_list": [{"user_name": who["user_name"], "permission_level": "CAN_MANAGE"}]})
             except DbxError as exc:
                 log.warning("could not make %s manager of app %s: %s", who["user_name"], name, str(exc)[:120])
-    elif (app.get("compute_status") or {}).get("state") == "STOPPED":
+    elif _resources(entry) and {r.get("name") for r in app.get("resources") or []} != {r["name"] for r in _resources(entry)}:
+        # An app made before its secrets were wired: give it them now.
+        act("PATCH", "/api/2.0/apps/" + name, user_tok, json={"name": name, "resources": _resources(entry)})
+    if app is not None and (app.get("compute_status") or {}).get("state") == "STOPPED":
         try:
             act("POST", "/api/2.0/apps/%s/start" % name, user_tok)
         except DbxError as exc:

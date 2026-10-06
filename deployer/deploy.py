@@ -73,6 +73,9 @@ def config(env: dict) -> dict:
         "mcp_ref": (env.get("MCP_CATALOG") or "").strip(),
         "mcp_allow": _allow(env.get("MCP_ALLOW") or ""),
         "mcp_token": env.get("MCP_REPO_TOKEN") or "",
+        # Secrets for tools, put in the client's own secret scope on each deploy
+        # (empty = removed there). Never logged.
+        "tool_secrets": {"gam-key": env.get("GAM_KEY_JSON") or "", "gam-network": (env.get("GAM_NETWORK_CODE") or "").strip()},
         "brand": {"name": (env.get("BRAND_NAME") or "").strip()[:40], "color": (env.get("BRAND_COLOR") or "").strip(),
                   "logo": (env.get("BRAND_LOGO") or "").strip()},
     }
@@ -150,6 +153,8 @@ def ship(api: Api, c: dict, rec: Recorder, scopes: list[str], workdir: str, **kw
         warehouse = ""
         rec.warnings.append("Could not find a SQL warehouse: %s" % exc)
     rec.warnings += ws.grant_access(api, app, c["log_table"], warehouse, c["users_group"], rec.say, c.get("share_agents", True))
+    if c.get("tool_secrets") is not None:
+        rec.warnings += ws.sync_tool_secrets(api, app, c["tool_secrets"], rec.say)
     path = ws.release_path(c["client_id"], c["app"], c["version"])
     ws.stage(REPO, c["version"], os.path.join(workdir, "release"), c["log_table"], warehouse, c.get("brand"))
     if c.get("mcp_repo"):

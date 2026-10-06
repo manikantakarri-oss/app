@@ -538,6 +538,71 @@ def _():
     assert calls == [["databricks", "workspace", "delete"], ["databricks", "workspace", "import-dir"]], calls
 
 
+@case("tool secrets: put in the client's agent-portal scope with the portal allowed to use them; removed ones deleted")
+def _():
+    api = FakeApi()
+    store = {"scopes": set(), "keys": {"gam-network": "old"}}
+    orig = api.call
+
+    def call(method, path, **kw):
+        body = kw.get("json") or {}
+        if path == "/api/2.0/secrets/scopes/list":
+            return {"scopes": [{"name": n} for n in store["scopes"]]}
+        if path == "/api/2.0/secrets/scopes/create":
+            store["scopes"].add(body["scope"])
+        if path == "/api/2.0/secrets/list":
+            return {"secrets": [{"key": k} for k in store["keys"]]}
+        if path == "/api/2.0/secrets/put":
+            store["keys"][body["key"]] = body["string_value"]
+        if path == "/api/2.0/secrets/delete":
+            store["keys"].pop(body["key"], None)
+        return orig(method, path, **kw)
+    api.call = call
+    said = []
+    w = ws.sync_tool_secrets(api, api.app, {"gam-key": "{json}", "gam-network": "123"}, said.append)
+    assert not w and store["scopes"] == {"agent-portal"} and store["keys"] == {"gam-key": "{json}", "gam-network": "123"}
+    acl = api.made("POST", "/secrets/acls/put")[0][2]
+    assert acl == {"scope": "agent-portal", "principal": "sp-1", "permission": "MANAGE"}, acl
+    assert "{json}" not in " ".join(said)  # values are never written to the record
+    # disconnected: both removed, the scope left alone
+    ws.sync_tool_secrets(api, api.app, {"gam-key": "", "gam-network": ""}, said.append)
+    assert store["keys"] == {} and store["scopes"] == {"agent-portal"}
+    # nothing connected and no scope: nothing is created
+    api2 = FakeApi()
+    assert ws.sync_tool_secrets(api2, api2.app, {"gam-key": ""}, said.append) == [] and not api2.made("POST")
+
+
+@case("a GAM connection is saved only for a key that sees the chosen network; the key goes in as a secret")
+def _():
+    import gamconn
+
+    saved = (ghub.clients, ghub.set_secret, ghub.set_vars, ghub.secret_set, gamconn.test)
+    got = {}
+    ghub.clients = lambda: {"client-acme": {}}
+    ghub.set_secret = lambda env, name, value: got.setdefault("secret", (name, value))
+    ghub.set_vars = lambda env, vals: got.setdefault("vars", vals)
+    ghub.secret_set = lambda env, name: ""
+    gamconn.test = lambda text: {"account": "sa@x.iam", "networks": [{"code": "111"}]}
+    try:
+        raises(clients.save_gam, "client-acme", "{k}", "222", contains="cannot see network 222")
+        assert "secret" not in got
+        raises(clients.save_gam, "client-acme", "", "111", contains="Upload")
+        raises(clients.save_gam, "client-acme", "{k}", "abc", contains="Choose")
+        clients.save_gam("client-acme", "{k}", "111")
+        assert got["secret"] == ("GAM_KEY_JSON", "{k}") and got["vars"] == {"GAM_NETWORK_CODE": "111", "GAM_ACCOUNT": "sa@x.iam"}
+    finally:
+        ghub.clients, ghub.set_secret, ghub.set_vars, ghub.secret_set, gamconn.test = saved
+
+
+@case("a GAM key file is checked before Google is asked: JSON, a service account, the fields it needs")
+def _():
+    import gamconn
+
+    raises(gamconn.parse_key, "nope", contains="not valid JSON")
+    raises(gamconn.parse_key, '{"type": "authorized_user"}', contains="not a service account")
+    raises(gamconn.parse_key, '{"type": "service_account", "client_email": "a"}', contains="missing private_key")
+
+
 # --- GitHub --------------------------------------------------------------------
 
 @case("secrets are sealed with the environment's public key (only the private key opens them)")
