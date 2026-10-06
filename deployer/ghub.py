@@ -65,13 +65,27 @@ def token() -> str:
     return _cache["gh"]
 
 
-def call(method: str, path: str, *, json=None, params=None, ok404: bool = False, http=httpx):
+# One pooled client (connection reuse), and the last answer to each GET with
+# its ETag: GitHub answers "304 Not Modified" to a conditional request, which
+# is fast and does not count against the rate limit (5,000 an hour), so
+# reading 100 clients' settings again costs almost nothing when they have not
+# changed.
+_http = httpx.Client(timeout=30, limits=httpx.Limits(max_connections=32, max_keepalive_connections=16))
+_etags: dict = {}
+
+
+def call(method: str, path: str, *, json=None, params=None, ok404: bool = False, http=None):
+    headers = {"Authorization": "Bearer " + token(), "Accept": "application/vnd.github+json",
+               "X-GitHub-Api-Version": "2022-11-28"}
+    key = path + "?" + "&".join("%s=%s" % kv for kv in sorted((params or {}).items())) if method == "GET" else ""
+    if key and key in _etags:
+        headers["If-None-Match"] = _etags[key][0]
     try:
-        r = http.request(method, API + path, json=json, params=params, timeout=30,
-                         headers={"Authorization": "Bearer " + token(), "Accept": "application/vnd.github+json",
-                                  "X-GitHub-Api-Version": "2022-11-28"})
+        r = (http or _http).request(method, API + path, json=json, params=params, headers=headers)
     except httpx.HTTPError as exc:
         raise DeployError("Could not reach GitHub (%s)." % type(exc).__name__, 502) from exc
+    if r.status_code == 304 and key in _etags:
+        return _etags[key][1]
     if r.status_code == 404 and ok404:
         return None
     if r.status_code == 401:
@@ -86,7 +100,14 @@ def call(method: str, path: str, *, json=None, params=None, ok404: bool = False,
         except ValueError:
             msg = r.text[:200]
         raise DeployError("GitHub: %s (HTTP %d)" % (msg, r.status_code), 502)
-    return r.json() if r.content else {}
+    data = r.json() if r.content else {}
+    if key and r.headers.get("etag"):
+        if len(_etags) > 2000:
+            _etags.clear()
+        _etags[key] = (r.headers["etag"], data)
+    elif method != "GET":
+        _etags.clear()  # a change: forget remembered answers so nothing stale is shown
+    return data
 
 
 def _check(env: str) -> str:

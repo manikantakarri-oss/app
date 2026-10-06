@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import ghub
 import registry
@@ -149,34 +150,43 @@ def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: 
     }
 
 
+_pool = ThreadPoolExecutor(max_workers=16)
+
+
 def list_all() -> dict:
+    """Every client with its settings, last deploy and last check. The record
+    queries and every client's GitHub settings are fetched at the same time:
+    one after another, 100 clients took about two minutes."""
+    f_deploys = _pool.submit(registry.latest_deploys, limit=1000)
+    f_health = _pool.submit(registry.latest_health)
     envs = ghub.clients()
+    f_vars = {env: _pool.submit(ghub.variables, env) for env in envs}
     note = ""
     try:
-        deploys = registry.latest_deploys(limit=500)
-        healths = {h["client"]: h for h in registry.latest_health()}
+        deploys = f_deploys.result()
+        healths = {h["client"]: h for h in f_health.result()}
     except DeployError as exc:
         deploys, healths, note = [], {}, "The deployment record could not be read: %s" % exc
     current = {}
+    by_client: dict = {}
     for d in deploys:
+        by_client.setdefault(d["client"], []).append(d)
         if d["status"] == "succeeded" and d["client"] not in current:
             current[d["client"]] = d["version"]
-    out = []
-    for env in envs:
-        mine = [d for d in deploys if d["client"] == env]
-        out.append(_view(env, ghub.variables(env), mine, healths.get(env), current.get(env, "")))
+    out = [_view(env, f_vars[env].result(), by_client.get(env, []), healths.get(env), current.get(env, "")) for env in envs]
     return {"clients": out, "note": note, "repo": ghub.repo(), "actions_url": ghub.actions_url()}
 
 
 def detail(env: str) -> dict:
     if env not in ghub.clients():
         raise DeployError("There is no client %s." % env, 404)
+    f_d, f_h, f_s = (_pool.submit(registry.latest_deploys, env, 100), _pool.submit(registry.latest_health, env, 30),
+                     _pool.submit(ghub.secret_set, env, SECRET))
     v = ghub.variables(env)
-    deploys = registry.latest_deploys(env, 100)
-    health = registry.latest_health(env, 30)
+    deploys, health = f_d.result(), f_h.result()
     current = next((d["version"] for d in deploys if d["status"] == "succeeded"), "")
     view = _view(env, v, deploys, health[0] if health else None, current)
-    view["secret_set_at"] = ghub.secret_set(env, SECRET)
+    view["secret_set_at"] = f_s.result()
     return {**view, "deploys": deploys, "checks": health}
 
 

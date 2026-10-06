@@ -83,6 +83,13 @@ def ensure() -> None:
     s = schema()
     if s in _ready:
         return
+    # Usually the tables exist: one cheap query instead of three statements.
+    try:
+        run("SELECT 1 FROM %s.deployments CROSS JOIN %s.health LIMIT 0" % (s, s))
+        _ready.add(s)
+        return
+    except DeployError:
+        pass
     cat, sch = s.split(".")
     stmts = [
         "CREATE SCHEMA IF NOT EXISTS `%s`.`%s`" % (cat, sch),

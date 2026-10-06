@@ -475,6 +475,39 @@ def _():
     raises(ghub.set_vars, "acme", {"A": "1"}, have={}, contains="unknown client")
 
 
+@case("GitHub reads are conditional: an unchanged answer (304) is served from memory; any change forgets them")
+def _():
+    class R:
+        def __init__(self, status, body=None, etag=""):
+            self.status_code, self._b, self.headers = status, body, ({"etag": etag} if etag else {})
+            self.content = b"x" if body is not None else b""
+            self.text = ""
+
+        def json(self):
+            return self._b
+    sent = []
+
+    class Http:
+        def __init__(self, replies):
+            self.replies = replies
+
+        def request(self, method, url, json=None, params=None, headers=None):
+            sent.append((method, dict(headers or {})))
+            return self.replies.pop(0)
+    saved = ghub.token
+    ghub.token = lambda: "T"
+    ghub._etags.clear()
+    try:
+        first = ghub.call("GET", "/repos/x/environments", http=Http([R(200, {"n": 1}, etag='"a"')]))
+        again = ghub.call("GET", "/repos/x/environments", http=Http([R(304)]))
+        assert first == again == {"n": 1} and sent[1][1].get("If-None-Match") == '"a"'
+        ghub.call("POST", "/repos/x/environments/e/variables", json={}, http=Http([R(201, {})]))
+        assert not ghub._etags  # a write forgets every remembered answer
+    finally:
+        ghub.token = saved
+        ghub._etags.clear()
+
+
 # --- the deployer's decisions --------------------------------------------------
 
 class World:

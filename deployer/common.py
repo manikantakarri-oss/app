@@ -16,6 +16,9 @@ import time
 import httpx
 
 TIMEOUT = httpx.Timeout(60.0, connect=15.0)
+# One pooled client for every Databricks call: reusing connections saves a TLS
+# handshake (~0.3-1 s from Databricks Apps) per request. Thread-safe.
+_http = httpx.Client(timeout=TIMEOUT, limits=httpx.Limits(max_connections=32, max_keepalive_connections=16))
 
 # Names that end up inside SQL identifiers or URLs are checked against these
 # first; nothing user-typed is ever pasted into a statement unchecked.
@@ -93,7 +96,7 @@ class Api:
 
     def call(self, method: str, path: str, *, json=None, params=None, quiet_404: bool = False):
         try:
-            r = httpx.request(method, self.host + path, json=json, params=params, timeout=TIMEOUT,
+            r = _http.request(method, self.host + path, json=json, params=params,
                               headers={"Authorization": "Bearer " + self.token})
         except httpx.HTTPError as exc:
             raise DeployError("%s %s: could not reach Databricks (%s)" % (method, path, type(exc).__name__), 502) from exc
