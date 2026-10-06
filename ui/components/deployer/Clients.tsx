@@ -2,12 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { Client, Release, Setup } from "@/lib/deployer";
-import { initials } from "@/lib/people";
-import { contrast, hexToRgb, HEX_RE } from "@/lib/brand";
 import { Card, Chips, Find, Quiet } from "@/components/Ops";
 import { ErrorBox, Notice, Pager, usePage } from "@/components/bits";
 import { BuildingIcon, PlusIcon, PulseIcon, RocketIcon, SparkleIcon, TagIcon } from "@/components/icons";
-import { ago, compareVersions, DeployTag, HealthTag, hostLabel, latestStable, NextStep, PageHead, person, verb, Version } from "./parts";
+import { ago, ClientMark, compareVersions, DeployTag, HealthTag, hostLabel, latestStable, NextStep, PageHead, person, verb, Version } from "./parts";
 
 type Filter = "" | "attention" | "updates" | "deploying" | "never";
 
@@ -306,22 +304,3 @@ export function ClientsPage({
   );
 }
 
-/** The client's logo, or their initials on their brand colour. */
-function ClientMark({ c }: { c: Client }) {
-  if (c.brand_logo) {
-    return (
-      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg" style={{ background: "#fff", border: "1px solid var(--line)" }} aria-hidden>
-        <img src={c.brand_logo} alt="" className="h-full w-full object-contain p-1" />
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[12px] font-semibold"
-      style={HEX_RE.test(c.brand_color) ? { background: c.brand_color, color: contrast(hexToRgb(c.brand_color), [255, 255, 255]) >= 3 ? "#fff" : "#111" } : { background: "var(--bubble)", color: "var(--ink-dim)" }}
-      aria-hidden
-    >
-      {initials(c.name)}
-    </span>
-  );
-}

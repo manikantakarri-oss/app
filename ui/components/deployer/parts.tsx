@@ -2,6 +2,8 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { CheckIcon, CloseIcon, CopyIcon } from "@/components/icons";
+import { contrast, hexToRgb, HEX_RE } from "@/lib/brand";
+import { initials } from "@/lib/people";
 import { DeployRow, DeployStatus, HealthStatus } from "@/lib/deployer";
 import { Tag } from "@/components/Ops";
 
@@ -306,5 +308,40 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
       {done ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
       {done ? "Copied" : label}
     </button>
+  );
+}
+
+/** A client's logo, or their initials on their brand colour (text picked for
+ *  contrast). `sm` is the size used in avatar stacks and chips. */
+export function ClientMark({
+  c,
+  size = "md",
+  ring,
+}: {
+  c: { name: string; brand_logo?: string; brand_color?: string };
+  size?: "sm" | "md";
+  ring?: boolean;
+}) {
+  const box = size === "sm" ? "h-7 w-7 rounded-md text-[10px]" : "h-9 w-9 rounded-lg text-[12px]";
+  const edge = ring ? { boxShadow: "0 0 0 2px var(--surface)" } : {};
+  if (c.brand_logo) {
+    return (
+      <span className={`inline-flex shrink-0 items-center justify-center overflow-hidden ${box}`} style={{ background: "#fff", border: "1px solid var(--line)", ...edge }} aria-hidden>
+        <img src={c.brand_logo} alt="" className="h-full w-full object-contain p-[3px]" />
+      </span>
+    );
+  }
+  const color = c.brand_color && HEX_RE.test(c.brand_color) ? c.brand_color : "";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center font-semibold ${box}`}
+      style={{
+        ...(color ? { background: color, color: contrast(hexToRgb(color), [255, 255, 255]) >= 3 ? "#fff" : "#111" } : { background: "var(--bubble)", color: "var(--ink-dim)" }),
+        ...edge,
+      }}
+      aria-hidden
+    >
+      {initials(c.name)}
+    </span>
   );
 }
