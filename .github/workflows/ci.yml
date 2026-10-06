@@ -1,0 +1,39 @@
+# Offline tests on every push and pull request. No workspace, no secrets.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -r requirements.txt -r deployer/requirements.txt
+
+      - name: Portal tests
+        run: |
+          set -e
+          for t in test_adapters test_builder test_genie test_knowledge test_dashboard test_mcps test_events; do
+            echo "::group::$t"
+            python "$t.py"
+            echo "::endgroup::"
+          done
+
+      - name: Deployer tests
+        run: python deployer/test_deployer.py

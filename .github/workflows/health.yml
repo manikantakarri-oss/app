@@ -1,0 +1,55 @@
+# Check one client's portal and record the result ("Check now" in the deployer).
+name: Check client health
+run-name: "check ${{ inputs.client }} [${{ inputs.check_id }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      client:
+        description: "Client environment, e.g. client-acme"
+        required: true
+        type: string
+      check_id:
+        description: "Id for the record (the deployer fills it in; any UUID by hand)"
+        required: true
+        type: string
+      actor:
+        description: "Who asked"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.client }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install "httpx>=0.27"
+
+      - name: Check
+        env:
+          CLIENT: ${{ inputs.client }}
+          CHECK_ID: ${{ inputs.check_id }}
+          ACTOR: ${{ inputs.actor || github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          HOME_HOST: ${{ vars.HOME_HOST }}
+          HOME_CLIENT_ID: ${{ vars.HOME_CLIENT_ID }}
+          HOME_CLIENT_SECRET: ${{ secrets.HOME_CLIENT_SECRET }}
+          HOME_WAREHOUSE_ID: ${{ vars.HOME_WAREHOUSE_ID }}
+          REGISTRY_SCHEMA: ${{ vars.REGISTRY_SCHEMA }}
+        run: python deployer/health.py

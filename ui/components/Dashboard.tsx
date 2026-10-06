@@ -483,7 +483,7 @@ function Summary({ data, who }: { data: ActivityData; who?: string }) {
 
 // ------------------------------------------------------------------- kpi ----
 
-function Kpi({
+export function Kpi({
   icon,
   label,
   value,

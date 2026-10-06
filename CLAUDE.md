@@ -27,6 +27,7 @@ python test_knowledge.py                        # offline: Knowledge Assistant b
 python test_dashboard.py                        # offline: per-person dashboards
 python test_mcps.py                             # offline: MCP tool catalog and deploy
 python test_events.py                           # offline: activity log and agent health
+python deployer/test_deployer.py                # offline: Portal Deployer (deploy, rollback, health, GitHub, registry)
 ./smoke.sh                                      # live checks vs local server (hits the real workspace; one check costs a few pennies)
 ./smoke.sh https://<app-url>                    # same, against the deployed app
 
@@ -35,6 +36,7 @@ python sync_agents.py --apply [--force]         # write them
 
 # UI: rebuild the static export, then copy into web/
 cd ui && npm install && npm run build && cp -r out ../web
+cd ui && npm run build:deployer && cp -r out-deployer/. ../deployer/web/   # the Portal Deployer's UI
 ```
 
 There is no linter or CI config. The offline tests are plain scripts (no pytest needed).
@@ -152,6 +154,15 @@ Shared look: `.seg`, `.chip`, `.avatar`, `.filter-chip`, `.cap`, `.status-pill`,
 ### 10. Observability
 Every request gets an access-log line via middleware (caller from `x-forwarded-email`, status, timing). `DbxError` is mapped to the upstream status by an exception handler. `/api/health` returns `{ok, auth_mode}`. Interactive API docs at `/api/docs`.
 
+### 11. Portal Deployer (`deployer/`, `.github/workflows/`, `ui/app/*.deployer.tsx`, `ui/components/deployer/`)
+A separate Databricks App in **our** workspace that deploys the portal into client workspaces. `deployer/README.md` has the setup.
+- **Stores nothing itself.** Clients are GitHub Environments `client-<slug>` (settings as variables, the client's service principal secret as an environment secret, sealed with PyNaCl in `ghub.seal` before it leaves the process and never returned). Versions are GitHub Releases (`release.yml` publishes a `vX.Y.Z` tag only after `ci.yml` passes). What happened is an append-only Delta record (`registry.py`: `deployments`, one row per step, newest row per `deploy_id` = its state; `health`) in `REGISTRY_SCHEMA`.
+- **Deploy** = `deploy.yml` (workflow_dispatch, runs in the client's environment, one per client at a time) running `deployer/deploy.py`: sign in as the client SP (M2M OAuth), ensure app + ACTIVE compute, access (users group CAN_USE on the app, warehouse CAN_USE + history schema grants for the app's SP; refusals are warnings), `git archive <tag>` staged with a `VERSION` file and the client's `env:` in app.yaml (`workspace.client_yaml`), upload with `databricks workspace import-dir` to `/Workspace/Users/<sp>/agent-portal/<app>/<version>` (the folder name **is** the version, so the live version is read from the app's active deployment), scopes from `update-scopes.json` (restart only if changed), deploy, verify (`workspace.check`). Any failure after the live app starts changing puts the previous version back from its folder (`roll_back`, its own `auto_rollback` record) and verifies it.
+- **Health** (`health.yml`/`health.py`, on demand and after every deploy): Databricks' view of the app, then the portal's `/api/health` (now returns `version`) and, if the SP counts as a portal admin, error counts from `/api/admin/agent-health` and `/api/admin/logs`. Statuses healthy / degraded / down / unverified (the app refused the SP's token; unconfirmed whether Apps accepts it).
+- **Deployer app** (`deployer/app.py`, `clients.py`): only `DEPLOYER_GROUP` (default `admins`) members, read with the caller's own token; the actor recorded is from the token, never the request. A deploy is recorded `requested` before GitHub is asked; `clients.status` reconciles with the GitHub run (`run-name` carries the id) so a job that died or never started is recorded as failed. Workflow inputs reach scripts only as env vars and are validated (`common.*_RE`).
+- **UI**: same `ui/` project, built with `npm run build:deployer` (`next.config.mjs` switches `pageExtensions` to `deployer.tsx` and `distDir` to `out-deployer`; copy to `deployer/web/`, committed). It reuses the portal's components (`Card`, `Chips`, `Find`, `Tag`, `Pre` from `Ops.tsx`, `Kpi` from `Dashboard.tsx`, `Select`/`Pager` from `bits.tsx`) so both products look identical; `OpenRow` in `deployer/parts.tsx` is `Row` with its detail outside the button (details hold links). Phones get stacked cards instead of the clients table.
+- Tests: `python deployer/test_deployer.py` (offline). **Unconfirmed, never run live:** the whole deploy against a client workspace.
+
 ## Layout
 
 ```
@@ -173,6 +184,8 @@ mcps.py          MCP tool catalog from GitHub + deploy as Databricks Apps
 dashboard.py     per-person activity and estimated cost, from the chat table
 sync_agents.py   CLI: Agent Bricks metadata -> endpoint tags
 test_adapters.py, test_builder.py, test_genie.py, test_knowledge.py, test_dashboard.py, smoke.sh   tests
+deployer/        Portal Deployer app + GitHub Actions scripts (see section 11 and deployer/README.md)
+.github/workflows/  ci (tests), release (tag -> GitHub Release), deploy, health
 ui/              Next.js 14 + React 18 + Tailwind 3 + Radix Tabs + react-markdown (components/, lib/api.ts)
 web/             built static export that FastAPI serves (committed)
 app.yaml, update-scopes.json   Databricks Apps manifest and user-API scopes

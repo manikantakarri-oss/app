@@ -299,3 +299,32 @@ export const ArrowDownRightIcon = ({ size }: P) => (
     <path d="M7 7l10 10M17 8v9H8" />
   </Svg>
 );
+
+export const RocketIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M5 15c-1.5 1.3-2 3.6-2 6 2.4 0 4.7-.5 6-2" />
+    <path d="M9 18 6 15c.9-3.6 3.4-8.4 9-11.5 1.6-.9 3.6-1.1 5.5-.5.6 1.9.4 3.9-.5 5.5C16.9 14.1 12.6 16.9 9 18Z" />
+    <circle cx="15" cy="9" r="1.6" />
+  </Svg>
+);
+
+export const BuildingIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <rect x="4" y="3" width="11" height="18" rx="1.5" />
+    <path d="M15 9h3.5A1.5 1.5 0 0 1 20 10.5V21M8 7h3M8 11h3M8 15h3M3 21h18" />
+  </Svg>
+);
+
+export const TagIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-9 9-9-9Z" />
+    <circle cx="8" cy="8" r="1.4" />
+  </Svg>
+);
+
+export const UndoIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Svg>
+);

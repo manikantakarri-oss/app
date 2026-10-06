@@ -1,0 +1,31 @@
+# Databricks App manifest for the Portal Deployer (lives in OUR workspace).
+#
+# The runtime injects DATABRICKS_HOST / DATABRICKS_CLIENT_ID /
+# DATABRICKS_CLIENT_SECRET (this app's own service principal), which reads and
+# writes the deployment record. Signed-in people are checked against
+# DEPLOYER_GROUP with their own forwarded token.
+command:
+  - uvicorn
+  - app:app
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8000"
+
+env:
+  # GitHub repository holding the portal, the workflows and the client environments.
+  - name: DEPLOYER_REPO
+    value: manikantakarri-oss/app
+  - name: DEPLOYER_REF
+    value: main
+  # Who may use the deployer (a workspace group).
+  - name: DEPLOYER_GROUP
+    value: admins
+  # Where the deployment record lives (catalog.schema). The app creates the
+  # schema and its two tables on first use.
+  - name: REGISTRY_SCHEMA
+    value: databrickspoc.portal_deployer
+  # The GitHub token, from a secret resource named "github-token" on the app
+  # record (see deployer/README.md). Never put the token itself here.
+  - name: GITHUB_TOKEN
+    valueFrom: github-token

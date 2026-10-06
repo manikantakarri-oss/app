@@ -753,9 +753,22 @@ def agent_health(days: int = 7, x_forwarded_access_token: str = Header(None)):
     return events.health(days)
 
 
+def _version() -> str:
+    """The release this copy runs, from the VERSION file the deployer writes
+    into each release (empty when run from a checkout)."""
+    try:
+        with open(os.path.join(HERE, "VERSION"), encoding="utf-8") as f:
+            return f.read().strip()[:40]
+    except OSError:
+        return ""
+
+
+VERSION = _version()
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "auth_mode": auth_mode()}
+    return {"ok": True, "auth_mode": auth_mode(), "version": VERSION}
 
 
 # Mounted last on purpose: every /api route above is registered first and so

@@ -66,7 +66,7 @@ function Toolbar({ left, days, setDays }: { left: ReactNode; days: number; setDa
   );
 }
 
-function Card({ title, sub, filters, children, pager }: { title?: string; sub?: string; filters?: ReactNode; children: ReactNode; pager?: ReactNode }) {
+export function Card({ title, sub, filters, children, pager }: { title?: string; sub?: string; filters?: ReactNode; children: ReactNode; pager?: ReactNode }) {
   return (
     <section className="card min-w-0 overflow-hidden">
       {title || filters ? (
@@ -86,7 +86,7 @@ function Card({ title, sub, filters, children, pager }: { title?: string; sub?: 
   );
 }
 
-function Chips({ value, onChange, options, label }: { value: string; onChange: (v: string) => void; options: [string, string, number?][]; label: string }) {
+export function Chips({ value, onChange, options, label }: { value: string; onChange: (v: string) => void; options: [string, string, number?][]; label: string }) {
   return (
     <div className="flex flex-wrap gap-2" role="group" aria-label={label}>
       {options.map(([k, text, n]) => (
@@ -99,7 +99,7 @@ function Chips({ value, onChange, options, label }: { value: string; onChange: (
   );
 }
 
-function Find({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+export function Find({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
     <label className="field flex w-full items-center gap-2 !py-0 sm:ml-auto sm:w-60">
       <span className="faint">
@@ -117,11 +117,11 @@ function Find({ value, onChange, placeholder }: { value: string; onChange: (v: s
   );
 }
 
-function Quiet({ children }: { children: ReactNode }) {
+export function Quiet({ children }: { children: ReactNode }) {
   return <p className="px-5 py-10 text-center text-sm muted">{children}</p>;
 }
 
-function Tag({ tone, children }: { tone: "ok" | "warn" | "bad" | "muted"; children: ReactNode }) {
+export function Tag({ tone, children }: { tone: "ok" | "warn" | "bad" | "muted"; children: ReactNode }) {
   const style =
     tone === "ok"
       ? { background: "color-mix(in srgb, var(--ok) 12%, transparent)", color: "var(--ok)" }
@@ -139,7 +139,7 @@ function Tag({ tone, children }: { tone: "ok" | "warn" | "bad" | "muted"; childr
 }
 
 /** The one row every list uses. `detail` makes it open on click. */
-function Row({
+export function Row({
   mark,
   title,
   meta,
@@ -183,7 +183,7 @@ function Row({
   );
 }
 
-function Pre({ children, tone = "err" }: { children: ReactNode; tone?: "err" | "plain" }) {
+export function Pre({ children, tone = "err" }: { children: ReactNode; tone?: "err" | "plain" }) {
   return (
     <pre
       className="whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-[12px] leading-relaxed"
