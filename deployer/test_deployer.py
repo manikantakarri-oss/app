@@ -306,9 +306,13 @@ def _():
     assert code == 0 and "warning" in rows[-1]["step"], rows[-1]["step"]
     assert len(rows[-1]["detail"]["warnings"]) == 4  # warehouse + 3 statements
     api2 = FakeApi(live="v1.0.0")
+    # Databricks' effective list differs from the request (defaults added, sql.* folded): no restart for that.
+    api2.app["user_api_scopes"] = ["a", "sql.warehouses"]
+    api2.app["effective_user_api_scopes"] = ["a", "iam.current-user:read", "sql"]
+    assert not ws.set_scopes(api2, "agent-portal", api2.app, ["sql.warehouses", "a"], lambda s: None)
     changed = ws.set_scopes(api2, "agent-portal", api2.app, ["a", "b"], lambda s: None)
     assert changed and api2.made("PATCH", "/api/2.0/apps/agent-portal")
-    assert not ws.set_scopes(api2, "agent-portal", api2.app, ["a"], lambda s: None)
+    assert not ws.set_scopes(api2, "agent-portal", {"user_api_scopes": ["a"]}, ["a"], lambda s: None)
 
 
 @case("a new app is created with the portal's scopes, and its compute is started if stopped")

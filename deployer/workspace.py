@@ -93,7 +93,11 @@ def wait_active(api: Api, name: str, say, timeout: float = 600, **kw) -> dict:
 def set_scopes(api: Api, name: str, app: dict, scopes: list[str], say) -> bool:
     """Put the user API scopes on the app record. True when they changed (a
     restart is then needed for them to take effect)."""
-    have = sorted(app.get("effective_user_api_scopes") or app.get("user_api_scopes") or [])
+    # Compare with what was requested, not the effective list: seen live (AWS,
+    # 2026-10-06) the effective list adds the default iam.* scopes and folds
+    # sql.statement-execution / sql.warehouses into "sql", so it never equals
+    # the request, and every deploy restarted the app for nothing.
+    have = sorted(app.get("user_api_scopes") or app.get("effective_user_api_scopes") or [])
     if have == sorted(scopes):
         return False
     say("Updating what the app may do for signed-in people (%d permissions)" % len(scopes))
