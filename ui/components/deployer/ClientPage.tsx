@@ -2,7 +2,7 @@
 
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClientDetail, ClientForm, dapi, DeployRow, HealthRow, Release } from "@/lib/deployer";
-import { Card, Chips, Pre, Quiet, Tag } from "@/components/Ops";
+import { Card, Chips, Find, Pre, Quiet, Tag } from "@/components/Ops";
 import { ErrorBox, Notice, Pager, Select, Spinner, usePage } from "@/components/bits";
 import {
   ArrowUpRightIcon,
@@ -497,7 +497,20 @@ function Num({ label, value, bad }: { label: string; value: ReactNode; bad?: boo
   );
 }
 
-type Item = { key: string; at: string; kind: "deploy" | "rollback" | "check"; failed: boolean; icon: ReactNode; title: ReactNode; meta: string; tag: ReactNode; deploy?: DeployRow; check?: HealthRow };
+type Item = {
+  key: string;
+  at: string;
+  kind: "deploy" | "rollback" | "check";
+  failed: boolean;
+  icon: ReactNode;
+  title: ReactNode;
+  meta: string;
+  tag: ReactNode;
+  /** Lower-case words the History search matches against. */
+  text: string;
+  deploy?: DeployRow;
+  check?: HealthRow;
+};
 
 function merged(deploys: DeployRow[], checks: HealthRow[]): Item[] {
   const items: Item[] = [
@@ -515,6 +528,7 @@ function merged(deploys: DeployRow[], checks: HealthRow[]): Item[] {
       ),
       meta: `${person(d.actor)} · ${when(d.started || d.at)} · ${d.step}`,
       tag: <DeployTag row={d} />,
+      text: [verb(d), d.version, d.from_version, d.actor, person(d.actor), d.step, d.message, d.status.replace("_", " "), ...(d.detail?.warnings || [])].join(" ").toLowerCase(),
       deploy: d,
     })),
     ...checks.map((h) => ({
@@ -526,6 +540,7 @@ function merged(deploys: DeployRow[], checks: HealthRow[]): Item[] {
       title: <>Health check: {h.summary || "checked"}</>,
       meta: `${h.version || "unknown version"} · ${when(h.at)}${h.actor ? ` · ${person(h.actor)}` : " · after a deploy"}`,
       tag: <HealthTag status={h.status} />,
+      text: ["health check", h.version, h.summary, h.status, h.actor, person(h.actor)].join(" ").toLowerCase(),
       check: h,
     })),
   ];
@@ -750,9 +765,13 @@ function Progress({ deployId, onDone }: { deployId: string; onDone: () => void }
 
 function History({ deploys, checks, focus }: { deploys: DeployRow[]; checks: HealthRow[]; focus: string }) {
   const [filter, setFilter] = useState("");
+  const [q, setQ] = useState("");
   const [open, setOpen] = useState(focus);
   const all = useMemo(() => merged(deploys, checks), [deploys, checks]);
-  const shown = all.filter(
+  const needle = q.trim().toLowerCase();
+  // The chips count what the search leaves, so a count always matches what a click shows.
+  const found = needle ? all.filter((r) => r.text.includes(needle)) : all;
+  const shown = found.filter(
     (r) =>
       !filter ||
       (filter === "deploys" && r.kind === "deploy") ||
@@ -760,30 +779,51 @@ function History({ deploys, checks, focus }: { deploys: DeployRow[]; checks: Hea
       (filter === "checks" && r.kind === "check") ||
       (filter === "problems" && r.failed)
   );
-  const pg = usePage(shown, 12, [filter]);
+  const pg = usePage(shown, 12, [filter, q]);
   useEffect(() => setOpen(focus), [focus]);
   return (
     <Card
       title="History"
       sub="Every deploy, rollback and health check: who started it, each step, and the GitHub job."
       filters={
+        <>
         <Chips
           label="Show"
           value={filter}
           onChange={setFilter}
           options={[
-            ["", "All", all.length],
-            ["deploys", "Deploys", all.filter((r) => r.kind === "deploy").length],
-            ["rollbacks", "Rollbacks", all.filter((r) => r.kind === "rollback").length],
-            ["checks", "Health checks", all.filter((r) => r.kind === "check").length],
-            ["problems", "Problems", all.filter((r) => r.failed).length],
+            ["", "All", found.length],
+            ["deploys", "Deploys", found.filter((r) => r.kind === "deploy").length],
+            ["rollbacks", "Rollbacks", found.filter((r) => r.kind === "rollback").length],
+            ["checks", "Health checks", found.filter((r) => r.kind === "check").length],
+            ["problems", "Problems", found.filter((r) => r.failed).length],
           ]}
         />
+        <Find value={q} onChange={setQ} placeholder="Search history" />
+        </>
       }
       pager={<Pager pg={pg} noun="events" />}
     >
       {shown.length === 0 ? (
-        <Quiet>{all.length ? "Nothing matches." : "Nothing yet."}</Quiet>
+        <Quiet>
+          {!all.length ? (
+            "Nothing yet."
+          ) : (
+            <>
+              Nothing matches{needle ? ` “${q.trim()}”` : ""}.{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  setQ("");
+                  setFilter("");
+                }}
+              >
+                Show everything
+              </button>
+            </>
+          )}
+        </Quiet>
       ) : (
         <ul>
           {pg.rows.map((r) => (
