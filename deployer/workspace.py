@@ -278,6 +278,11 @@ def upload(folder: str, path: str, say) -> None:
     signs in from DATABRICKS_HOST / DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET)."""
     say("Uploading the files")
     env = {k: v for k, v in os.environ.items() if k != "DATABRICKS_CONFIG_PROFILE"}
+    # Start from an empty folder. `import-dir --overwrite` replaces files but
+    # never removes ones the release no longer has, so redeploying a version
+    # (Apply now) kept a tool the client had since been unticked from (seen
+    # live). The running app is not affected: it runs from its own snapshot.
+    subprocess.run(["databricks", "workspace", "delete", path, "--recursive"], capture_output=True, text=True, env=env)
     out = subprocess.run(["databricks", "workspace", "import-dir", folder, path, "--overwrite"],
                          capture_output=True, text=True, env=env)
     if out.returncode != 0:

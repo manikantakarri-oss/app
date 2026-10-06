@@ -523,6 +523,21 @@ def _():
         and deploy._allow("a, b") == ["a", "b"]
 
 
+@case("upload clears the release folder first, so a redeploy never keeps files the release dropped")
+def _():
+    calls = []
+    saved = ws.subprocess.run
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+    ws.subprocess.run = lambda args, **kw: calls.append(args[:3]) or Done()
+    try:
+        ws.upload("/tmp/release", "/Workspace/Users/sp/agent-portal/agent-portal/v1.4.0", lambda s: None)
+    finally:
+        ws.subprocess.run = saved
+    assert calls == [["databricks", "workspace", "delete"], ["databricks", "workspace", "import-dir"]], calls
+
+
 # --- GitHub --------------------------------------------------------------------
 
 @case("secrets are sealed with the environment's public key (only the private key opens them)")

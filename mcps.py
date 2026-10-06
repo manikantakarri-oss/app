@@ -99,6 +99,9 @@ _progress: dict[str, dict] = {}
 def _local_archive() -> bytes:
     """The shipped catalog folder packed the way GitHub serves the repo (one top
     folder, then a folder per MCP), so everything downstream reads it unchanged."""
+    # Only the MCPs CATALOG.json lists: it is written with the release, so a
+    # folder left behind by an earlier upload is never offered (seen live).
+    listed = shipped().get("mcps")
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         for root, dirs, files in os.walk(LOCAL):
@@ -107,6 +110,8 @@ def _local_archive() -> bytes:
                 full = os.path.join(root, name)
                 rel = os.path.relpath(full, LOCAL).replace(os.sep, "/")
                 if "/" not in rel:  # CATALOG.json and other top-level files are not MCPs
+                    continue
+                if isinstance(listed, list) and rel.split("/", 1)[0] not in listed:
                     continue
                 tf.add(full, arcname="catalog/" + rel)
     return buf.getvalue()

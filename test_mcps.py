@@ -97,6 +97,11 @@ def _():
             files = dict((rel, data) for rel, data in mcps._files(mcps._archive(), "report"))
             assert files.get("data/t.pptx") == bytes(range(256)) and "mcp.yaml" in files, sorted(files)
             assert mcps.shipped()["ref"] == "v1.0.0"
+            # a folder the manifest does not list (left from an earlier upload) is not offered
+            with open(os.path.join(d, "CATALOG.json"), "w") as f:
+                json.dump({"ref": "v1.0.0", "mcps": ["weather"]}, f)
+            mcps._cache = None
+            assert [e["slug"] for e in mcps.catalog(refresh=True)[0]] == ["weather"]
         finally:
             mcps.LOCAL, mcps._cache, mcps.http = saved_local, saved_cache, saved_http
 
