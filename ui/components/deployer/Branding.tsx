@@ -41,7 +41,7 @@ async function toPng(file: File, size: number): Promise<{ url: string; pixels: U
   }
 }
 
-export function BrandingEditor({ value, onChange }: { value: Brand; onChange: (b: Brand) => void }) {
+export function BrandingEditor({ value, onChange, stacked }: { value: Brand; onChange: (b: Brand) => void; stacked?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [suggest, setSuggest] = useState("");
@@ -88,7 +88,8 @@ export function BrandingEditor({ value, onChange }: { value: Brand; onChange: (b
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+    // `stacked` puts the preview under the fields, for narrow columns (the wizard).
+    <div className={stacked ? "grid gap-6" : "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]"}>
       <div className="min-w-0 space-y-5">
         <div>
           <p className="text-[13px] font-medium muted">Logo</p>

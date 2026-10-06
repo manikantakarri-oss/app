@@ -2,9 +2,10 @@
 
 import { ReactNode, useState } from "react";
 import { Check, dapi, Release } from "@/lib/deployer";
+import { WizardFrame } from "@/components/BuilderParts";
 import { ErrorBox, Spinner } from "@/components/bits";
-import { CheckIcon, ChevronLeftIcon, CloseIcon } from "@/components/icons";
-import { CopyButton, Field, hostLabel, latestStable, PageHead } from "./parts";
+import { CheckIcon, CloseIcon } from "@/components/icons";
+import { CopyButton, Field, hostLabel, latestStable } from "./parts";
 import { Brand, BrandingEditor } from "./Branding";
 
 const slugOf = (s: string) =>
@@ -28,10 +29,16 @@ Then please send us, through a password manager or another secure channel (not p
 - the secret
 - the catalog name from step 4`;
 
-const STEPS = ["Client", "Connect", "Review"] as const;
+/** The same step frame as the portal's Build wizard, so both products work
+ *  alike. Nothing is saved until the last step; nothing is installed until a
+ *  version is deployed. */
+const STEPS = [
+  { key: "client", title: "Client" },
+  { key: "connect", title: "Connect" },
+  { key: "options", title: "Options" },
+  { key: "review", title: "Review" },
+];
 
-/** Add a client in three short steps. Nothing is saved until the last one,
- *  and nothing is installed until a version is deployed. */
 export function AddClient({
   releases,
   onBack,
@@ -42,10 +49,12 @@ export function AddClient({
   onAdded: (id: string, deployError?: string) => void;
 }) {
   const [step, setStep] = useState(0);
+  const [reached, setReached] = useState(0);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
   const [editSlug, setEditSlug] = useState(false);
+  const [brand, setBrand] = useState<Brand>({ name: "", color: "", logo: "" });
   const [host, setHost] = useState("");
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
@@ -58,7 +67,6 @@ export function AddClient({
   const [group, setGroup] = useState("");
   const [appName, setAppName] = useState("agent-portal");
   const [warehouse, setWarehouse] = useState("");
-  const [brand, setBrand] = useState<Brand>({ name: "", color: "", logo: "" });
   const latest = latestStable(releases);
   const [deployNow, setDeployNow] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,8 +74,21 @@ export function AddClient({
 
   const slugOk = /^[a-z0-9][a-z0-9-]{1,38}$/.test(slug);
   const catalogOk = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/.test(catalog);
-  const signedIn = !!test;
+  const appOk = /^[a-z0-9][a-z0-9-]{1,29}$/.test(appName);
   const logTable = history && catalog ? `${catalog}.agent_portal.portal_logs` : "";
+
+  // Why Next is not available yet, in words (empty = it is).
+  const problems = [
+    !name.trim() ? "Enter the client's name." : !slugOk ? "Fix the short name." : "",
+    !test ? "Check the connection to continue." : "",
+    history && !catalogOk ? "Enter a catalog for chat history, or switch history off." : !everyone && !group.trim() ? "Enter the group name." : !appOk ? "Fix the app name." : "",
+    "",
+  ];
+
+  function go(i: number) {
+    setStep(i);
+    setReached((r) => Math.max(r, i));
+  }
 
   function changeConn(set: (v: string) => void) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,214 +144,250 @@ export function AddClient({
     }
   }
 
-  const canNext =
-    step === 0 ? !!name.trim() && slugOk : step === 1 ? signedIn : (!history || catalogOk) && (everyone || !!group.trim());
-
   return (
-    <>
-      <button type="button" className="mb-4 inline-flex items-center gap-1 text-sm muted hover:underline" onClick={onBack}>
-        <ChevronLeftIcon size={16} />
-        All clients
-      </button>
-      <PageHead eyebrow="Deploy" title="Add a client" text="Connect a client's Databricks workspace. Nothing is installed until you deploy." />
-
-      <section className="card mx-auto max-w-3xl overflow-hidden">
-        <ol className="flex border-b" style={{ borderColor: "var(--line)" }} aria-label="Steps">
-          {STEPS.map((s, i) => (
-            <li key={s} className="flex flex-1 items-center gap-2.5 px-5 py-3.5 text-sm" aria-current={i === step ? "step" : undefined}>
-              <span
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold"
-                style={
-                  i < step
-                    ? { background: "var(--brand)", color: "#fff" }
-                    : i === step
-                      ? { background: "var(--brand-soft)", color: "var(--brand-deep)", boxShadow: "inset 0 0 0 1.5px var(--brand)" }
-                      : { background: "var(--bubble)", color: "var(--ink-faint)" }
-                }
-                aria-hidden
-              >
-                {i < step ? <CheckIcon size={13} /> : i + 1}
-              </span>
-              <span className={i === step ? "font-semibold" : "muted"}>{s}</span>
-            </li>
-          ))}
-        </ol>
-
-        <div className="space-y-5 p-6">
-          {step === 0 ? (
-            <>
-              <Field label="Client name" hint="As your team calls them. You can change it later.">
-                <input
-                  className="field"
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    if (!slugEdited) setSlug(slugOf(e.target.value));
-                  }}
-                  maxLength={80}
-                  placeholder="Acme Retail"
-                  autoFocus
-                />
-              </Field>
-              {name.trim() ? (
-                editSlug ? (
-                  <Field label="Short name" hint="Lowercase letters, digits and dashes. Used in GitHub; cannot be changed later." error={slug && !slugOk ? "2 to 39 characters: lowercase letters, digits and dashes." : ""}>
-                    <input
-                      className="field font-mono !text-[13px]"
-                      value={slug}
-                      onChange={(e) => {
-                        setSlug(e.target.value.toLowerCase());
-                        setSlugEdited(true);
-                      }}
-                      maxLength={39}
-                    />
-                  </Field>
-                ) : (
+    <WizardFrame
+      title="Add a client"
+      steps={STEPS}
+      step={step}
+      reached={Math.max(reached, problems.slice(0, step + 1).every((p) => !p) ? step + 1 : step)}
+      editing={false}
+      onGo={go}
+      err={err}
+      problem={problems[step]}
+      busy={saving}
+      finishLabel={deployNow && latest ? `Add and deploy ${latest}` : "Add client"}
+      finishDisabled={problems.some(Boolean)}
+      onFinish={save}
+      onCancel={onBack}
+    >
+      {step === 0 ? (
+        <div className="space-y-6">
+          <Intro title="Who is the client?" text="Their name, and if you like their logo and colour for their portal. You can change all of it later." />
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Client name" hint="As your team calls them.">
+              <input
+                className="field"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (!slugEdited) setSlug(slugOf(e.target.value));
+                }}
+                maxLength={80}
+                placeholder="Acme Retail"
+                autoFocus
+              />
+            </Field>
+            <div className="min-w-0">
+              {editSlug ? (
+                <Field label="Short name" hint="Used in GitHub; cannot be changed later." error={slug && !slugOk ? "2 to 39 characters: lowercase letters, digits and dashes." : ""}>
+                  <input
+                    className="field font-mono !text-[13px]"
+                    value={slug}
+                    onChange={(e) => {
+                      setSlug(e.target.value.toLowerCase());
+                      setSlugEdited(true);
+                    }}
+                    maxLength={39}
+                  />
+                </Field>
+              ) : name.trim() ? (
+                <div className="md:pt-7">
                   <p className="text-[13px] faint">
                     Short name <code className="font-mono" style={{ color: "var(--ink-dim)" }}>{slug || "–"}</code>{" "}
                     <button type="button" className="underline" onClick={() => setEditSlug(true)}>
                       Change
                     </button>
                   </p>
-                )
-              ) : null}
-            </>
-          ) : null}
-
-          {step === 1 ? (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="min-w-0 rounded-xl p-4" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold">1. Ask the client&apos;s admin</p>
-                  <CopyButton text={ASK} label="Copy message" />
-                </div>
-                <p className="mt-1 text-[13px] muted">They create a login for the installer in their workspace and send you three values. About 5 minutes.</p>
-                <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[13px]">
-                  <li>Add a service principal named agent-portal-deployer</li>
-                  <li>Put it in the admins group</li>
-                  <li>Generate a secret for it</li>
-                  <li>For chat history: allow it on a catalog</li>
-                </ol>
-              </div>
-              <div className="min-w-0 space-y-4">
-                <p className="font-semibold">2. Enter what they send</p>
-                <Field label="Workspace address">
-                  <input className="field" value={host} onChange={changeConn(setHost)} placeholder="https://adb-1234567890123456.7.azuredatabricks.net" autoFocus />
-                </Field>
-                <Field label="Application id">
-                  <input className="field font-mono !text-[13px]" value={clientId} onChange={changeConn(setClientId)} placeholder="00000000-0000-0000-0000-000000000000" />
-                </Field>
-                <Field label="Secret" hint="Sent to GitHub encrypted, never shown again.">
-                  <input className="field" type="password" autoComplete="new-password" value={secret} onChange={changeConn(setSecret)} />
-                </Field>
-                <button type="button" className="btn btn-quiet w-full justify-center" disabled={!host || !clientId || !secret || testing} onClick={runTest}>
-                  {testing ? <Spinner /> : null}
-                  {testing ? "Checking their workspace…" : signedIn ? "Check again" : "Check the connection"}
-                </button>
-              </div>
-              {testErr || test ? (
-                <div className="lg:col-span-2" aria-live="polite">
-                  {testErr ? <ErrorBox>{testErr}</ErrorBox> : null}
-                  {test ? <Checks result={test} /> : null}
                 </div>
               ) : null}
             </div>
-          ) : null}
-
-          {step === 2 ? (
-            <>
-              <dl className="grid gap-x-6 gap-y-3 rounded-xl p-4 text-sm sm:grid-cols-[160px_minmax(0,1fr)]" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
-                <Item k="Client">
-                  {name.trim()} <span className="faint">({slug})</span>
-                </Item>
-                <Item k="Workspace">{hostLabel(host)}</Item>
-                <Item k="Signs in as">{test?.who || clientId}</Item>
-              </dl>
-
-              <Choice
-                label="Chat history and dashboards"
-                hint="Keeps each person's conversations and powers the dashboards. Stored in the client's own workspace."
-                on={history}
-                onChange={setHistory}
-              >
-                <Field label="Catalog" hint={catalog && catalogOk ? `Kept in ${catalog}.agent_portal` : "A catalog in their workspace that the service principal may use."} error={catalog && !catalogOk ? "Letters, digits, underscores and dashes only." : ""}>
-                  <input className="field font-mono !text-[13px]" value={catalog} onChange={(e) => setCatalog(e.target.value.trim())} placeholder="main" />
-                </Field>
-              </Choice>
-
-              <div>
-                <p className="text-[13px] font-medium muted">Who can open the portal</p>
-                <div className="seg mt-2" role="group" aria-label="Who can open the portal">
-                  <button type="button" aria-pressed={everyone} onClick={() => setEveryone(true)}>
-                    Everyone in their workspace
-                  </button>
-                  <button type="button" aria-pressed={!everyone} onClick={() => setEveryone(false)}>
-                    One group
-                  </button>
-                </div>
-                <p className="help">People still only see the assistants they are allowed to use.</p>
-                {!everyone ? (
-                  <div className="mt-3 max-w-sm">
-                    <Field label="Group name">
-                      <input className="field" value={group} onChange={(e) => setGroup(e.target.value)} placeholder="portal-users" />
-                    </Field>
-                  </div>
-                ) : null}
-              </div>
-
-              <details className="rounded-xl px-4 py-3" style={{ border: "1px solid var(--line)" }} open={!!(brand.logo || brand.color || brand.name)}>
-                <summary className="cursor-pointer text-[13px] font-medium muted">Branding (optional): their logo, name and colour</summary>
-                <div className="mt-4">
-                  <BrandingEditor value={brand} onChange={setBrand} />
-                </div>
-              </details>
-
-              <details className="rounded-xl px-4 py-3" style={{ border: "1px solid var(--line)" }}>
-                <summary className="cursor-pointer text-[13px] font-medium muted">Advanced</summary>
-                <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                  <Field label="App name" hint="The Databricks app to create or update.">
-                    <input className="field font-mono !text-[13px]" value={appName} onChange={(e) => setAppName(e.target.value.trim().toLowerCase())} />
-                  </Field>
-                  <Field label="SQL warehouse id" hint="Empty picks one automatically.">
-                    <input className="field font-mono !text-[13px]" value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
-                  </Field>
-                </div>
-              </details>
-
-              {latest ? (
-                <label className="flex cursor-pointer items-start gap-3 rounded-xl p-4" style={{ border: "1px solid var(--brand)", background: "color-mix(in srgb, var(--brand-soft) 50%, var(--surface))" }}>
-                  <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={deployNow} onChange={(e) => setDeployNow(e.target.checked)} />
-                  <span>
-                    <span className="block font-semibold">Deploy {latest} right away</span>
-                    <span className="block text-[13px] muted">Takes 5 to 10 minutes the first time. You can watch it on the client&apos;s page.</span>
-                  </span>
-                </label>
-              ) : (
-                <p className="help">No version is published yet. Add the client now and deploy once a version is out.</p>
-              )}
-              {err ? <ErrorBox>{err}</ErrorBox> : null}
-            </>
-          ) : null}
-        </div>
-
-        <div className="flex items-center justify-between gap-3 border-t px-6 py-4" style={{ borderColor: "var(--line)" }}>
-          <button type="button" className="btn btn-quiet" onClick={step ? () => setStep(step - 1) : onBack} disabled={saving}>
-            {step ? "Back" : "Cancel"}
-          </button>
-          <div className="flex items-center gap-3">
-            {step === 1 && !signedIn ? <span className="hidden text-[13px] faint sm:inline">Check the connection to continue</span> : null}
-            {step < 2 ? (
-              <button type="button" className="btn btn-primary" disabled={!canNext} onClick={() => setStep(step + 1)}>
-                Continue
-              </button>
-            ) : (
-              <button type="button" className="btn btn-primary" disabled={!canNext || saving} onClick={save}>
-                {saving ? "Adding…" : deployNow && latest ? `Add and deploy ${latest}` : "Add client"}
-              </button>
-            )}
+          </div>
+          <div className="border-t pt-6" style={{ borderColor: "var(--line)" }}>
+            <p className="font-semibold">
+              Their branding <span className="text-[13px] font-normal faint">(optional)</span>
+            </p>
+            <p className="mt-0.5 text-[13px] muted">Their logo, portal name and colour. Without them the portal uses its own look.</p>
+            <div className="mt-4">
+              <BrandingEditor value={brand} onChange={setBrand} stacked />
+            </div>
           </div>
         </div>
-      </section>
+      ) : null}
+
+      {step === 1 ? (
+        <div className="space-y-6">
+          <Intro title="Connect their workspace" text="Their Databricks admin creates a login for the installer and sends you three values. Then check the connection." />
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="min-w-0 rounded-xl p-4" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="font-semibold">1. Ask their admin</p>
+                <CopyButton text={ASK} label="Copy message" />
+              </div>
+              <p className="mt-1 text-[13px] muted">About 5 minutes on their side.</p>
+              <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[13px]">
+                <li>Add a service principal named agent-portal-deployer</li>
+                <li>Put it in the admins group</li>
+                <li>Generate a secret for it</li>
+                <li>For chat history: allow it on a catalog</li>
+              </ol>
+            </div>
+            <div className="min-w-0 space-y-4">
+              <p className="font-semibold">2. Enter what they send</p>
+              <Field label="Workspace address">
+                <input className="field" value={host} onChange={changeConn(setHost)} placeholder="https://adb-1234567890123456.7.azuredatabricks.net" autoFocus />
+              </Field>
+              <Field label="Application id">
+                <input className="field font-mono !text-[13px]" value={clientId} onChange={changeConn(setClientId)} placeholder="00000000-0000-0000-0000-000000000000" />
+              </Field>
+              <Field label="Secret" hint="Sent to GitHub encrypted, never shown again.">
+                <input className="field" type="password" autoComplete="new-password" value={secret} onChange={changeConn(setSecret)} />
+              </Field>
+              <button type="button" className="btn btn-quiet w-full justify-center" disabled={!host || !clientId || !secret || testing} onClick={runTest}>
+                {testing ? <Spinner /> : null}
+                {testing ? "Checking their workspace…" : test ? "Check again" : "Check the connection"}
+              </button>
+            </div>
+          </div>
+          {testErr ? <ErrorBox>{testErr}</ErrorBox> : null}
+          {test ? <Checks result={test} /> : null}
+        </div>
+      ) : null}
+
+      {step === 2 ? (
+        <div className="space-y-6">
+          <Intro title="Options" text="Sensible defaults. Change them only if the client asks." />
+          <Choice label="Chat history and dashboards" hint="Keeps each person's conversations and powers the dashboards. Stored in the client's own workspace." on={history} onChange={setHistory}>
+            <Field
+              label="Catalog"
+              hint={catalog && catalogOk ? `Kept in ${catalog}.agent_portal` : "A catalog in their workspace that the service principal may use."}
+              error={catalog && !catalogOk ? "Letters, digits, underscores and dashes only." : ""}
+            >
+              <input className="field font-mono !text-[13px]" value={catalog} onChange={(e) => setCatalog(e.target.value.trim())} placeholder="main" />
+            </Field>
+          </Choice>
+          <div>
+            <p className="text-[13px] font-medium muted">Who can open the portal</p>
+            <div className="seg mt-2" role="group" aria-label="Who can open the portal">
+              <button type="button" aria-pressed={everyone} onClick={() => setEveryone(true)}>
+                Everyone in their workspace
+              </button>
+              <button type="button" aria-pressed={!everyone} onClick={() => setEveryone(false)}>
+                One group
+              </button>
+            </div>
+            <p className="help">People still only see the assistants they are allowed to use.</p>
+            {!everyone ? (
+              <div className="mt-3 max-w-sm">
+                <Field label="Group name">
+                  <input className="field" value={group} onChange={(e) => setGroup(e.target.value)} placeholder="portal-users" />
+                </Field>
+              </div>
+            ) : null}
+          </div>
+          <details className="rounded-xl px-4 py-3" style={{ border: "1px solid var(--line)" }}>
+            <summary className="cursor-pointer text-[13px] font-medium muted">Advanced</summary>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <Field label="App name" hint="The Databricks app to create or update." error={!appOk ? "2 to 30 characters: lowercase letters, digits and dashes." : ""}>
+                <input className="field font-mono !text-[13px]" value={appName} onChange={(e) => setAppName(e.target.value.trim().toLowerCase())} />
+              </Field>
+              <Field label="SQL warehouse id" hint="Empty picks one automatically.">
+                <input className="field font-mono !text-[13px]" value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
+              </Field>
+            </div>
+          </details>
+        </div>
+      ) : null}
+
+      {step === 3 ? (
+        <div className="space-y-5">
+          <Intro title="Check and add" text="Nothing is saved until you add the client." />
+          <Summary title="Client" onEdit={() => go(0)}>
+            <Row k="Name">
+              {name.trim()} <span className="faint">({slug})</span>
+            </Row>
+            <Row k="Branding">
+              {brand.logo || brand.color || brand.name ? (
+                <span className="inline-flex flex-wrap items-center gap-2">
+                  {brand.logo ? <img src={brand.logo} alt="" className="h-6 w-6 rounded bg-white object-contain p-0.5" style={{ border: "1px solid var(--line)" }} /> : null}
+                  {brand.color ? <span className="inline-block h-4 w-4 rounded-full" style={{ background: brand.color }} aria-hidden /> : null}
+                  <span>{brand.name.trim() || "Agent Portal"}</span>
+                </span>
+              ) : (
+                <span className="faint">Default look</span>
+              )}
+            </Row>
+          </Summary>
+          <Summary title="Connection" onEdit={() => go(1)}>
+            <Row k="Workspace">{hostLabel(host)}</Row>
+            <Row k="Signs in as">{test?.who || clientId}</Row>
+            <Row k="Check">
+              {test ? (
+                test.ok ? (
+                  "Everything in place"
+                ) : (
+                  (() => {
+                    const n = test.checks.filter((c) => !c.ok).length;
+                    return `${n} thing${n > 1 ? "s" : ""} for the client to fix`;
+                  })()
+                )
+              ) : (
+                <span className="faint">Not checked</span>
+              )}
+            </Row>
+          </Summary>
+          <Summary title="Options" onEdit={() => go(2)}>
+            <Row k="Chat history">{history ? `On, in ${catalog}.agent_portal` : "Off"}</Row>
+            <Row k="Who can open it">{everyone ? "Everyone in their workspace" : `The group ${group.trim()}`}</Row>
+            <Row k="App">
+              <span className="font-mono text-[13px]">{appName}</span>
+              {warehouse.trim() ? <span className="faint"> · warehouse {warehouse.trim()}</span> : null}
+            </Row>
+          </Summary>
+          {latest ? (
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl p-4" style={{ border: "1px solid var(--brand)", background: "color-mix(in srgb, var(--brand-soft) 50%, var(--surface))" }}>
+              <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={deployNow} onChange={(e) => setDeployNow(e.target.checked)} />
+              <span>
+                <span className="block font-semibold">Deploy {latest} right away</span>
+                <span className="block text-[13px] muted">Takes 5 to 10 minutes the first time. You can watch it on the client&apos;s page.</span>
+              </span>
+            </label>
+          ) : (
+            <p className="help">No version is published yet. Add the client now and deploy once a version is out.</p>
+          )}
+        </div>
+      ) : null}
+    </WizardFrame>
+  );
+}
+
+function Intro({ title, text }: { title: string; text: string }) {
+  return (
+    <div>
+      <h3 className="text-lg font-semibold">{title}</h3>
+      <p className="mt-1 text-[15px] muted">{text}</p>
+    </div>
+  );
+}
+
+function Summary({ title, onEdit, children }: { title: string; onEdit: () => void; children: ReactNode }) {
+  return (
+    <section className="rounded-xl" style={{ border: "1px solid var(--line)" }}>
+      <div className="flex items-center justify-between gap-3 border-b px-4 py-2.5" style={{ borderColor: "var(--line)" }}>
+        <p className="font-semibold">{title}</p>
+        <button type="button" className="text-[13px] font-medium underline" onClick={onEdit}>
+          Edit
+        </button>
+      </div>
+      <dl className="grid gap-x-6 gap-y-2.5 px-4 py-3 text-sm sm:grid-cols-[150px_minmax(0,1fr)]">{children}</dl>
+    </section>
+  );
+}
+
+function Row({ k, children }: { k: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="faint">{k}</dt>
+      <dd className="min-w-0 break-words">{children}</dd>
     </>
   );
 }
@@ -338,7 +395,7 @@ export function AddClient({
 function Checks({ result }: { result: { ok: boolean; checks: Check[]; who: string } }) {
   const bad = result.checks.filter((c) => !c.ok).length;
   return (
-    <div className="rounded-xl" style={{ border: "1px solid var(--line)" }}>
+    <div className="rounded-xl" style={{ border: "1px solid var(--line)" }} aria-live="polite">
       <p className="border-b px-4 py-2.5 text-[13px] font-semibold" style={{ borderColor: "var(--line)" }}>
         {bad ? `Connected as ${result.who}. ${bad} thing${bad > 1 ? "s" : ""} for the client to fix:` : `Connected as ${result.who}. Everything is in place.`}
       </p>
@@ -359,17 +416,12 @@ function Checks({ result }: { result: { ok: boolean; checks: Check[]; who: strin
           </li>
         ))}
       </ul>
-      {bad ? <p className="border-t px-4 py-2.5 text-[13px] faint" style={{ borderColor: "var(--line)" }}>You can continue and fix these later; the deploy reports anything still missing.</p> : null}
+      {bad ? (
+        <p className="border-t px-4 py-2.5 text-[13px] faint" style={{ borderColor: "var(--line)" }}>
+          You can continue and fix these later; the deploy reports anything still missing.
+        </p>
+      ) : null}
     </div>
-  );
-}
-
-function Item({ k, children }: { k: string; children: ReactNode }) {
-  return (
-    <>
-      <dt className="faint">{k}</dt>
-      <dd className="min-w-0 break-words">{children}</dd>
-    </>
   );
 }
 
