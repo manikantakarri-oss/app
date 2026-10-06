@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 import clients  # noqa: E402
 import ghub  # noqa: E402
 import home  # noqa: E402
+import readiness  # noqa: E402
 from common import Api, DeployError  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -83,6 +84,13 @@ def allowed(forwarded: str | None) -> dict:
 def session(x_forwarded_access_token: str = Header(None)):
     who = me(x_forwarded_access_token)
     return {**who, "mode": home.mode(), "repo": ghub.repo(), "actions_url": ghub.actions_url()}
+
+
+@app.get("/api/setup")
+def setup_checks(fresh: bool = False, x_forwarded_access_token: str = Header(None)):
+    """What the deployer depends on, checked read-only, each with its fix."""
+    allowed(x_forwarded_access_token)
+    return readiness.checks(fresh)
 
 
 @app.get("/api/clients")

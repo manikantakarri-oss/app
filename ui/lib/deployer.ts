@@ -88,6 +88,9 @@ export type Release = {
 
 export type Check = { label: string; ok: boolean; detail: string };
 
+export type SetupCheck = { key: string; label: string; status: "ok" | "fail" | "blocked"; detail: string; fix: string };
+export type Setup = { ready: boolean; problems: number; checks: SetupCheck[]; repo: string; checked_at: number };
+
 export type ClientForm = {
   slug?: string;
   name?: string;
@@ -142,4 +145,5 @@ export const dapi = {
       `/api/clients/${enc(id)}/check/${enc(checkId)}`
     ),
   releases: () => send<{ releases: Release[]; repo: string }>("GET", "/api/releases"),
+  setup: (fresh = false) => send<Setup>("GET", `/api/setup${fresh ? "?fresh=true" : ""}`),
 };

@@ -11,7 +11,8 @@
 - Deploys and checks are workflow_dispatch runs of deploy.yml / health.yml.
 
 The deployer's token is GITHUB_TOKEN (a fine-grained token on this repository
-with Actions, Environments, Secrets and Variables read/write and Contents read),
+with Administration, Actions, Environments, Secrets and Variables read/write and Contents read;
+creating an environment needs Administration),
 given to the app as a secret resource. Local development falls back to `gh auth token`.
 """
 from __future__ import annotations
@@ -46,11 +47,21 @@ def token() -> str:
     t = os.environ.get("GITHUB_TOKEN", "")
     if t:
         return t
+    missing = DeployError("The deployer has no GitHub token. Add the secret resource github-token to the app, then "
+                          "deploy the app again: an app only receives resources when it is deployed.", 503)
+    # Databricks Apps sets DATABRICKS_CLIENT_ID, and has no `gh` command: there
+    # the token must come from the app resource (seen live: an app deployed
+    # before its resource was added ran with no GITHUB_TOKEN).
+    if os.environ.get("DATABRICKS_CLIENT_ID"):
+        raise missing
     if "gh" not in _cache:
-        out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=30, shell=os.name == "nt")
-        _cache["gh"] = out.stdout.strip() if out.returncode == 0 else ""
+        try:
+            out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=30, shell=os.name == "nt")
+            _cache["gh"] = out.stdout.strip() if out.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            _cache["gh"] = ""
     if not _cache["gh"]:
-        raise DeployError("The deployer has no GitHub token (GITHUB_TOKEN).", 500)
+        raise missing
     return _cache["gh"]
 
 
@@ -66,8 +77,9 @@ def call(method: str, path: str, *, json=None, params=None, ok404: bool = False,
     if r.status_code == 401:
         raise DeployError("GitHub refused the deployer's token. It may have expired; replace it.", 502)
     if r.status_code in (403, 404):
-        raise DeployError("GitHub refused %s %s (HTTP %d). The deployer's token needs Actions, Environments, Secrets "
-                          "and Variables write access on %s." % (method, path.split("?")[0], r.status_code, repo()), 502)
+        raise DeployError("GitHub refused %s %s (HTTP %d). The deployer's token needs Read and write on Administration, "
+                          "Actions, Environments, Secrets and Variables for %s (creating a client's environment counts as "
+                          "Administration)." % (method, path.split("?")[0], r.status_code, repo()), 502)
     if r.status_code >= 400:
         try:
             msg = r.json().get("message", "")

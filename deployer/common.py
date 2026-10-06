@@ -58,8 +58,23 @@ def m2m_token(workspace: str, client_id: str, secret: str) -> str:
     except httpx.HTTPError as exc:
         raise DeployError("Could not reach the workspace (%s)." % type(exc).__name__, 502) from exc
     if r.status_code != 200:
-        raise DeployError("The workspace refused the service principal's id and secret (HTTP %d). Check both, and that "
-                          "the secret has not expired." % r.status_code, 401)
+        try:
+            why = r.json().get("error_description") or ""
+        except ValueError:
+            why = ""
+        # Seen live (AWS, 2026-10-06): an OAuth *app connection*'s id and
+        # secret authenticate fine but answer 403 "Scopes 'all-apis' are not
+        # assigned to the client". It is not a service principal.
+        if "not assigned to the client" in why:
+            raise DeployError("The id and secret are right, but that login may not call Databricks APIs. It is "
+                              "probably an OAuth app connection, not a service principal. In the workspace, open "
+                              "Settings, Identity and access, Service principals, add one, put it in the admins "
+                              "group, and generate the secret on its Secrets tab. (Databricks: %s)" % why[:200], 401)
+        if r.status_code == 401 or "authentication failed" in why.lower():
+            raise DeployError("The workspace did not recognise that id and secret. Check both, and that the secret "
+                              "has not expired.", 401)
+        raise DeployError("The workspace refused the service principal (HTTP %d)%s" % (
+            r.status_code, (": " + why[:200]) if why else "."), 401)
     return r.json()["access_token"]
 
 

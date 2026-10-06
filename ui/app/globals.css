@@ -771,7 +771,7 @@ h1, h2, h3, h4,
 .select-btn:disabled { opacity: .55; cursor: not-allowed; }
 .select-pop {
   position: fixed;
-  z-index: 60;
+  z-index: 70; /* above dialogs (60), so a dropdown inside one opens over it */
   display: flex;
   flex-direction: column;
   min-width: 200px;
@@ -813,3 +813,10 @@ h1, h2, h3, h4,
 .select-opt[aria-disabled] { opacity: .5; cursor: not-allowed; }
 .select-btn[data-loading] { opacity: 1; cursor: progress; }
 .select-btn[data-loading] .select-spin { color: var(--brand); }
+/* Release notes (deployer): GitHub markdown, compact. */
+.notes h1, .notes h2, .notes h3 { font-weight: 600; font-size: 13.5px; margin: 0.6em 0 0.25em; }
+.notes h1:first-child, .notes h2:first-child, .notes h3:first-child { margin-top: 0; }
+.notes p { margin: 0.35em 0; }
+.notes ul { list-style: disc; padding-left: 1.2em; margin: 0.35em 0; }
+.notes ol { list-style: decimal; padding-left: 1.2em; margin: 0.35em 0; }
+.notes code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bubble); border-radius: 4px; padding: 0 4px; }

@@ -54,7 +54,7 @@ Like the portal itself, the deployer stores nothing of its own. If you delete it
 
 Create a fine-grained personal access token (or a GitHub App token) scoped to **this repository only**, with these permissions:
 
-- Read and write: Actions, Environments, Secrets, Variables
+- Read and write: Administration, Actions, Environments, Secrets, Variables (creating a client's environment counts as Administration)
 - Read: Contents, Metadata
 
 Store it in a Databricks secret scope:

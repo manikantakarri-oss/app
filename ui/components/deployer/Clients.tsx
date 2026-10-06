@@ -1,14 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Client } from "@/lib/deployer";
+import { Client, Release, Setup } from "@/lib/deployer";
 import { Card, Chips, Find, Quiet } from "@/components/Ops";
-import { Kpi } from "@/components/Dashboard";
 import { ErrorBox, Notice, Pager, usePage } from "@/components/bits";
-import { BuildingIcon, CheckIcon, PlusIcon, PulseIcon, RocketIcon } from "@/components/icons";
-import { ago, DeployTag, HealthTag, hostLabel, PageHead, person, verb, Version } from "./parts";
+import { BuildingIcon, PlusIcon, PulseIcon, RocketIcon, SparkleIcon, TagIcon } from "@/components/icons";
+import { ago, compareVersions, DeployTag, HealthTag, hostLabel, latestStable, NextStep, PageHead, person, verb, Version } from "./parts";
 
-type Filter = "" | "attention" | "deploying" | "never";
+type Filter = "" | "attention" | "updates" | "deploying" | "never";
 
 function attention(c: Client) {
   return (
@@ -25,32 +24,87 @@ function attention(c: Client) {
 export function ClientsPage({
   data,
   err,
+  setup,
+  releases,
   onOpen,
   onAdd,
+  onSetup,
 }: {
   data: { clients: Client[]; note: string } | null;
   err: string;
+  setup: Setup | null;
+  releases: Release[] | null;
   onOpen: (id: string) => void;
   onAdd: () => void;
+  onSetup: () => void;
 }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("");
   const all = data?.clients || [];
+  const latest = latestStable(releases);
+  const behind = (c: Client) => !!(latest && c.version && compareVersions(latest, c.version) > 0);
   const counts = useMemo(
     () => ({
       attention: all.filter(attention).length,
+      updates: all.filter(behind).length,
       deploying: all.filter((c) => c.in_progress).length,
       never: all.filter((c) => !c.version).length,
-      healthy: all.filter((c) => c.health?.status === "healthy" || c.health?.status === "unverified").length,
     }),
-    [all]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [all, latest]
   );
+  // "No version yet" alone gets its own, friendlier step; anything else is
+  // setup to finish, counted the same as the Setup badge in the menu.
+  const setupProblems = setup?.problems || 0;
+  const onlyRelease = setupProblems === 1 && setup?.checks.some((c) => c.key === "release" && c.status !== "ok");
+
+  let next = null;
+  if (setupProblems && !onlyRelease) {
+    next = (
+      <NextStep
+        tone="warn"
+        icon={<SparkleIcon size={20} />}
+        title={`Finish setup: ${setupProblems} thing${setupProblems > 1 ? "s" : ""} need${setupProblems > 1 ? "" : "s"} attention`}
+        text="Until then, adding clients or deploying may fail. Each item says how to fix it."
+        action={<button type="button" className="btn btn-primary" onClick={onSetup}>Open setup</button>}
+      />
+    );
+  } else if (releases && releases.length === 0) {
+    next = (
+      <NextStep
+        icon={<TagIcon size={20} />}
+        title="Publish your first version"
+        text="There is nothing to deploy yet. Tag a version in GitHub; it appears here once its tests pass."
+        action={<button type="button" className="btn btn-primary" onClick={onSetup}>Show me how</button>}
+      />
+    );
+  } else if (counts.attention) {
+    next = (
+      <NextStep
+        tone="warn"
+        icon={<PulseIcon size={20} />}
+        title={`${counts.attention} client${counts.attention > 1 ? "s" : ""} need${counts.attention > 1 ? "" : "s"} attention`}
+        text="Down, degraded, a failed deploy, or settings incomplete."
+        action={<button type="button" className="btn btn-quiet" onClick={() => setFilter("attention")}>Show them</button>}
+      />
+    );
+  } else if (counts.updates) {
+    next = (
+      <NextStep
+        icon={<RocketIcon size={20} />}
+        title={`${latest} is out: ${counts.updates} client${counts.updates > 1 ? "s" : ""} can update`}
+        text="Open a client and deploy it. A failed update rolls back by itself."
+        action={<button type="button" className="btn btn-quiet" onClick={() => setFilter("updates")}>Show them</button>}
+      />
+    );
+  }
   const s = q.trim().toLowerCase();
   const shown = all.filter(
     (c) =>
       (!s || `${c.name} ${c.id} ${c.host} ${c.version}`.toLowerCase().includes(s)) &&
       (filter === "" ||
         (filter === "attention" && attention(c)) ||
+        (filter === "updates" && behind(c)) ||
         (filter === "deploying" && c.in_progress) ||
         (filter === "never" && !c.version))
   );
@@ -76,6 +130,7 @@ export function ClientsPage({
         </div>
       ) : null}
 
+      {next}
       {data && all.length === 0 ? (
         <section className="card flex flex-col items-center gap-4 px-6 py-16 text-center">
           <span className="kpi-icon !h-12 !w-12 !rounded-2xl" aria-hidden>
@@ -94,15 +149,6 @@ export function ClientsPage({
         </section>
       ) : (
         <div className="space-y-6">
-          <section className="card overflow-hidden">
-            <div className="kpi-strip">
-              <Kpi icon={<BuildingIcon size={16} />} label="Clients" value={data ? String(all.length) : "–"} hint="Workspaces you deploy to" />
-              <Kpi icon={<CheckIcon size={16} />} label="Healthy" value={data ? String(counts.healthy) : "–"} hint="At their last check" />
-              <Kpi icon={<PulseIcon size={16} />} label="Need attention" value={data ? String(counts.attention) : "–"} hint="Down, degraded, failed or incomplete" />
-              <Kpi icon={<RocketIcon size={16} />} label="Deploying now" value={data ? String(counts.deploying) : "–"} hint="In progress on GitHub" />
-            </div>
-          </section>
-
           <Card
             filters={
               <>
@@ -113,6 +159,7 @@ export function ClientsPage({
                   options={[
                     ["", "All", all.length],
                     ["attention", "Need attention", counts.attention],
+                    ["updates", "Update available", counts.updates],
                     ["deploying", "Deploying", counts.deploying],
                     ["never", "Not deployed yet", counts.never],
                   ]}
@@ -147,6 +194,7 @@ export function ClientsPage({
                       <span className="mt-2.5 flex flex-wrap items-center gap-2">
                         <Version v={c.version} />
                         <HealthTag status={c.health?.status} />
+                        {behind(c) ? <span className="text-xs font-medium" style={{ color: "var(--brand-deep)" }}>{latest} available</span> : null}
                         {c.in_progress ? <DeployTag row={c.in_progress} /> : c.last_deploy && c.last_deploy.status !== "succeeded" ? <DeployTag row={c.last_deploy} /> : null}
                       </span>
                       <span className="mt-1.5 block truncate text-xs faint">
@@ -190,7 +238,10 @@ export function ClientsPage({
                           </span>
                         </td>
                         <td className="px-3 py-3.5">
-                          <Version v={c.version} />
+                          <span className="flex flex-col items-start gap-1">
+                            <Version v={c.version} />
+                            {behind(c) ? <span className="text-xs font-medium" style={{ color: "var(--brand-deep)" }}>{latest} available</span> : null}
+                          </span>
                         </td>
                         <td className="px-3 py-3.5">
                           <span className="flex flex-col items-start gap-1">

@@ -1,26 +1,28 @@
 "use client";
 
 import { ReactNode, useCallback, useEffect, useState } from "react";
-import { Client, dapi, DeploySession, Release } from "@/lib/deployer";
+import { Client, dapi, DeploySession, Release, Setup } from "@/lib/deployer";
 import { ClientsPage } from "@/components/deployer/Clients";
 import { ClientPage } from "@/components/deployer/ClientPage";
 import { AddClient } from "@/components/deployer/AddClient";
 import { ReleasesPage } from "@/components/deployer/Releases";
+import { SetupPage } from "@/components/deployer/SetupPage";
 import { ErrorBox, Spinner } from "@/components/bits";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { ArrowUpRightIcon, BuildingIcon, ChevronRightIcon, CloseIcon, MenuIcon, RocketIcon, TagIcon } from "@/components/icons";
+import { ArrowUpRightIcon, BuildingIcon, ChevronRightIcon, CloseIcon, MenuIcon, RocketIcon, ShieldIcon, TagIcon } from "@/components/icons";
 import { initials } from "@/lib/people";
 
 /** The Portal Deployer's shell: the portal's own sidebar and top bar, with two
  *  sections. Where you are lives in the URL hash (#clients, #client/<id>,
- *  #add, #releases), so any page can be linked to and survives a refresh. */
-type View = { page: "clients" } | { page: "client"; id: string } | { page: "add" } | { page: "releases" };
+ *  #add, #releases, #setup), so any page can be linked to and survives a refresh. */
+type View = { page: "clients" } | { page: "client"; id: string } | { page: "add" } | { page: "releases" } | { page: "setup" };
 
 function parse(hash: string): View {
   const h = hash.replace(/^#/, "");
   if (h.startsWith("client/")) return { page: "client", id: decodeURIComponent(h.slice(7)) };
   if (h === "add") return { page: "add" };
   if (h === "releases") return { page: "releases" };
+  if (h === "setup") return { page: "setup" };
   return { page: "clients" };
 }
 
@@ -39,6 +41,9 @@ export default function DeployerPage() {
   const [clientsErr, setClientsErr] = useState("");
   const [releases, setReleases] = useState<Release[] | null>(null);
   const [releasesErr, setReleasesErr] = useState("");
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [setupErr, setSetupErr] = useState("");
+  const [notice, setNotice] = useState<{ id: string; text: string } | null>(null);
 
   useEffect(() => {
     setView(parse(window.location.hash));
@@ -84,6 +89,10 @@ export default function DeployerPage() {
     if (!session?.allowed) return;
     loadClients();
     loadReleases();
+    dapi
+      .setup()
+      .then(setSetup)
+      .catch((e) => setSetupErr(e.message));
   }, [session, loadClients, loadReleases]);
 
   // Keep the overview current while something is deploying somewhere.
@@ -119,7 +128,8 @@ export default function DeployerPage() {
     );
   }
 
-  const section = view.page === "releases" ? "releases" : "clients";
+  const section = view.page === "releases" ? "releases" : view.page === "setup" ? "setup" : "clients";
+  const setupProblems = setup ? setup.problems : 0;
   const current = view.page === "client" ? clients?.clients.find((c) => c.id === view.id) : undefined;
   const crumb = view.page === "client" ? current?.name || view.id.replace(/^client-/, "") : view.page === "add" ? "Add client" : null;
 
@@ -154,6 +164,7 @@ export default function DeployerPage() {
           <div className="flex flex-col gap-0.5">
             <NavItem icon={<BuildingIcon />} label="Clients" active={section === "clients"} count={clients?.clients.length} onClick={() => go({ page: "clients" })} />
             <NavItem icon={<TagIcon />} label="Releases" active={section === "releases"} count={releases?.length} onClick={() => go({ page: "releases" })} />
+            <NavItem icon={<ShieldIcon />} label="Setup" active={section === "setup"} alert={setupProblems} onClick={() => go({ page: "setup" })} />
           </div>
           <p className="side-label">GitHub</p>
           <a className="side-link" href={session.actions_url} target="_blank" rel="noreferrer" title="Deploy and check jobs on GitHub">
@@ -204,7 +215,7 @@ export default function DeployerPage() {
                 <span className="truncate font-semibold">{crumb}</span>
               </>
             ) : (
-              <span className="truncate font-semibold">{section === "releases" ? "Releases" : "Clients"}</span>
+              <span className="truncate font-semibold">{section === "releases" ? "Releases" : section === "setup" ? "Setup" : "Clients"}</span>
             )}
           </nav>
           <div className="ml-auto flex items-center gap-1.5">
@@ -214,12 +225,21 @@ export default function DeployerPage() {
 
         <main className="mx-auto w-full max-w-[1440px] px-4 pb-20 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           {view.page === "clients" ? (
-            <ClientsPage data={clients} err={clientsErr} onOpen={(id) => go({ page: "client", id })} onAdd={() => go({ page: "add" })} />
+            <ClientsPage
+              data={clients}
+              err={clientsErr}
+              setup={setup}
+              releases={releases}
+              onOpen={(id) => go({ page: "client", id })}
+              onAdd={() => go({ page: "add" })}
+              onSetup={() => go({ page: "setup" })}
+            />
           ) : view.page === "client" ? (
             <ClientPage
               key={view.id}
               id={view.id}
               releases={releases}
+              notice={notice?.id === view.id ? notice.text : ""}
               onBack={() => go({ page: "clients" })}
               onChanged={loadClients}
               onRemoved={() => {
@@ -229,12 +249,16 @@ export default function DeployerPage() {
             />
           ) : view.page === "add" ? (
             <AddClient
+              releases={releases}
               onBack={() => go({ page: "clients" })}
-              onAdded={(id) => {
+              onAdded={(id, deployError) => {
+                setNotice(deployError ? { id, text: deployError } : null);
                 loadClients();
                 go({ page: "client", id });
               }}
             />
+          ) : view.page === "setup" ? (
+            <SetupPage setup={setup} err={setupErr} onRefresh={setSetup} />
           ) : (
             <ReleasesPage releases={releases} err={releasesErr} clients={clients?.clients || []} repo={session.repo} />
           )}
@@ -244,12 +268,16 @@ export default function DeployerPage() {
   );
 }
 
-function NavItem({ icon, label, active, count, onClick }: { icon: ReactNode; label: string; active: boolean; count?: number; onClick: () => void }) {
+function NavItem({ icon, label, active, count, alert, onClick }: { icon: ReactNode; label: string; active: boolean; count?: number; alert?: number; onClick: () => void }) {
   return (
     <button type="button" className="side-link" data-state={active ? "active" : "inactive"} aria-current={active ? "page" : undefined} onClick={onClick}>
       <span className="shrink-0">{icon}</span>
       <span className="flex-1 truncate text-left">{label}</span>
-      {count ? (
+      {alert ? (
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums" style={{ background: "var(--warn-bg)", color: "var(--warn-line)" }} title={`${alert} need attention`}>
+          {alert}
+        </span>
+      ) : count ? (
         <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums" style={{ background: "var(--side-chip)", color: "var(--side-dim)" }}>
           {count}
         </span>

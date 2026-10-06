@@ -5,7 +5,8 @@ import { Client, Release } from "@/lib/deployer";
 import { Card, Find, Quiet, Tag } from "@/components/Ops";
 import { ErrorBox, Pager, usePage } from "@/components/bits";
 import { TagIcon } from "@/components/icons";
-import { ago, ExtLink, OpenRow, PageHead, when } from "./parts";
+import { Notes } from "./Notes";
+import { ago, CopyButton, ExtLink, latestStable, OpenRow, PageHead, when } from "./parts";
 
 /** Published versions, newest first, and which clients run each one. */
 export function ReleasesPage({ releases, err, clients, repo }: { releases: Release[] | null; err: string; clients: Client[]; repo: string }) {
@@ -16,6 +17,7 @@ export function ReleasesPage({ releases, err, clients, repo }: { releases: Relea
   const all = releases || [];
   const shown = all.filter((r) => !s || `${r.version} ${r.name} ${r.notes}`.toLowerCase().includes(s));
   const pg = usePage(shown, 15, [q]);
+  const latest = latestStable(releases);
   return (
     <>
       <PageHead
@@ -39,7 +41,20 @@ export function ReleasesPage({ releases, err, clients, repo }: { releases: Relea
             ))}
           </ul>
         ) : shown.length === 0 ? (
-          <Quiet>{all.length ? "No releases match." : "No releases published yet."}</Quiet>
+          all.length ? (
+            <Quiet>No releases match.</Quiet>
+          ) : (
+            <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+              <p className="text-[15px] font-semibold">No version published yet</p>
+              <p className="max-w-md text-[13px] muted">Run these in the repository folder. The tests run on GitHub, and the version appears here when they pass.</p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <code className="rounded-md px-2.5 py-1.5 font-mono text-[12.5px]" style={{ background: "var(--bubble)" }}>
+                  git tag v1.0.0 &amp;&amp; git push origin v1.0.0
+                </code>
+                <CopyButton text={"git tag v1.0.0\ngit push origin v1.0.0"} label="Copy" />
+              </div>
+            </div>
+          )
         ) : (
           <ul>
             {pg.rows.map((r) => (
@@ -58,13 +73,13 @@ export function ReleasesPage({ releases, err, clients, repo }: { releases: Relea
                     {r.clients.length ? ` · live for ${r.clients.map((id) => names.get(id) || id).join(", ")}` : " · no client on it"}
                   </>
                 }
-                tag={r.prerelease ? <Tag tone="warn">Pre-release</Tag> : r.clients.length ? <Tag tone="ok">{r.clients.length} live</Tag> : undefined}
+                tag={r.prerelease ? <Tag tone="warn">Pre-release</Tag> : r.version === latest ? <Tag tone="ok">Latest</Tag> : undefined}
                 open={open === r.version}
                 onToggle={() => setOpen(open === r.version ? "" : r.version)}
                 detail={
                   <span className="block space-y-2 text-[13px]">
-                    <span className="block max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-lg px-3 py-2" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
-                      {r.notes || "No release notes."}
+                    <span className="block max-h-72 overflow-y-auto rounded-lg px-3 py-2" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
+                      {r.notes ? <Notes text={r.notes} /> : "No release notes."}
                     </span>
                     {r.url ? <ExtLink href={r.url}>Open on GitHub</ExtLink> : null}
                   </span>

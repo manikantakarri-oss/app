@@ -3,7 +3,6 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClientDetail, ClientForm, dapi, DeployRow, HealthRow, Release } from "@/lib/deployer";
 import { Card, Chips, Pre, Quiet, Tag } from "@/components/Ops";
-import { Kpi } from "@/components/Dashboard";
 import { ErrorBox, Notice, Pager, Select, Spinner, usePage } from "@/components/bits";
 import {
   ArrowUpRightIcon,
@@ -13,25 +12,45 @@ import {
   PulseIcon,
   RefreshIcon,
   RocketIcon,
-  TagIcon,
+  SparkleIcon,
   UndoIcon,
 } from "@/components/icons";
-import { ago, DeployTag, ExtLink, Field, HealthTag, hostLabel, OpenRow, PageHead, person, verb, Version, when } from "./parts";
+import {
+  ago,
+  compareVersions,
+  DeployTag,
+  Dialog,
+  ExtLink,
+  Field,
+  HealthTag,
+  hostLabel,
+  latestStable,
+  NextStep,
+  OpenRow,
+  person,
+  verb,
+  Version,
+  when,
+} from "./parts";
+import { Notes } from "./Notes";
 
 const FINAL = ["succeeded", "failed", "rolled_back"];
 const POLL_MS = 4000;
+type Tab = "overview" | "history" | "settings";
 
-/** One client: what it runs, deploy or roll back, watch it happen, and its
- *  full history. Everything shown comes from the deployment record and GitHub. */
+/** One client. The header says what it runs and how it is; one banner says
+ *  what to do next; tabs keep the detail out of the way until it is wanted. */
 export function ClientPage({
   id,
   releases,
+  notice,
   onBack,
   onChanged,
   onRemoved,
 }: {
   id: string;
   releases: Release[] | null;
+  notice?: string;
   onBack: () => void;
   onChanged: () => void;
   onRemoved: () => void;
@@ -39,6 +58,11 @@ export function ClientPage({
   const [c, setC] = useState<ClientDetail | null>(null);
   const [err, setErr] = useState("");
   const [watch, setWatch] = useState("");
+  const [tab, setTab] = useState<Tab>("overview");
+  const [dialog, setDialog] = useState<null | { kind: "deploy" | "rollback"; version?: string }>(null);
+  const [checking, setChecking] = useState("");
+  const [checkErr, setCheckErr] = useState("");
+  const [focus, setFocus] = useState("");
 
   const load = useCallback(() => {
     dapi
@@ -57,7 +81,48 @@ export function ClientPage({
     load();
   }, [load]);
 
+  // "Check now": poll until the GitHub job has written its result.
+  useEffect(() => {
+    if (!checking) return;
+    let stop = false;
+    const started = Date.now();
+    async function tick() {
+      try {
+        const r = await dapi.checkResult(id, checking);
+        if (stop) return;
+        if (r.done) {
+          setChecking("");
+          if (r.error) setCheckErr(r.error);
+          load();
+          return;
+        }
+      } catch (e: any) {
+        if (!stop) setCheckErr(e.message);
+      }
+      if (Date.now() - started > 10 * 60 * 1000) {
+        setChecking("");
+        setCheckErr("The check did not report back within 10 minutes. Open Jobs on GitHub to see why.");
+        return;
+      }
+      if (!stop) setTimeout(tick, POLL_MS);
+    }
+    tick();
+    return () => {
+      stop = true;
+    };
+  }, [checking, id, load]);
+
+  async function checkNow() {
+    setCheckErr("");
+    try {
+      setChecking((await dapi.check(id)).check_id);
+    } catch (e: any) {
+      setCheckErr(e.message);
+    }
+  }
+
   const current = c?.version || "";
+  const latest = latestStable(releases);
   const rollbackTo = useMemo(
     () => c?.deploys.find((d) => d.status === "succeeded" && d.version && d.version !== current)?.version || "",
     [c, current]
@@ -76,103 +141,199 @@ export function ClientPage({
       <>
         <BackLink onBack={onBack} />
         <div className="space-y-6" aria-busy>
-          <div className="h-16 w-1/2 animate-pulse rounded-xl" style={{ background: "var(--bubble)" }} />
-          <div className="card h-[132px] animate-pulse" />
-          <div className="card h-[220px] animate-pulse" />
+          <div className="h-20 w-1/2 animate-pulse rounded-xl" style={{ background: "var(--bubble)" }} />
+          <div className="card h-[88px] animate-pulse" />
+          <div className="card h-[260px] animate-pulse" />
         </div>
       </>
     );
   }
 
-  const h = c.health;
-  const url = h?.detail?.url || c.last_deploy?.detail?.url || "";
+  const ready = c.ready && !!c.secret_set_at;
+  const busy = !!watch;
+  const url = c.health?.detail?.url || c.last_deploy?.detail?.url || "";
+  const last = c.deploys.find((d) => d.action !== "auto_rollback") || null;
+  const updateTo = latest && current && compareVersions(latest, current) > 0 ? latest : "";
+  const history = c.deploys.length + c.checks.length;
+
+  // The one next step, most urgent first.
+  let next: ReactNode = null;
+  if (!ready) {
+    next = (
+      <NextStep
+        tone="warn"
+        icon={<SparkleIcon size={20} />}
+        title="Finish this client's settings"
+        text="The workspace address, application id or secret is missing, so nothing can be deployed yet."
+        action={<button type="button" className="btn btn-primary" onClick={() => setTab("settings")}>Open settings</button>}
+      />
+    );
+  } else if (busy) {
+    next = null;
+  } else if (c.health?.status === "down") {
+    next = (
+      <NextStep
+        tone="bad"
+        icon={<PulseIcon size={20} />}
+        title="The portal is down"
+        text={`${c.health.summary} Checked ${ago(c.health.at)}.`}
+        action={
+          <>
+            <button type="button" className="btn btn-quiet" onClick={checkNow} disabled={!!checking}>{checking ? "Checking…" : "Check again"}</button>
+            {rollbackTo ? <button type="button" className="btn btn-primary" onClick={() => setDialog({ kind: "rollback" })}>Roll back to {rollbackTo}</button> : null}
+          </>
+        }
+      />
+    );
+  } else if (last && (last.status === "failed" || last.status === "rolled_back")) {
+    next = (
+      <NextStep
+        tone="warn"
+        icon={<UndoIcon size={20} />}
+        title={last.status === "rolled_back" ? `${last.version} did not come up, so ${last.detail?.rolled_back_to || current || "the previous version"} was put back` : `The last deploy of ${last.version} failed`}
+        text={last.message || "See the history for each step."}
+        action={
+          <button type="button" className="btn btn-quiet" onClick={() => { setTab("history"); setFocus(last.deploy_id); }}>
+            See what happened
+          </button>
+        }
+      />
+    );
+  } else if (!current && latest) {
+    next = (
+      <NextStep
+        icon={<RocketIcon size={20} />}
+        title="Deploy the first version"
+        text={`${latest} is the newest version. The first install takes 5 to 10 minutes.`}
+        action={<button type="button" className="btn btn-primary" onClick={() => setDialog({ kind: "deploy", version: latest })}>Deploy {latest}</button>}
+      />
+    );
+  } else if (updateTo) {
+    next = (
+      <NextStep
+        icon={<SparkleIcon size={20} />}
+        title={`${updateTo} is available`}
+        text={`${c.name} is on ${current}.`}
+        action={<button type="button" className="btn btn-primary" onClick={() => setDialog({ kind: "deploy", version: updateTo })}>Update to {updateTo}</button>}
+      />
+    );
+  }
+
   return (
     <>
       <BackLink onBack={onBack} />
-      <PageHead
-        eyebrow="Client"
-        title={c.name}
-        text={
-          <>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="break-words text-[28px] font-semibold leading-tight tracking-[-0.02em]">{c.name}</h1>
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] muted">
             <ExtLink href={c.host}>{c.host ? hostLabel(c.host) : "Workspace not set"}</ExtLink>
-            <span className="faint"> · app </span>
-            <span className="font-mono text-[13px]">{c.app_name}</span>
-          </>
-        }
-        actions={
-          url ? (
+            <span className="faint">·</span>
+            <span>
+              app <span className="font-mono text-[13px]">{c.app_name}</span>
+            </span>
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Version v={current} />
+            <HealthTag status={c.health?.status} />
+            {busy ? <Tag tone="warn">Deploying</Tag> : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {url ? (
             <a className="btn btn-quiet" href={url} target="_blank" rel="noreferrer">
               Open portal
               <ArrowUpRightIcon size={15} />
             </a>
-          ) : null
-        }
-      />
+          ) : null}
+          {rollbackTo ? (
+            <button type="button" className="btn btn-quiet" disabled={!ready || busy} onClick={() => setDialog({ kind: "rollback" })} title={`Put ${rollbackTo} back`}>
+              <UndoIcon size={16} />
+              Roll back
+            </button>
+          ) : null}
+          <button type="button" className="btn btn-primary" disabled={!ready || busy || !releases?.length} onClick={() => setDialog({ kind: "deploy" })} title={busy ? "A deploy is in progress" : !releases?.length ? "No version is published yet" : undefined}>
+            <RocketIcon size={16} />
+            Deploy
+          </button>
+        </div>
+      </div>
+
+      {notice ? (
+        <div className="mb-5">
+          <ErrorBox>The client was added, but the deploy did not start: {notice}</ErrorBox>
+        </div>
+      ) : null}
       {err ? (
         <div className="mb-5">
           <ErrorBox>{err}</ErrorBox>
         </div>
       ) : null}
-      {!c.ready || !c.secret_set_at ? (
-        <div className="mb-5">
-          <Notice>This client&apos;s settings are incomplete. Add the workspace address, the application id and the secret under Settings below before deploying.</Notice>
-        </div>
+      {next}
+      {watch ? (
+        <Progress
+          deployId={watch}
+          onDone={() => {
+            setWatch("");
+            load();
+            onChanged();
+          }}
+        />
       ) : null}
 
-      <div className="space-y-6">
-        <section className="card overflow-hidden">
-          <div className="kpi-strip">
-            <Kpi icon={<TagIcon size={16} />} label="Version" value={current || "None"} hint={current ? `Live since ${ago(c.deploys.find((d) => d.status === "succeeded")?.at)}` : "Not deployed yet"} />
-            <Kpi
-              icon={<PulseIcon size={16} />}
-              label="Health"
-              value={h ? ({ healthy: "Healthy", degraded: "Degraded", down: "Down", unverified: "Running" } as Record<string, string>)[h.status] || h.status : "Unknown"}
-              hint={h ? `Checked ${ago(h.at)}` : "Never checked"}
-            />
-            <Kpi
-              icon={<RocketIcon size={16} />}
-              label="Deploys"
-              value={String(c.deploys.filter((d) => d.action !== "auto_rollback").length)}
-              hint={c.deploys.length ? `${c.deploys.filter((d) => d.status === "failed" || d.status === "rolled_back").length} failed or rolled back` : "None yet"}
-            />
-            <Kpi
-              icon={<RefreshIcon size={16} />}
-              label="Errors, last day"
-              value={h?.detail?.api_errors !== undefined || h?.detail?.failed !== undefined ? String((h?.detail?.failed || 0) + (h?.detail?.api_errors || 0)) : "–"}
-              hint={h?.detail?.questions !== undefined ? `${h.detail.failed || 0} of ${h.detail.questions} questions failed` : "From the last health check"}
-            />
-          </div>
-        </section>
-
-        {watch ? (
-          <Progress
-            deployId={watch}
-            onDone={() => {
-              setWatch("");
-              load();
-              onChanged();
-            }}
-          />
-        ) : null}
-
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
-          <DeployCard
-            client={c}
-            releases={releases}
-            busy={!!watch}
-            rollbackTo={rollbackTo}
-            onStarted={(deployId) => {
-              setWatch(deployId);
-              onChanged();
-            }}
-          />
-          <HealthCard client={c} onChecked={() => load()} />
-        </div>
-
-        <History deploys={c.deploys} />
-        <Checks checks={c.checks} />
-        <Settings client={c} onSaved={() => { load(); onChanged(); }} onRemoved={onRemoved} />
+      <div className="seg mb-5" role="tablist" aria-label="Client sections">
+        {(
+          [
+            ["overview", "Overview"],
+            ["history", `History${history ? ` · ${history}` : ""}`],
+            ["settings", "Settings"],
+          ] as [Tab, string][]
+        ).map(([k, label]) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} aria-pressed={tab === k} onClick={() => setTab(k)}>
+            {label}
+          </button>
+        ))}
       </div>
+
+      {tab === "overview" ? (
+        <Overview
+          c={c}
+          checking={!!checking}
+          checkErr={checkErr}
+          onCheck={checkNow}
+          onHistory={(focusId) => {
+            setTab("history");
+            setFocus(focusId || "");
+          }}
+        />
+      ) : tab === "history" ? (
+        <History deploys={c.deploys} checks={c.checks} focus={focus} />
+      ) : (
+        <Settings
+          client={c}
+          onSaved={() => {
+            load();
+            onChanged();
+          }}
+          onRemoved={onRemoved}
+        />
+      )}
+
+      {dialog ? (
+        <DeployDialog
+          client={c}
+          releases={releases || []}
+          kind={dialog.kind}
+          initial={dialog.version}
+          rollbackTo={rollbackTo}
+          onClose={() => setDialog(null)}
+          onStarted={(deployId) => {
+            setDialog(null);
+            setWatch(deployId);
+            setTab("overview");
+            onChanged();
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -186,140 +347,295 @@ function BackLink({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ------------------------------------------------------------ overview -----
+
+function Overview({
+  c,
+  checking,
+  checkErr,
+  onCheck,
+  onHistory,
+}: {
+  c: ClientDetail;
+  checking: boolean;
+  checkErr: string;
+  onCheck: () => void;
+  onHistory: (focus?: string) => void;
+}) {
+  const h = c.health;
+  const d = h?.detail;
+  const live = c.deploys.find((x) => x.status === "succeeded");
+  const last = c.deploys[0];
+  const recent = merged(c.deploys, c.checks).slice(0, 5);
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2">
+        <Stat
+          label="Version"
+          foot={
+            <>
+              {live ? `Live since ${ago(live.at)}, deployed by ${person(live.actor)}.` : c.version ? "Running in their workspace." : "Not deployed yet."}
+              {last && last !== live && last.status !== "succeeded" ? (
+                <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                  Last attempt: {verb(last)} {last.version} <DeployTag row={last} /> {ago(last.started || last.at)}
+                </span>
+              ) : null}
+            </>
+          }
+        >
+          {c.version ? <span className="font-mono">{c.version}</span> : <span className="faint">None</span>}
+        </Stat>
+        <Stat
+          label="Health"
+          foot={h ? `${h.summary} Checked ${ago(h.at)}.` : "Not checked yet."}
+          action={
+            <button type="button" className="btn btn-quiet !min-h-[30px] !px-2.5 !text-[12px]" onClick={onCheck} disabled={checking || !c.ready}>
+              {checking ? <Spinner /> : <RefreshIcon size={14} />}
+              {checking ? "Checking…" : "Check now"}
+            </button>
+          }
+        >
+          {h ? ({ healthy: "Healthy", degraded: "Degraded", down: "Down", unverified: "Running" } as Record<string, string>)[h.status] || h.status : <span className="faint">Unknown</span>}
+        </Stat>
+      </div>
+      {checkErr ? <ErrorBox>{checkErr}</ErrorBox> : null}
+
+      {d && (d.questions !== undefined || d.api_errors !== undefined) ? (
+        <Card title="Last day of use" sub="From the portal itself, at the last health check.">
+          <dl className="grid grid-cols-3 gap-4 p-5">
+            <Num label="Questions" value={d.questions ?? "–"} />
+            <Num label="Failed" value={d.failed ?? "–"} bad={!!d.failed} />
+            <Num label="Log errors" value={d.api_errors ?? "–"} bad={!!d.api_errors} />
+          </dl>
+          {d.error_kinds?.length || d.failing_assistants?.length ? (
+            <div className="space-y-2 border-t px-5 py-4 text-[13px]" style={{ borderColor: "var(--line)" }}>
+              {d.error_kinds?.length ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="faint">Causes:</span>
+                  {d.error_kinds.map((k) => (
+                    <Tag key={k.label} tone="bad">
+                      {k.label} · {k.count}
+                    </Tag>
+                  ))}
+                </div>
+              ) : null}
+              {d.failing_assistants?.length ? (
+                <p className="muted">
+                  Failing most: {d.failing_assistants.map((a) => `${a.label} (${Math.round((a.failure_rate || 0) * 100)}% of ${a.questions})`).join(", ")}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </Card>
+      ) : d?.errors_note ? (
+        <p className="help">{d.errors_note}</p>
+      ) : null}
+
+      <Card title="Recent activity">
+        {recent.length === 0 ? (
+          <Quiet>Nothing yet. Deploys and health checks will show here.</Quiet>
+        ) : (
+          <>
+            <ul>
+              {recent.map((r) => (
+                <li key={r.key} style={{ borderTop: "1px solid var(--line)" }}>
+                  <button type="button" className="flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-[var(--canvas)]" onClick={() => onHistory(r.key)}>
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full" style={{ background: "var(--brand-soft)", color: "var(--brand-deep)" }} aria-hidden>
+                      {r.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">{r.title}</span>
+                      <span className="block truncate text-xs faint">{r.meta}</span>
+                    </span>
+                    {r.tag}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="border-t px-5 py-2.5" style={{ borderColor: "var(--line)" }}>
+              <button type="button" className="text-[13px] font-medium underline" onClick={() => onHistory()}>
+                See full history
+              </button>
+            </div>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function Stat({ label, children, foot, action }: { label: string; children: ReactNode; foot: ReactNode; action?: ReactNode }) {
+  return (
+    <section className="card flex min-w-0 flex-col p-5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[13px] font-medium muted">{label}</p>
+        {action}
+      </div>
+      <div className="mt-2 text-[24px] font-semibold leading-tight tracking-[-0.02em]">{children}</div>
+      <div className="mt-2 text-[13px] faint">{foot}</div>
+    </section>
+  );
+}
+
+function Num({ label, value, bad }: { label: string; value: ReactNode; bad?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate text-[13px] faint">{label}</dt>
+      <dd className="mt-1 text-[24px] font-semibold tabular-nums" style={bad ? { color: "var(--err)" } : undefined}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+type Item = { key: string; at: string; kind: "deploy" | "rollback" | "check"; failed: boolean; icon: ReactNode; title: ReactNode; meta: string; tag: ReactNode; deploy?: DeployRow; check?: HealthRow };
+
+function merged(deploys: DeployRow[], checks: HealthRow[]): Item[] {
+  const items: Item[] = [
+    ...deploys.map((d) => ({
+      key: d.deploy_id,
+      at: d.started || d.at,
+      kind: (d.action === "deploy" ? "deploy" : "rollback") as Item["kind"],
+      failed: d.status === "failed" || d.status === "rolled_back",
+      icon: d.action === "deploy" ? <RocketIcon size={14} /> : <UndoIcon size={14} />,
+      title: (
+        <>
+          {verb(d)} <b>{d.version}</b>
+          {d.from_version && d.from_version !== d.version ? <span className="faint"> from {d.from_version}</span> : null}
+        </>
+      ),
+      meta: `${person(d.actor)} · ${when(d.started || d.at)} · ${d.step}`,
+      tag: <DeployTag row={d} />,
+      deploy: d,
+    })),
+    ...checks.map((h) => ({
+      key: h.check_id,
+      at: h.at,
+      kind: "check" as const,
+      failed: h.status === "down" || h.status === "degraded",
+      icon: <PulseIcon size={14} />,
+      title: <>Health check: {h.summary || "checked"}</>,
+      meta: `${h.version || "unknown version"} · ${when(h.at)}${h.actor ? ` · ${person(h.actor)}` : " · after a deploy"}`,
+      tag: <HealthTag status={h.status} />,
+      check: h,
+    })),
+  ];
+  const t = (s: string) => new Date(String(s).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(s)) ? "" : "Z")).getTime() || 0;
+  return items.sort((a, b) => t(b.at) - t(a.at));
+}
+
 // ------------------------------------------------------------ deploy -------
 
-function DeployCard({
+function DeployDialog({
   client: c,
   releases,
-  busy,
+  kind,
+  initial,
   rollbackTo,
+  onClose,
   onStarted,
 }: {
   client: ClientDetail;
-  releases: Release[] | null;
-  busy: boolean;
+  releases: Release[];
+  kind: "deploy" | "rollback";
+  initial?: string;
   rollbackTo: string;
+  onClose: () => void;
   onStarted: (deployId: string) => void;
 }) {
-  const [pick, setPick] = useState("");
-  const [confirm, setConfirm] = useState<"" | "deploy" | "rollback">("");
+  const sorted = [...releases].sort((a, b) => compareVersions(b.version, a.version));
+  // Default to the newest version above the live one (a regular release
+  // before a pre-release). Never preselect an older one: that is a rollback,
+  // and it should be a deliberate pick.
+  const newer = (r: Release) => !c.version || compareVersions(r.version, c.version) > 0;
+  const [pick, setPick] = useState(
+    initial || (kind === "rollback" ? rollbackTo : sorted.find((r) => newer(r) && !r.prerelease)?.version || sorted.find(newer)?.version || "")
+  );
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
-  const ready = c.ready && !!c.secret_set_at;
+  const rel = releases.find((r) => r.version === pick);
+  const older = c.version && pick && compareVersions(pick, c.version) < 0;
+  const same = pick === c.version;
 
-  useEffect(() => {
-    // Offer the newest release the client is not already on.
-    if (!pick && releases?.length) setPick(releases.find((r) => r.version !== c.version)?.version || releases[0].version);
-  }, [releases, c.version, pick]);
-
-  async function go(kind: "deploy" | "rollback") {
+  async function go() {
     setSending(true);
     setErr("");
     try {
-      const r = kind === "deploy" ? await dapi.deploy(c.id, pick) : await dapi.rollback(c.id, rollbackTo);
-      setConfirm("");
+      const r = kind === "rollback" ? await dapi.rollback(c.id, pick) : await dapi.deploy(c.id, pick);
       onStarted(r.deploy_id);
     } catch (e: any) {
       setErr(e.message);
-    } finally {
       setSending(false);
     }
   }
 
-  const options = (releases || []).map((r) => ({
-    value: r.version,
-    label: r.version + (r.name && r.name !== r.version ? ` · ${r.name}` : ""),
-    detail: [r.published_at ? `Published ${ago(r.published_at)}` : "", r.prerelease ? "Pre-release" : ""].filter(Boolean).join(" · "),
-    note: r.version === c.version ? "Live" : undefined,
-  }));
-
   return (
-    <Card title="Deploy" sub="Ship a release to this client. If it does not come up, the version that was live is put back automatically.">
-      <div className="space-y-4 p-5">
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+    <Dialog
+      wide
+      title={kind === "rollback" ? `Roll back ${c.name}` : `Deploy to ${c.name}`}
+      sub={c.version ? `Now on ${c.version}` : "Not deployed yet"}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn btn-quiet" onClick={onClose} disabled={sending}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={go} disabled={sending || !pick || same}>
+            {sending ? <Spinner /> : kind === "rollback" ? <UndoIcon size={16} /> : <RocketIcon size={16} />}
+            {sending ? "Starting…" : kind === "rollback" ? `Roll back to ${pick}` : `Deploy ${pick}`}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {kind === "deploy" ? (
           <Field label="Version">
             <Select
               value={pick}
-              onChange={(v) => {
-                setPick(v);
-                setConfirm("");
-              }}
-              options={options}
-              loading={releases === null}
-              empty="No releases published yet"
-              disabled={busy || sending}
+              onChange={setPick}
+              options={sorted.map((r) => ({
+                value: r.version,
+                label: r.version + (r.name && r.name !== r.version ? ` · ${r.name}` : ""),
+                detail: [r.published_at ? `Published ${ago(r.published_at)}` : "", r.prerelease ? "Pre-release" : ""].filter(Boolean).join(" · "),
+                note: r.version === c.version ? "Live" : undefined,
+                disabled: r.version === c.version,
+              }))}
+              empty="No version is published yet"
             />
           </Field>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={!ready || busy || sending || !pick || pick === c.version}
-            title={pick === c.version ? "This version is already live" : undefined}
-            onClick={() => setConfirm("deploy")}
-          >
-            <RocketIcon size={16} />
-            Deploy
-          </button>
-        </div>
-        {releases && releases.length === 0 ? (
-          <p className="help">Publish a release first: push a tag such as v1.0.0 to GitHub. Tests run, then it appears here.</p>
-        ) : null}
-
-        {confirm ? (
-          <div className="rounded-xl p-4" style={{ border: "1px solid var(--brand)", background: "var(--canvas)" }}>
-            <p className="text-[15px]">
-              {confirm === "deploy" ? (
-                <>
-                  Deploy <b>{pick}</b> to <b>{c.name}</b>
-                  {c.version ? (
-                    <>
-                      {" "}
-                      (now on <b>{c.version}</b>)
-                    </>
-                  ) : null}
-                  ? People using the portal may see it restart for a minute.
-                </>
-              ) : (
-                <>
-                  Roll <b>{c.name}</b> back from <b>{c.version}</b> to <b>{rollbackTo}</b>?
-                </>
-              )}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className="btn btn-primary" disabled={sending} onClick={() => go(confirm)}>
-                {sending ? "Starting…" : confirm === "deploy" ? `Deploy ${pick}` : `Roll back to ${rollbackTo}`}
-              </button>
-              <button type="button" className="btn btn-quiet" disabled={sending} onClick={() => setConfirm("")}>
-                Cancel
-              </button>
+        ) : (
+          <p className="text-[15px]">
+            Puts <b>{pick}</b> back, the last version that worked for {c.name}. Use it when {c.version} misbehaves.
+          </p>
+        )}
+        {rel?.notes ? (
+          <div>
+            <p className="text-[13px] font-medium muted">What is in {rel.version}</p>
+            <div className="mt-1 max-h-44 overflow-y-auto rounded-lg px-3 py-2" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
+              <Notes text={rel.notes} />
             </div>
           </div>
         ) : null}
-
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4" style={{ borderColor: "var(--line)" }}>
-          <p className="min-w-0 text-[13px] faint">
-            {rollbackTo ? (
-              <>
-                Previous good version: <Version v={rollbackTo} dim />
-              </>
-            ) : (
-              "No earlier version to roll back to yet."
-            )}
-          </p>
-          <button
-            type="button"
-            className="btn btn-quiet"
-            disabled={!ready || busy || sending || !rollbackTo}
-            onClick={() => setConfirm("rollback")}
-          >
-            <UndoIcon size={16} />
-            Roll back
-          </button>
-        </div>
-        {busy ? <p className="help">A deploy is in progress. Deploy and roll back are available again when it finishes.</p> : null}
+        {kind === "deploy" && !pick ? <p className="text-[13px] muted">{c.name} is already on the newest version. To deploy an older one, pick it above.</p> : null}
+        {older && kind === "deploy" ? <Notice>{pick} is older than the live {c.version}. That is a rollback; any newer fixes go away.</Notice> : null}
+        {rel?.prerelease ? <Notice>{pick} is a pre-release. Prefer a regular version for clients.</Notice> : null}
+        <ul className="space-y-1.5 text-[13px] muted">
+          <li className="flex gap-2">
+            <CheckIcon size={14} />
+            The portal restarts; people may be signed out for about a minute.
+          </li>
+          <li className="flex gap-2">
+            <CheckIcon size={14} />
+            {c.version ? `If ${pick} does not come up, ${c.version} is put back automatically.` : "The first install takes 5 to 10 minutes."}
+          </li>
+          <li className="flex gap-2">
+            <CheckIcon size={14} />
+            Every step is recorded in the history, with who started it.
+          </li>
+        </ul>
         {err ? <ErrorBox>{err}</ErrorBox> : null}
       </div>
-    </Card>
+    </Dialog>
   );
 }
 
@@ -340,7 +656,7 @@ function Progress({ deployId, onDone }: { deployId: string; onDone: () => void }
         setErr("");
         if (FINAL.includes(r.current.status) && !done.current) {
           done.current = true;
-          setTimeout(onDone, 1500);
+          setTimeout(onDone, 2500);
           return;
         }
       } catch (e: any) {
@@ -364,17 +680,15 @@ function Progress({ deployId, onDone }: { deployId: string; onDone: () => void }
   const runUrl = s?.run?.url || [...steps].reverse().find((x) => x.run_url)?.run_url || "";
   const ended = cur && FINAL.includes(cur.status);
   return (
-    <section className="card overflow-hidden" style={{ borderColor: "var(--brand)" }} aria-live="polite">
+    <section className="card mb-6 overflow-hidden" style={{ borderColor: "var(--brand)" }} aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3.5" style={{ borderColor: "var(--line)" }}>
         <div className="flex min-w-0 items-center gap-3">
           {!ended ? <Spinner /> : null}
-          <h2 className="truncate text-[15px] font-semibold">
-            {cur ? `${verb(cur)} ${cur.version}` : "Starting"}
-          </h2>
+          <h2 className="truncate text-[15px] font-semibold">{cur ? `${verb(cur)} ${cur.version}` : "Starting"}</h2>
           {cur ? <DeployTag row={cur} /> : null}
         </div>
         <span className="flex items-center gap-3 text-[13px] faint">
-          <span className="tabular-nums">
+          <span className="tabular-nums" title="Time so far">
             {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}
           </span>
           {runUrl ? (
@@ -423,178 +737,56 @@ function Progress({ deployId, onDone }: { deployId: string; onDone: () => void }
   );
 }
 
-// ------------------------------------------------------------ health -------
-
-function HealthCard({ client: c, onChecked }: { client: ClientDetail; onChecked: () => void }) {
-  const [checking, setChecking] = useState("");
-  const [err, setErr] = useState("");
-  const h = c.health;
-
-  useEffect(() => {
-    if (!checking) return;
-    let stop = false;
-    const started = Date.now();
-    async function tick() {
-      try {
-        const r = await dapi.checkResult(c.id, checking);
-        if (stop) return;
-        if (r.done) {
-          setChecking("");
-          if (r.error) setErr(r.error);
-          onChecked();
-          return;
-        }
-      } catch (e: any) {
-        if (!stop) setErr(e.message);
-      }
-      if (Date.now() - started > 10 * 60 * 1000) {
-        setChecking("");
-        setErr("The check did not report back within 10 minutes. See the GitHub job.");
-        return;
-      }
-      if (!stop) setTimeout(tick, POLL_MS);
-    }
-    tick();
-    return () => {
-      stop = true;
-    };
-  }, [checking, c.id, onChecked]);
-
-  async function start() {
-    setErr("");
-    try {
-      setChecking((await dapi.check(c.id)).check_id);
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  }
-
-  const d = h?.detail;
-  return (
-    <Card title="Health" sub="Checked after every deploy, and whenever you ask.">
-      <div className="space-y-4 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <HealthTag status={h?.status} />
-              {h ? <Version v={h.version} dim /> : null}
-            </div>
-            <p className="mt-2 text-[15px]">{h ? h.summary : "Not checked yet."}</p>
-            {h ? <p className="mt-0.5 text-xs faint">{when(h.at)} · {h.actor ? `by ${person(h.actor)}` : "after a deploy"}</p> : null}
-          </div>
-          <button type="button" className="btn btn-quiet" onClick={start} disabled={!!checking || !c.ready}>
-            {checking ? <Spinner /> : <RefreshIcon size={16} />}
-            {checking ? "Checking…" : "Check now"}
-          </button>
-        </div>
-        {d && (d.questions !== undefined || d.api_errors !== undefined) ? (
-          <dl className="grid grid-cols-3 gap-3 rounded-xl p-3" style={{ background: "var(--canvas)", border: "1px solid var(--line)" }}>
-            <Stat label="Questions" value={d.questions ?? "–"} />
-            <Stat label="Failed" value={d.failed ?? "–"} />
-            <Stat label="API errors" value={d.api_errors ?? "–"} />
-          </dl>
-        ) : null}
-        {d?.errors_note ? <p className="help">{d.errors_note}</p> : null}
-        {err ? <ErrorBox>{err}</ErrorBox> : null}
-      </div>
-    </Card>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <dt className="truncate text-xs faint">{label}</dt>
-      <dd className="mt-0.5 text-lg font-semibold tabular-nums">{value}</dd>
-    </div>
-  );
-}
-
-function HealthDetailView({ row }: { row: HealthRow }) {
-  const d = row.detail || ({} as HealthRow["detail"]);
-  return (
-    <span className="block space-y-2 text-[13px]">
-      {d.questions !== undefined ? (
-        <span className="block muted">
-          {d.questions} questions, {d.failed || 0} failed, {d.api_errors ?? 0} API errors in the day before the check.
-        </span>
-      ) : null}
-      {d.error_kinds?.length ? (
-        <span className="flex flex-wrap gap-1.5">
-          {d.error_kinds.map((k) => (
-            <Tag key={k.label} tone="bad">
-              {k.label} · {k.count}
-            </Tag>
-          ))}
-        </span>
-      ) : null}
-      {d.failing_assistants?.length ? (
-        <span className="block muted">
-          Failing most: {d.failing_assistants.map((a) => `${a.label} (${Math.round((a.failure_rate || 0) * 100)}% of ${a.questions})`).join(", ")}
-        </span>
-      ) : null}
-      {d.recent_errors?.length ? <Pre>{d.recent_errors.map((e) => `${e.at}  ${e.message}`).join("\n")}</Pre> : null}
-      {d.errors_note ? <span className="block faint">{d.errors_note}</span> : null}
-      {d.app_state ? (
-        <span className="block faint">
-          Databricks: app {String(d.app_state).toLowerCase()}, compute {String(d.compute_state || "").toLowerCase()}.
-        </span>
-      ) : null}
-      {row.run_url ? (
-        <span className="block">
-          <ExtLink href={row.run_url}>GitHub job</ExtLink>
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 // ------------------------------------------------------------ history ------
 
-function History({ deploys }: { deploys: DeployRow[] }) {
+function History({ deploys, checks, focus }: { deploys: DeployRow[]; checks: HealthRow[]; focus: string }) {
   const [filter, setFilter] = useState("");
-  const [open, setOpen] = useState("");
-  const shown = deploys.filter(
-    (d) => !filter || (filter === "failed" ? d.status === "failed" || d.status === "rolled_back" : d.action !== "deploy")
+  const [open, setOpen] = useState(focus);
+  const all = useMemo(() => merged(deploys, checks), [deploys, checks]);
+  const shown = all.filter(
+    (r) =>
+      !filter ||
+      (filter === "deploys" && r.kind === "deploy") ||
+      (filter === "rollbacks" && r.kind === "rollback") ||
+      (filter === "checks" && r.kind === "check") ||
+      (filter === "problems" && r.failed)
   );
-  const pg = usePage(shown, 10, [filter]);
+  const pg = usePage(shown, 12, [filter]);
+  useEffect(() => setOpen(focus), [focus]);
   return (
     <Card
-      title="Deploy history"
-      sub="Every deploy and rollback: who asked, what happened, and the GitHub job that did it."
+      title="History"
+      sub="Every deploy, rollback and health check: who started it, each step, and the GitHub job."
       filters={
         <Chips
           label="Show"
           value={filter}
           onChange={setFilter}
           options={[
-            ["", "All", deploys.length],
-            ["failed", "Failed", deploys.filter((d) => d.status === "failed" || d.status === "rolled_back").length],
-            ["rollbacks", "Rollbacks", deploys.filter((d) => d.action !== "deploy").length],
+            ["", "All", all.length],
+            ["deploys", "Deploys", all.filter((r) => r.kind === "deploy").length],
+            ["rollbacks", "Rollbacks", all.filter((r) => r.kind === "rollback").length],
+            ["checks", "Health checks", all.filter((r) => r.kind === "check").length],
+            ["problems", "Problems", all.filter((r) => r.failed).length],
           ]}
         />
       }
-      pager={<Pager pg={pg} noun="deploys" />}
+      pager={<Pager pg={pg} noun="events" />}
     >
       {shown.length === 0 ? (
-        <Quiet>{deploys.length ? "Nothing matches." : "Nothing deployed yet."}</Quiet>
+        <Quiet>{all.length ? "Nothing matches." : "Nothing yet."}</Quiet>
       ) : (
         <ul>
-          {pg.rows.map((d) => (
+          {pg.rows.map((r) => (
             <OpenRow
-              key={d.deploy_id}
-              mark={d.action === "deploy" ? <RocketIcon size={14} /> : <UndoIcon size={14} />}
-              title={
-                <>
-                  {verb(d)} <b>{d.version}</b>
-                  {d.from_version && d.from_version !== d.version ? <span className="faint"> from {d.from_version}</span> : null}
-                </>
-              }
-              meta={`${person(d.actor)} · ${when(d.started || d.at)} · ${d.step}`}
-              tag={<DeployTag row={d} />}
-              open={open === d.deploy_id}
-              onToggle={() => setOpen(open === d.deploy_id ? "" : d.deploy_id)}
-              detail={<DeployDetail row={d} />}
+              key={r.key}
+              mark={r.icon}
+              title={r.title}
+              meta={r.meta}
+              tag={r.tag}
+              open={open === r.key}
+              onToggle={() => setOpen(open === r.key ? "" : r.key)}
+              detail={r.deploy ? <DeployDetail row={r.deploy} /> : r.check ? <CheckDetail row={r.check} /> : null}
             />
           ))}
         </ul>
@@ -617,7 +809,7 @@ function DeployDetail({ row }: { row: DeployRow }) {
       {row.message ? <Pre tone={row.status === "succeeded" ? "plain" : "err"}>{row.message}</Pre> : null}
       {warnings.length ? (
         <span className="block rounded-lg px-3 py-2" style={{ background: "var(--warn-bg)" }}>
-          <b className="block">Warnings</b>
+          <b className="block">Worked, with {warnings.length} warning{warnings.length > 1 ? "s" : ""}</b>
           {warnings.map((w, i) => (
             <span key={i} className="mt-1 block break-words">
               {w}
@@ -631,7 +823,7 @@ function DeployDetail({ row }: { row: DeployRow }) {
         <span className="block">
           {steps.map((s, i) => (
             <span key={i} className="flex gap-3 py-0.5">
-              <span className="w-12 shrink-0 tabular-nums faint">{when(s.at).split(", ").pop()}</span>
+              <span className="w-14 shrink-0 tabular-nums faint">{when(s.at).split(", ").pop()}</span>
               <span className="min-w-0 break-words">{s.step}</span>
             </span>
           ))}
@@ -639,37 +831,44 @@ function DeployDetail({ row }: { row: DeployRow }) {
       ) : null}
       {row.run_url ? (
         <span className="block">
-          <ExtLink href={row.run_url}>GitHub job</ExtLink>
+          <ExtLink href={row.run_url}>Open the GitHub job</ExtLink>
         </span>
       ) : null}
     </span>
   );
 }
 
-function Checks({ checks }: { checks: HealthRow[] }) {
-  const [open, setOpen] = useState("");
-  const pg = usePage(checks, 10);
+function CheckDetail({ row }: { row: HealthRow }) {
+  const d = row.detail || ({} as HealthRow["detail"]);
   return (
-    <Card title="Health checks" sub="The portal's own view: whether it answers, its version, and errors in the day before each check." pager={<Pager pg={pg} noun="checks" />}>
-      {checks.length === 0 ? (
-        <Quiet>No checks yet. Use Check now, or deploy.</Quiet>
-      ) : (
-        <ul>
-          {pg.rows.map((h) => (
-            <OpenRow
-              key={h.check_id}
-              mark={<PulseIcon size={14} />}
-              title={h.summary || "Checked"}
-              meta={`${h.version || "unknown version"} · ${when(h.at)}${h.actor ? ` · ${person(h.actor)}` : ""}`}
-              tag={<HealthTag status={h.status} />}
-              open={open === h.check_id}
-              onToggle={() => setOpen(open === h.check_id ? "" : h.check_id)}
-              detail={<HealthDetailView row={h} />}
-            />
+    <span className="block space-y-2 text-[13px]">
+      {d.questions !== undefined ? (
+        <span className="block muted">
+          {d.questions} questions, {d.failed || 0} failed, {d.api_errors ?? 0} errors in the log, in the day before the check.
+        </span>
+      ) : null}
+      {d.error_kinds?.length ? (
+        <span className="flex flex-wrap gap-1.5">
+          {d.error_kinds.map((k) => (
+            <Tag key={k.label} tone="bad">
+              {k.label} · {k.count}
+            </Tag>
           ))}
-        </ul>
-      )}
-    </Card>
+        </span>
+      ) : null}
+      {d.recent_errors?.length ? <Pre>{d.recent_errors.map((e) => `${e.at}  ${e.message}`).join("\n")}</Pre> : null}
+      {d.errors_note ? <span className="block faint">{d.errors_note}</span> : null}
+      {d.app_state ? (
+        <span className="block faint">
+          Databricks: app {String(d.app_state).toLowerCase()}, compute {String(d.compute_state || "").toLowerCase()}.
+        </span>
+      ) : null}
+      {row.run_url ? (
+        <span className="block">
+          <ExtLink href={row.run_url}>Open the GitHub job</ExtLink>
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -692,6 +891,7 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState(false);
   const [typed, setTyped] = useState("");
+  const slug = c.id.replace(/^client-/, "");
   const dirty = JSON.stringify(f) !== JSON.stringify(initial);
   const set = (k: keyof ClientForm) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setF({ ...f, [k]: e.target.value });
@@ -708,7 +908,7 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
         if (f[k] !== initial[k]) changed[k] = f[k];
       });
       await dapi.edit(c.id, changed);
-      setMsg(changed.secret ? "Saved. The new secret is used from the next deploy." : "Saved.");
+      setMsg(changed.secret ? "Saved. The new secret is used from the next deploy or check." : "Saved. Changes apply on the next deploy.");
       setF({ ...f, secret: "" });
       onSaved();
     } catch (e: any) {
@@ -730,78 +930,92 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
   }
 
   return (
-    <Card title="Settings" sub="Kept in this client's GitHub environment. The secret is stored encrypted by GitHub and can only be replaced, never read back.">
-      <div className="space-y-5 p-5">
-        <div className="grid gap-4 md:grid-cols-2">
+    <div className="space-y-6">
+      <Card title="Connection" sub="How the deployer signs in to the client's workspace.">
+        <div className="grid gap-4 p-5 md:grid-cols-2">
           <Field label="Client name">
             <input className="field" value={f.name} onChange={set("name")} maxLength={80} />
           </Field>
           <Field label="Workspace address">
             <input className="field" value={f.host} onChange={set("host")} placeholder="https://adb-….azuredatabricks.net" />
           </Field>
-          <Field label="Service principal application id">
+          <Field label="Application id">
             <input className="field font-mono !text-[13px]" value={f.client_id} onChange={set("client_id")} />
           </Field>
-          <Field label="Service principal secret" hint={c.secret_set_at ? `Last set ${ago(c.secret_set_at)}. Leave empty to keep it.` : "Not set yet."}>
+          <Field label="Secret" hint={c.secret_set_at ? `Set ${ago(c.secret_set_at)}. Kept encrypted by GitHub; it can be replaced, never read back.` : "Not set yet."}>
             <input className="field" type="password" autoComplete="new-password" value={f.secret} onChange={set("secret")} placeholder="Paste a new secret to replace it" />
           </Field>
-          <Field label="App name" hint="The Databricks app in the client's workspace.">
-            <input className="field font-mono !text-[13px]" value={f.app_name} onChange={set("app_name")} />
-          </Field>
-          <Field label="Chat history table" hint="catalog.schema.table. Empty turns history and dashboards off.">
+        </div>
+      </Card>
+      <Card title="Portal options" sub="Applied on the next deploy.">
+        <div className="grid gap-4 p-5 md:grid-cols-2">
+          <Field label="Chat history table" hint="catalog.schema.table in their workspace. Empty turns history and dashboards off.">
             <input className="field font-mono !text-[13px]" value={f.log_table} onChange={set("log_table")} placeholder="main.agent_portal.portal_logs" />
           </Field>
-          <Field label="SQL warehouse id (optional)" hint="Empty picks one automatically.">
+          <Field label="Who can open the portal" hint="A group in their workspace. Empty means everyone.">
+            <input className="field" value={f.users_group} onChange={set("users_group")} placeholder="Everyone" />
+          </Field>
+          <Field label="App name" hint="The Databricks app in their workspace.">
+            <input className="field font-mono !text-[13px]" value={f.app_name} onChange={set("app_name")} />
+          </Field>
+          <Field label="SQL warehouse id" hint="Empty picks one automatically.">
             <input className="field font-mono !text-[13px]" value={f.warehouse_id} onChange={set("warehouse_id")} />
           </Field>
-          <Field label="Who can open the portal" hint="A workspace group. Empty means everyone in the workspace (users).">
-            <input className="field" value={f.users_group} onChange={set("users_group")} placeholder="users" />
-          </Field>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className="btn btn-primary" disabled={!dirty || saving} onClick={save}>
-            {saving ? "Saving…" : "Save changes"}
+      </Card>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="btn btn-primary" disabled={!dirty || saving} onClick={save}>
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+        {dirty ? (
+          <button type="button" className="btn btn-quiet" disabled={saving} onClick={() => setF(initial)}>
+            Discard
           </button>
-          {dirty ? (
-            <button type="button" className="btn btn-quiet" disabled={saving} onClick={() => setF(initial)}>
-              Discard
-            </button>
-          ) : null}
-          {msg ? <span className="text-sm" style={{ color: "var(--ok)" }}>{msg}</span> : null}
-        </div>
-        {err ? <ErrorBox>{err}</ErrorBox> : null}
-
-        <div className="rounded-xl p-4" style={{ border: "1px solid color-mix(in srgb, var(--err) 35%, var(--line))" }}>
-          <h3 className="text-[15px] font-semibold">Remove this client</h3>
-          <p className="mt-1 text-[13px] muted">
-            Deletes its GitHub environment and secret. The portal keeps running in their workspace and its history stays in the
-            deployment record.
-          </p>
-          {!removing ? (
-            <button type="button" className="btn btn-quiet mt-3" onClick={() => setRemoving(true)}>
-              Remove client…
-            </button>
-          ) : (
-            <div className="mt-3 flex flex-wrap items-end gap-3">
-              <Field label={`Type ${c.id.replace(/^client-/, "")} to confirm`}>
-                <input className="field w-60" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
-              </Field>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ ["--btn-from" as any]: "var(--err)", ["--btn-to" as any]: "var(--err)" }}
-                disabled={typed !== c.id.replace(/^client-/, "") || saving}
-                onClick={remove}
-              >
-                Remove
-              </button>
-              <button type="button" className="btn btn-quiet" onClick={() => { setRemoving(false); setTyped(""); }}>
-                Cancel
-              </button>
-            </div>
-          )}
-        </div>
+        ) : null}
+        {msg ? (
+          <span className="text-sm" style={{ color: "var(--ok)" }}>
+            {msg}
+          </span>
+        ) : null}
       </div>
-    </Card>
+      {err ? <ErrorBox>{err}</ErrorBox> : null}
+
+      <section className="rounded-2xl p-5" style={{ border: "1px solid color-mix(in srgb, var(--err) 35%, var(--line))" }}>
+        <h3 className="text-[15px] font-semibold">Remove this client</h3>
+        <p className="mt-1 text-[13px] muted">
+          Stops deploying to them and deletes their secret from GitHub. The portal keeps running in their workspace, and the history stays on record.
+        </p>
+        {!removing ? (
+          <button type="button" className="btn btn-quiet mt-3" onClick={() => setRemoving(true)}>
+            Remove client…
+          </button>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <Field label={`Type ${slug} to confirm`}>
+              <input className="field w-60" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+            </Field>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ ["--btn-from" as any]: "var(--err)", ["--btn-to" as any]: "var(--err)" }}
+              disabled={typed !== slug || saving}
+              onClick={remove}
+            >
+              Remove
+            </button>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => {
+                setRemoving(false);
+                setTyped("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

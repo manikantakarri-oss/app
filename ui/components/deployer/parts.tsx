@@ -1,6 +1,7 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
+import { CheckIcon, CloseIcon, CopyIcon } from "@/components/icons";
 import { DeployRow, DeployStatus, HealthStatus } from "@/lib/deployer";
 import { Tag } from "@/components/Ops";
 
@@ -165,5 +166,145 @@ export function OpenRow({
       </button>
       {open ? <div className="pb-4 pl-16 pr-5">{detail}</div> : null}
     </li>
+  );
+}
+
+/** -1, 0 or 1: how version a compares with b (v1.10.0 is newer than v1.9.2;
+ *  a pre-release sorts before its release). */
+export function compareVersions(a: string, b: string) {
+  const parse = (v: string) => {
+    const [main, pre = ""] = v.replace(/^v/, "").split("-", 2);
+    return { n: main.split(".").map((x) => Number(x) || 0), pre };
+  };
+  const x = parse(a);
+  const y = parse(b);
+  for (let i = 0; i < 3; i++) if ((x.n[i] || 0) !== (y.n[i] || 0)) return (x.n[i] || 0) > (y.n[i] || 0) ? 1 : -1;
+  if (x.pre === y.pre) return 0;
+  if (!x.pre) return 1;
+  if (!y.pre) return -1;
+  return x.pre > y.pre ? 1 : -1;
+}
+
+/** The newest version that is not a pre-release, or "". */
+export function latestStable(releases: { version: string; prerelease: boolean }[] | null) {
+  const stable = (releases || []).filter((r) => !r.prerelease).map((r) => r.version);
+  return stable.sort((a, b) => compareVersions(b, a))[0] || "";
+}
+
+/** A focused task over the page: Escape or the backdrop closes it, and focus
+ *  goes back where it was. Same look as the portal's quick switcher. */
+export function Dialog({
+  title,
+  sub,
+  onClose,
+  children,
+  footer,
+  wide,
+}: {
+  title: ReactNode;
+  sub?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
+  useEffect(() => {
+    const back = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+      back?.focus?.();
+    };
+  }, [onClose]);
+  return (
+    <div className="palette-backdrop flex items-start justify-center overflow-y-auto px-4 py-[8vh]" onMouseDown={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={`palette flex w-full flex-col ${wide ? "max-w-2xl" : "max-w-lg"}`}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b px-6 py-4" style={{ borderColor: "var(--line)" }}>
+          <div className="min-w-0">
+            <h2 className="text-[17px] font-semibold tracking-[-0.01em]">{title}</h2>
+            {sub ? <p className="mt-0.5 text-[13px] muted">{sub}</p> : null}
+          </div>
+          <button type="button" className="icon-btn -mr-2 shrink-0" onClick={onClose} aria-label="Close">
+            <CloseIcon size={18} />
+          </button>
+        </div>
+        <div className="min-h-0 px-6 py-5">{children}</div>
+        {footer ? (
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t px-6 py-4" style={{ borderColor: "var(--line)" }}>
+            {footer}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The one thing to do next, at the top of a page. `tone` follows meaning:
+ *  brand for the normal next step, warn when something needs fixing. */
+export function NextStep({
+  tone = "brand",
+  icon,
+  title,
+  text,
+  action,
+}: {
+  tone?: "brand" | "warn" | "bad";
+  icon: ReactNode;
+  title: ReactNode;
+  text?: ReactNode;
+  action?: ReactNode;
+}) {
+  const style =
+    tone === "warn"
+      ? { background: "var(--warn-bg)", borderColor: "color-mix(in srgb, var(--warn-line) 40%, var(--line))" }
+      : tone === "bad"
+        ? { background: "var(--err-bg)", borderColor: "color-mix(in srgb, var(--err) 35%, var(--line))" }
+        : { background: "color-mix(in srgb, var(--brand-soft) 60%, var(--surface))", borderColor: "color-mix(in srgb, var(--brand) 35%, var(--line))" };
+  const ink = tone === "warn" ? "var(--warn-line)" : tone === "bad" ? "var(--err)" : "var(--brand-deep)";
+  return (
+    <section className="mb-6 flex flex-wrap items-center gap-4 rounded-2xl border px-5 py-4" style={style} aria-live="polite">
+      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: "var(--surface)", color: ink }} aria-hidden>
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[15px] font-semibold">{title}</p>
+        {text ? <p className="mt-0.5 text-[13px] muted">{text}</p> : null}
+      </div>
+      {action ? <div className="flex shrink-0 flex-wrap gap-2">{action}</div> : null}
+    </section>
+  );
+}
+
+/** Copy text to the clipboard, with a brief "Copied" on the button. */
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn btn-quiet !min-h-[32px] !px-3 !text-[13px]"
+      onClick={() => {
+        navigator.clipboard?.writeText(text).then(
+          () => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1600);
+          },
+          () => setDone(false)
+        );
+      }}
+    >
+      {done ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+      {done ? "Copied" : label}
+    </button>
   );
 }
