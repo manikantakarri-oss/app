@@ -320,7 +320,9 @@ def listing(user_tok: str, refresh: bool = False) -> dict:
         state, line = _state(apps.get(e["app_name"]), _progress.get(e["app_name"]))
         app = apps.get(e["app_name"]) or {}
         rows.append({**e, "state": state, "state_note": line, "url": app.get("url") or ""})
-    return {"repo": REPO, "ref": REF, "mcps": rows, "note": note, "acted_as": by}
+    # Name where the list really came from: the shipped catalog when there is one.
+    src = shipped()
+    return {"repo": src.get("repo") or REPO, "ref": src.get("ref") or REF, "mcps": rows, "note": note, "acted_as": by}
 
 
 # --- deploying -----------------------------------------------------------------
