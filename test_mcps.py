@@ -5,6 +5,7 @@ Run: python test_mcps.py
 from __future__ import annotations
 
 import io
+import os
 import tarfile
 import time
 
@@ -68,6 +69,36 @@ REPO = {
     "custom/app.yaml": "command: []",
     "broken/mcp.yaml": "name: [unclosed",
 }
+
+
+@case("a release's shipped catalog is the catalog: only its MCPs are listed and installed, binaries intact, no GitHub")
+def _():
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        for slug in ("report", "weather"):
+            os.makedirs(os.path.join(d, slug, "data"))
+            with open(os.path.join(d, slug, "mcp.yaml"), "w") as f:
+                f.write("name: %s\n" % slug.title())
+            with open(os.path.join(d, slug, "app.yaml"), "w") as f:
+                f.write("command: [python, server.py]\n")
+        with open(os.path.join(d, "report", "data", "t.pptx"), "wb") as f:
+            f.write(bytes(range(256)))
+        with open(os.path.join(d, "CATALOG.json"), "w") as f:
+            json.dump({"ref": "v1.0.0", "sha": "a" * 40, "mcps": ["report", "weather"]}, f)
+        saved_local, saved_cache = mcps.LOCAL, mcps._cache
+        saved_http = mcps.http
+        mcps.http = lambda: (_ for _ in ()).throw(AssertionError("GitHub must not be read"))
+        mcps.LOCAL, mcps._cache = d, None
+        try:
+            entries, _note = mcps.catalog(refresh=True)
+            assert [e["slug"] for e in entries] == ["report", "weather"]
+            files = dict((rel, data) for rel, data in mcps._files(mcps._archive(), "report"))
+            assert files.get("data/t.pptx") == bytes(range(256)) and "mcp.yaml" in files, sorted(files)
+            assert mcps.shipped()["ref"] == "v1.0.0"
+        finally:
+            mcps.LOCAL, mcps._cache, mcps.http = saved_local, saved_cache, saved_http
 
 
 @case("catalog lists folders with an mcp.yaml, skips the template and unreadable cards")

@@ -1,11 +1,6 @@
 # Deploy (or roll back) one release of the Agent Portal to one client.
 # Started by the Portal Deployer; can also be run by hand from the Actions tab.
-#
-# The job runs inside the client's GitHub Environment (`client-<name>`), so only
-# this job sees that client's service principal secret. The deploy tooling is
-# always taken from this branch; the portal code shipped is the release tag
-# (`git archive <version>` in deployer/workspace.py), which is why the checkout
-# fetches all tags.
+# The steps live in deploy-one.yml, shared with rollout.yml.
 name: Deploy to client
 run-name: "${{ inputs.action }} ${{ inputs.version }} to ${{ inputs.client }} [${{ inputs.deploy_id }}]"
 
@@ -36,57 +31,16 @@ on:
         type: string
         default: ""
 
-# One deploy per client at a time; a second one waits rather than racing.
-concurrency:
-  group: deploy-${{ inputs.client }}
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.client }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - uses: databricks/setup-cli@main
-
-      - name: Install
-        run: pip install "httpx>=0.27"
-
-      # Inputs are passed as environment variables, never pasted into the
-      # script, and deploy.py validates every one of them.
-      - name: Deploy
-        env:
-          CLIENT: ${{ inputs.client }}
-          VERSION: ${{ inputs.version }}
-          ACTION: ${{ inputs.action }}
-          DEPLOY_ID: ${{ inputs.deploy_id }}
-          ACTOR: ${{ inputs.actor || github.actor }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-          APP_NAME: ${{ vars.APP_NAME }}
-          PORTAL_LOG_TABLE: ${{ vars.PORTAL_LOG_TABLE }}
-          WAREHOUSE_ID: ${{ vars.WAREHOUSE_ID }}
-          USERS_GROUP: ${{ vars.USERS_GROUP }}
-          SHARE_AGENTS: ${{ vars.SHARE_AGENTS }}
-          BRAND_NAME: ${{ vars.BRAND_NAME }}
-          BRAND_COLOR: ${{ vars.BRAND_COLOR }}
-          BRAND_LOGO: ${{ vars.BRAND_LOGO }}
-          HOME_HOST: ${{ vars.HOME_HOST }}
-          HOME_CLIENT_ID: ${{ vars.HOME_CLIENT_ID }}
-          HOME_CLIENT_SECRET: ${{ secrets.HOME_CLIENT_SECRET }}
-          HOME_WAREHOUSE_ID: ${{ vars.HOME_WAREHOUSE_ID }}
-          REGISTRY_SCHEMA: ${{ vars.REGISTRY_SCHEMA }}
-        run: python deployer/deploy.py
+    uses: ./.github/workflows/deploy-one.yml
+    with:
+      client: ${{ inputs.client }}
+      version: ${{ inputs.version }}
+      action: ${{ inputs.action }}
+      deploy_id: ${{ inputs.deploy_id }}
+      actor: ${{ inputs.actor }}
+    secrets: inherit

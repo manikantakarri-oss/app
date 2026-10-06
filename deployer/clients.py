@@ -5,6 +5,7 @@ record (versions, deploys, health). Route handlers in app.py stay thin.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -86,6 +87,20 @@ def clean(payload: dict, *, new: bool) -> dict:
         if g and g.lower() not in ("-", "none") and not GROUP_RE.match(g):
             raise DeployError("That group name is not valid.")
         out["USERS_GROUP"] = g
+    if "mcp_catalog" in payload:
+        ref = (payload.get("mcp_catalog") or "").strip()
+        if ref and (not re.match(r"^[A-Za-z0-9._/-]{1,100}$", ref) or ".." in ref):
+            raise DeployError("That catalog version is not valid.")
+        out["MCP_CATALOG"] = ref  # empty = always the newest version
+    if "mcp_tools" in payload:
+        tools = payload.get("mcp_tools")
+        if tools in (None, "*", "all"):
+            out["MCP_ALLOW"] = ""  # empty = every tool in the catalog
+        else:
+            slugs = [str(t).strip() for t in (tools or []) if str(t).strip()]
+            if any(not re.match(r"^[a-z0-9][a-z0-9-]{0,60}$", t) for t in slugs):
+                raise DeployError("A tool name is not valid.")
+            out["MCP_ALLOW"] = ",".join(sorted(set(slugs))) or "none"
     if "share_agents" in payload:
         # Stored only when switched off; empty (the default) means share them.
         out["SHARE_AGENTS"] = "" if payload.get("share_agents") in (True, "true", "all", "") else "none"
@@ -139,6 +154,9 @@ def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: 
         "warehouse_id": v.get("WAREHOUSE_ID", ""),
         "users_group": v.get("USERS_GROUP", ""),
         "share_agents": (v.get("SHARE_AGENTS") or "").lower() != "none",
+        # "" = newest catalog version; tools None = all, [] = none.
+        "mcp_catalog": v.get("MCP_CATALOG", ""),
+        "mcp_tools": None if not v.get("MCP_ALLOW") else ([] if v["MCP_ALLOW"] == "none" else v["MCP_ALLOW"].split(",")),
         "brand_name": v.get("BRAND_NAME", ""),
         "brand_color": v.get("BRAND_COLOR", ""),
         "brand_logo": v.get("BRAND_LOGO", ""),
@@ -355,20 +373,91 @@ def status(deploy_id: str) -> dict:
     last = steps[-1]
     run = None
     if last["status"] not in registry.FINAL:
+        rid = (last.get("detail") or {}).get("rollout_id") or (steps[0].get("detail") or {}).get("rollout_id")
         try:
-            run = ghub.find_run("deploy.yml", deploy_id)
+            run = ghub.find_run("rollout.yml", rid) if rid else ghub.find_run("deploy.yml", deploy_id)
         except DeployError:
             run = None
         ended = run and run["status"] == "completed"
         stale = not run and (_now() - (_ts(steps[0]["at"]) or _now())) > START_GRACE
         if ended or stale:
-            why = ("The GitHub job ended (%s) before it finished the deploy." % run["conclusion"]) if ended else \
-                "GitHub did not start the job. Check the repository's Actions settings and the client's environment."
+            if ended and rid:
+                why = "Not deployed: the rollout stopped before this client's turn (an earlier client failed, or it was cancelled)."
+            elif ended:
+                why = "The GitHub job ended (%s) before it finished the deploy." % run["conclusion"]
+            else:
+                why = "GitHub did not start the job. Check the repository's Actions settings and the client's environment."
             registry.safe(registry.record, deploy_id, last["client"], action=last["action"], version=last["version"],
                           from_version=last.get("from_version") or "", status="failed", step="Stopped", message=why,
                           actor=last.get("actor") or "", run_url=(run or {}).get("url") or last.get("run_url") or "")
             steps = registry.steps(deploy_id) or steps
     return {"steps": steps, "current": steps[-1], "run": run}
+
+
+PARALLEL = (1, 3, 5, 10)
+
+
+def rollout(version: str, envs: list, canary: str, parallel: int, actor: str) -> dict:
+    """Deploy `version` to many clients in two waves (rollout.yml): `canary`
+    first, then the rest `parallel` at a time, stopping at the first failure.
+    Every client's deploy is recorded before GitHub is asked, so the queue is
+    visible at once. Clients that cannot take part are skipped with the reason."""
+    if not VERSION_RE.match(version or "") or version not in {r["version"] for r in ghub.releases()}:
+        raise DeployError("%s is not a published release." % version, 404)
+    if parallel not in PARALLEL:
+        raise DeployError("Choose 1, 3, 5 or 10 clients at a time.")
+    known = set(ghub.clients())
+    wanted = list(dict.fromkeys(e for e in envs if isinstance(e, str)))
+    if not wanted:
+        raise DeployError("Choose at least one client.")
+    if len(wanted) > 250:
+        raise DeployError("A rollout can include up to 250 clients.")
+    deploys = registry.latest_deploys(limit=2000)
+    current, busy = {}, set()
+    for d in deploys:  # newest first
+        if d["status"] == "succeeded" and d["client"] not in current:
+            current[d["client"]] = d["version"]
+        started = _ts(d.get("started") or d.get("at"))
+        if d["status"] not in registry.FINAL and started and _now() - started < dt.timedelta(hours=1):
+            busy.add(d["client"])
+    f_vars = {e: _pool.submit(ghub.variables, e) for e in wanted if e in known}
+    f_sec = {e: _pool.submit(ghub.secret_set, e, SECRET) for e in wanted if e in known}
+    go, skipped = [], []
+    for e in wanted:
+        if e not in known:
+            skipped.append({"client": e, "reason": "No such client."})
+        elif current.get(e) == version:
+            skipped.append({"client": e, "reason": "Already on %s." % version})
+        elif e in busy:
+            skipped.append({"client": e, "reason": "A deploy is already running."})
+        else:
+            v = f_vars[e].result()
+            if not (v.get("DATABRICKS_HOST") and v.get("DATABRICKS_CLIENT_ID")) or not f_sec[e].result():
+                skipped.append({"client": e, "reason": "Settings are incomplete."})
+            else:
+                go.append(e)
+    if not go:
+        return {"rollout_id": "", "started": [], "skipped": skipped}
+    canary = canary if canary in go else go[0]
+    rid = str(uuid.uuid4())
+    plan = []
+    for e in [canary] + [x for x in go if x != canary]:
+        did = str(uuid.uuid4())
+        wave = "canary" if e == canary else "rest"
+        registry.record(did, e, action="deploy", version=version, from_version=current.get(e, ""), status="requested",
+                        step="Waiting for its turn in the rollout" if wave == "rest" else "First in the rollout (canary)",
+                        actor=actor, detail={"rollout_id": rid, "wave": wave})
+        plan.append({"client": e, "deploy_id": did})
+    try:
+        ghub.dispatch("rollout.yml", {"version": version, "rollout_id": rid, "canary": json.dumps(plan[0]),
+                                      "rest": json.dumps(plan[1:]), "parallel": str(parallel), "actor": actor})
+    except DeployError as exc:
+        for p in plan:
+            registry.safe(registry.record, p["deploy_id"], p["client"], action="deploy", version=version,
+                          status="failed", step="GitHub did not start the rollout", message=str(exc), actor=actor,
+                          detail={"rollout_id": rid})
+        raise
+    return {"rollout_id": rid, "started": [p["client"] for p in plan], "canary": canary, "skipped": skipped}
 
 
 def check_now(env: str, actor: str) -> dict:
@@ -393,6 +482,14 @@ def check_result(env: str, check_id: str) -> dict:
         return {"done": True, "check": None, "error": "The check job ended (%s) without a result." % run["conclusion"],
                 "run": run}
     return {"done": False, "run": run}
+
+
+def mcp_catalog(ref: str = "") -> dict:
+    """Catalog versions, and the tools in `ref` (default: the newest)."""
+    versions = ghub.mcp_versions()
+    ref = ref or (versions[0] if versions else "main")
+    return {"repo": ghub.mcp_repo(), "versions": versions, "latest": versions[0] if versions else "main",
+            "ref": ref, "tools": ghub.mcp_tools(ref)}
 
 
 def releases() -> dict:

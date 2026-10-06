@@ -447,6 +447,82 @@ def _():
     assert ws.check(api, "agent-portal", "v1.0.0", http=some)["status"] == "healthy"
 
 
+def catalog_tar(files: dict) -> bytes:
+    """A gzipped tarball shaped like GitHub's: everything under one top folder."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, body in files.items():
+            data = body if isinstance(body, bytes) else body.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+SAMPLE = {
+    "mcps-abc/README.md": "catalog readme",
+    "mcps-abc/_template/mcp.yaml": "name: Template",
+    "mcps-abc/report/mcp.yaml": "name: Report",
+    "mcps-abc/report/app.yaml": "command: [python, server.py]",
+    "mcps-abc/report/standalones/template.pptx": bytes(range(256)),
+    "mcps-abc/report/tests/test_x.py": "skip me",
+    "mcps-abc/report/__pycache__/x.pyc": "skip me",
+    "mcps-abc/weather/mcp.yaml": "name: Weather",
+    "mcps-abc/weather/app.yaml": "command: [python, s.py]",
+    "mcps-abc/../escape.txt": "outside",
+}
+
+
+@case("MCP catalog: only the client's MCPs ship (binaries intact); template, tests and caches never; nothing escapes")
+def _():
+    with tempfile.TemporaryDirectory() as d:
+        got = ws.stage_mcps(catalog_tar(SAMPLE), ["report"], d, {"ref": "v1.0.0", "sha": "a" * 40})
+        files = sorted(os.path.relpath(os.path.join(r, f), d).replace("\\", "/") for r, _, fs in os.walk(d) for f in fs)
+        assert got == ["report"]
+        assert files == ["mcp_catalog/CATALOG.json", "mcp_catalog/report/app.yaml", "mcp_catalog/report/mcp.yaml",
+                         "mcp_catalog/report/standalones/template.pptx"], files
+        with open(os.path.join(d, "mcp_catalog", "report", "standalones", "template.pptx"), "rb") as f:
+            assert f.read() == bytes(range(256))
+        assert not os.path.exists(os.path.join(os.path.dirname(d), "escape.txt"))
+    with tempfile.TemporaryDirectory() as d:
+        assert ws.stage_mcps(catalog_tar(SAMPLE), None, d, {}) == ["report", "weather"]  # None = all
+    with tempfile.TemporaryDirectory() as d:
+        assert ws.stage_mcps(catalog_tar(SAMPLE), [], d, {}) == []  # [] = none
+
+
+@case("MCP catalog version: empty means the newest version tag (else main), always pinned to a commit")
+def _():
+    sha = "b" * 40
+
+    def gh(path):
+        if "/tags" in path:
+            return [{"name": "v1.2.0"}, {"name": "v1.10.0"}, {"name": "v1.9.0-beta"}, {"name": "nightly"}]
+        return {"sha": sha} if "/commits/" in path else {}
+    assert ws.mcp_ref("o/mcps", "", gh) == ("v1.10.0", sha)
+    assert ws.mcp_ref("o/mcps", "v1.2.0", gh) == ("v1.2.0", sha)
+    assert ws.mcp_ref("o/mcps", "", lambda p: [] if "/tags" in p else {"sha": sha}) == ("main", sha)
+    raises(ws.mcp_ref, "o/mcps", "../etc", gh, contains="not valid")
+    raises(ws.mcp_ref, "o/mcps", "v9.9.9", lambda p: {} if "/commits/" in p else [], contains="not found")
+
+
+@case("a deploy ships the pinned catalog, records it, and warns about MCPs the catalog does not have")
+def _():
+    c = {**CFG, "mcp_repo": "o/mcps", "mcp_ref": "", "mcp_allow": ["report", "gone-tool"], "mcp_token": ""}
+    rows = []
+    rec = deploy.Recorder(c, write=lambda **kw: rows.append(kw))
+    gh = lambda p: [{"name": "v1.0.0"}] if "/tags" in p else {"sha": "c" * 40}  # noqa: E731
+    with tempfile.TemporaryDirectory() as d:
+        deploy.ship_mcps(c, rec, d, gh_get=gh, download=lambda sha: catalog_tar(SAMPLE))
+        assert os.path.isdir(os.path.join(d, "mcp_catalog", "report"))
+    assert rec.mcps == {"ref": "v1.0.0", "sha": "c" * 12, "mcps": ["report"]}
+    assert any("gone-tool" in w for w in rec.warnings), rec.warnings
+    assert deploy._allow("") is None and deploy._allow("*") is None and deploy._allow("none") == [] \
+        and deploy._allow("a, b") == ["a", "b"]
+
+
 # --- GitHub --------------------------------------------------------------------
 
 @case("secrets are sealed with the environment's public key (only the private key opens them)")
@@ -601,6 +677,47 @@ def _():
         w.deploys[0]["deploy_id"] = CFG["deploy_id"]
         clients.status(CFG["deploy_id"])
         assert not w.rows  # still within the grace period and no run yet: leave it
+
+
+@case("rollout: canary first, everyone recorded before GitHub is asked, ineligible clients skipped with reasons")
+def _():
+    import json as _json
+
+    now = clients._now().isoformat()
+    with World([row("v1.1.0", "succeeded", "d-on", now), row("v1.0.0", "running", "d-busy", now)]) as w:
+        w.deploys[0]["client"] = "client-on"
+        w.deploys[1]["client"] = "client-busy"
+        envs = ["client-on", "client-busy", "client-half", "client-a", "client-b", "client-c"]
+        ghub.clients = lambda: envs
+        ghub.variables = lambda env: {} if env == "client-half" else {"DATABRICKS_HOST": "https://x", "DATABRICKS_CLIENT_ID": "c"}
+        out = clients.rollout("v1.1.0", envs + ["client-ghost"], "client-b", 5, "me@x.io")
+        reasons = {s["client"]: s["reason"] for s in out["skipped"]}
+        assert reasons == {"client-on": "Already on v1.1.0.", "client-busy": "A deploy is already running.",
+                           "client-half": "Settings are incomplete.", "client-ghost": "No such client."}, reasons
+        assert out["started"] == ["client-b", "client-a", "client-c"] and out["canary"] == "client-b"
+        wf, inputs = w.dispatched[0]
+        assert wf == "rollout.yml" and _json.loads(inputs["canary"])["client"] == "client-b"
+        assert [x["client"] for x in _json.loads(inputs["rest"])] == ["client-a", "client-c"] and inputs["parallel"] == "5"
+        recorded = [kw for _, kw in w.rows]
+        assert len(recorded) == 3 and all(r["status"] == "requested" and r["actor"] == "me@x.io" for r in recorded)
+        assert {r["detail"]["wave"] for r in recorded} == {"canary", "rest"}
+        # a canary that is not eligible falls back to the first eligible client
+        assert clients.rollout("v1.1.0", ["client-a", "client-c"], "client-on", 3, "me")["canary"] == "client-a"
+        raises(clients.rollout, "v1.1.0", ["client-a"], "", 7, "me", contains="at a time")
+        raises(clients.rollout, "v9.9.9", ["client-a"], "", 5, "me", contains="not a published release")
+
+
+@case("rollout: a client whose turn never came is recorded as stopped once the rollout ends")
+def _():
+    r = row("v1.1.0", "requested", at="2020-01-01T00:00:00Z")
+    r["deploy_id"] = CFG["deploy_id"]
+    r["detail"] = {"rollout_id": "r-1", "wave": "rest"}
+    with World([r]) as w:
+        asked = []
+        ghub.find_run = lambda wf, marker: asked.append((wf, marker)) or {"status": "completed", "conclusion": "failure", "url": "u"}
+        clients.status(CFG["deploy_id"])
+        assert asked == [("rollout.yml", "r-1")]
+        assert "rollout stopped" in w.rows[0][1]["message"]
 
 
 @case("the app: only the deployer group gets in, and the actor comes from the token")

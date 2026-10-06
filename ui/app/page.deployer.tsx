@@ -269,7 +269,7 @@ export default function DeployerPage() {
           ) : view.page === "setup" ? (
             <SetupPage setup={setup} err={setupErr} onRefresh={setSetup} />
           ) : (
-            <ReleasesPage releases={releases} err={releasesErr} clients={clients?.clients || []} repo={session.repo} onOpen={(id) => go({ page: "client", id })} />
+            <ReleasesPage releases={releases} err={releasesErr} clients={clients?.clients || []} repo={session.repo} onOpen={(id) => go({ page: "client", id })} onWatch={() => { loadClients(); go({ page: "clients" }); }} />
           )}
         </main>
       </div>

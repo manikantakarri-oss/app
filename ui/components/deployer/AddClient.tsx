@@ -7,6 +7,7 @@ import { ErrorBox, Select, Spinner } from "@/components/bits";
 import { CheckIcon, CloseIcon } from "@/components/icons";
 import { CopyButton, Field, hostLabel, latestStable } from "./parts";
 import { Brand, BrandingEditor } from "./Branding";
+import { ToolsChoice, ToolsPicker } from "./Tools";
 
 const slugOf = (s: string) =>
   s
@@ -67,6 +68,7 @@ export function AddClient({
   const [catalog, setCatalog] = useState("");
   const [everyone, setEveryone] = useState(true);
   const [share, setShare] = useState(true);
+  const [tools, setTools] = useState<ToolsChoice>({ catalog: "", tools: null });
   const [group, setGroup] = useState("");
   const [appName, setAppName] = useState("agent-portal");
   const [warehouse, setWarehouse] = useState("");
@@ -137,6 +139,8 @@ export function AddClient({
         warehouse_id: warehouse.trim(),
         users_group: everyone ? "" : group.trim(),
         share_agents: share,
+        mcp_catalog: tools.catalog,
+        mcp_tools: tools.tools,
         brand_name: brand.name.trim(),
         brand_color: brand.color,
         brand_logo: brand.logo,
@@ -320,6 +324,11 @@ export function AddClient({
           >
             {null}
           </Choice>
+          <div className="rounded-xl p-4" style={{ border: "1px solid var(--line)" }}>
+            <p className="font-semibold">Tools (MCPs)</p>
+            <p className="mb-3 text-[13px] muted">Which ready-made tools their portal can add to assistants.</p>
+            <ToolsPicker value={tools} onChange={setTools} />
+          </div>
           <div>
             <p className="text-[13px] font-medium muted">Who can open the portal</p>
             <div className="seg mt-2" role="group" aria-label="Who can open the portal">
@@ -393,6 +402,10 @@ export function AddClient({
           <Summary title="Options" onEdit={() => go(2)}>
             <Row k="Chat history">{history ? `On, in ${catalog}.agent_portal` : "Off"}</Row>
             <Row k="Who can open it">{everyone ? "Everyone in their workspace" : `The group ${group.trim()}`}</Row>
+            <Row k="Tools">
+              {tools.tools === null ? "All tools" : tools.tools.length ? tools.tools.join(", ") : "None"}
+              <span className="faint"> · {tools.catalog ? `catalog ${tools.catalog}` : "newest catalog"}</span>
+            </Row>
             <Row k="Assistants">{share ? "Shared with the portal on each deploy" : "Shared by hand in their workspace"}</Row>
             <Row k="App">
               <span className="font-mono text-[13px]">{appName}</span>

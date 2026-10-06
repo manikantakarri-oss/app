@@ -187,6 +187,72 @@ def stage(repo: str, version: str, out: str, log_table: str, warehouse: str, bra
     return out
 
 
+# --- the client's MCP catalog -------------------------------------------------
+
+MCP_SKIP = {"__pycache__", ".git", ".venv", "tests", ".pytest_cache", ".ruff_cache", ".github"}
+MCP_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")
+MCP_REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
+
+
+def mcp_ref(repo: str, wanted: str, gh_get) -> tuple[str, str]:
+    """(ref, commit sha) of the MCP catalog to ship. `wanted` empty = the newest
+    version tag (vX.Y.Z), or main while the catalog has no tags. Resolving to a
+    commit makes the release exact: what was tested is what the client runs,
+    and a rollback brings the old catalog back too."""
+    ref = wanted
+    if not ref:
+        tags = [t.get("name", "") for t in (gh_get("/repos/%s/tags?per_page=100" % repo) or [])]
+        versions = sorted((t for t in tags if VERSION_RE.match(t)), key=_vkey, reverse=True)
+        ref = versions[0] if versions else "main"
+    if not MCP_REF_RE.match(ref) or ".." in ref:
+        raise DeployError("MCP catalog version %r is not valid." % ref)
+    sha = (gh_get("/repos/%s/commits/%s" % (repo, ref)) or {}).get("sha", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise DeployError("MCP catalog version %s was not found in %s." % (ref, repo), 404)
+    return ref, sha
+
+
+def _vkey(v: str):
+    main, _, pre = v[1:].partition("-")
+    return tuple(int(x) for x in main.split(".")) + ((1,) if not pre else (0, pre))
+
+
+def stage_mcps(blob: bytes, allow, out: str, info: dict) -> list:
+    """Unpack the MCPs this client may use into `<release>/mcp_catalog/`, from
+    the catalog tarball (top folder `<repo>-<sha>/`, one folder per MCP).
+    `allow` None = every MCP; [] = none. Folders starting `_` or `.` (the
+    template) are never shipped, nor tests or caches. Every path is checked so
+    an archive cannot write outside the folder. Returns the shipped slugs."""
+    import io
+    import tarfile
+
+    root = os.path.join(out, "mcp_catalog")
+    os.makedirs(root, exist_ok=True)
+    shipped = set()
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
+        for m in tf.getmembers():
+            if not m.isfile():
+                continue
+            parts = m.name.split("/")
+            if len(parts) < 3 or any(p in ("", ".", "..") for p in parts) or m.name.startswith("/"):
+                continue
+            slug, rel = parts[1], parts[2:]
+            if slug.startswith((".", "_")) or not MCP_SLUG_RE.match(slug) or any(p in MCP_SKIP for p in rel):
+                continue
+            if allow is not None and slug not in allow:
+                continue
+            dest = os.path.join(root, slug, *rel)
+            if not os.path.abspath(dest).startswith(os.path.abspath(root) + os.sep):
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(tf.extractfile(m).read())
+            shipped.add(slug)
+    with open(os.path.join(root, "CATALOG.json"), "w", encoding="utf-8") as f:
+        json.dump({**info, "mcps": sorted(shipped)}, f, indent=2)
+    return sorted(shipped)
+
+
 def client_yaml(text: str, log_table: str, warehouse: str, brand_name: str = "", brand_color: str = "") -> str:
     """app.yaml with this client's env block. Only `env:` is replaced; the
     command and the rest stay as released. Free text (the portal name) is

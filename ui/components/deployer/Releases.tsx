@@ -6,6 +6,7 @@ import { Card, Find, Quiet, Tag } from "@/components/Ops";
 import { ErrorBox, Pager, usePage } from "@/components/bits";
 import { TagIcon } from "@/components/icons";
 import { Notes } from "./Notes";
+import { RolloutDialog } from "./Rollout";
 import { ago, ClientMark, CopyButton, ExtLink, latestStable, OpenRow, PageHead, when } from "./parts";
 
 type Who = { id: string; name: string; brand_logo?: string; brand_color?: string };
@@ -19,14 +20,17 @@ export function ReleasesPage({
   clients,
   repo,
   onOpen,
+  onWatch,
 }: {
   releases: Release[] | null;
   err: string;
   clients: Client[];
   repo: string;
   onOpen: (id: string) => void;
+  onWatch: () => void;
 }) {
   const [q, setQ] = useState("");
+  const [rolling, setRolling] = useState<Release | null>(null);
   const [open, setOpen] = useState("");
   const byId = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
   const s = q.trim().toLowerCase();
@@ -117,7 +121,14 @@ export function ReleasesPage({
                           {gone.length > 5 ? ` and ${gone.length - 5} more` : ""}).
                         </span>
                       ) : null}
-                      {r.url ? <ExtLink href={r.url}>Open on GitHub</ExtLink> : null}
+                      <span className="flex flex-wrap items-center gap-3">
+                        {clients.length ? (
+                          <button type="button" className="btn btn-primary !min-h-[34px] !text-[13px]" onClick={() => setRolling(r)}>
+                            Roll out {r.version}…
+                          </button>
+                        ) : null}
+                        {r.url ? <ExtLink href={r.url}>Open on GitHub</ExtLink> : null}
+                      </span>
                     </span>
                   }
                 />
@@ -126,6 +137,17 @@ export function ReleasesPage({
           </ul>
         )}
       </Card>
+      {rolling ? (
+        <RolloutDialog
+          release={rolling}
+          clients={clients}
+          onClose={() => setRolling(null)}
+          onWatch={() => {
+            setRolling(null);
+            onWatch();
+          }}
+        />
+      ) : null}
     </>
   );
 }

@@ -62,6 +62,12 @@ REF = os.environ.get("PORTAL_MCP_REF", "main")
 TOKEN = os.environ.get("PORTAL_MCP_TOKEN", "")
 
 SOURCE_ROOT = "/Workspace/Shared/agent-portal-mcps"
+# A release made by the Portal Deployer carries this client's MCPs, at its
+# pinned catalog version, in `mcp_catalog/` (with CATALOG.json saying which
+# version). When it is there it is the catalog: only these MCPs are listed or
+# installed, nothing is read from GitHub, and no token is needed. Without it
+# (a checkout, older releases) the repo is read as before.
+LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_catalog")
 CACHE_SECONDS = 300
 MAX_ARCHIVE = 60 * 1024 * 1024
 # The workspace import API takes the file base64-encoded inside a 10 MB request.
@@ -90,7 +96,36 @@ _progress: dict[str, dict] = {}
 
 # --- reading the repo --------------------------------------------------------
 
+def _local_archive() -> bytes:
+    """The shipped catalog folder packed the way GitHub serves the repo (one top
+    folder, then a folder per MCP), so everything downstream reads it unchanged."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for root, dirs, files in os.walk(LOCAL):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            for name in sorted(files):
+                full = os.path.join(root, name)
+                rel = os.path.relpath(full, LOCAL).replace(os.sep, "/")
+                if "/" not in rel:  # CATALOG.json and other top-level files are not MCPs
+                    continue
+                tf.add(full, arcname="catalog/" + rel)
+    return buf.getvalue()
+
+
+def shipped() -> dict:
+    """Which catalog version this release carries ({} when it reads the repo)."""
+    try:
+        with open(os.path.join(LOCAL, "CATALOG.json"), encoding="utf-8") as f:
+            import json
+
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 def _archive() -> bytes:
+    if os.path.isdir(LOCAL):
+        return _local_archive()
     headers = {"Accept": "application/x-gzip"}
     if TOKEN:
         headers["Authorization"] = "Bearer " + TOKEN

@@ -35,6 +35,7 @@ import {
 } from "./parts";
 import { Notes } from "./Notes";
 import { BrandingEditor } from "./Branding";
+import { ToolsPicker } from "./Tools";
 
 const FINAL = ["succeeded", "failed", "rolled_back"];
 const POLL_MS = 4000;
@@ -423,6 +424,11 @@ function Overview({
           foot={
             <>
               {live ? `Live since ${ago(live.at)}, deployed by ${person(live.actor)}.` : c.version ? "Running in their workspace." : "Not deployed yet."}
+              {live?.detail?.mcp_catalog ? (
+                <span className="mt-1 block">
+                  Tools: {live.detail.mcp_catalog.mcps.length} from MCP catalog {live.detail.mcp_catalog.ref}
+                </span>
+              ) : null}
               {last && last !== live && last.status !== "succeeded" ? (
                 <span className="mt-1 flex flex-wrap items-center gap-1.5">
                   Last attempt: {verb(last)} {last.version} <DeployTag row={last} /> {ago(last.started || last.at)}
@@ -991,6 +997,8 @@ function Settings({
     warehouse_id: c.warehouse_id,
     users_group: c.users_group,
     share_agents: c.share_agents,
+    mcp_catalog: c.mcp_catalog,
+    mcp_tools: c.mcp_tools,
     brand_name: c.brand_name,
     brand_color: c.brand_color,
     brand_logo: c.brand_logo,
@@ -1018,7 +1026,7 @@ function Settings({
     try {
       const changed: ClientForm = {};
       (Object.keys(f) as (keyof ClientForm)[]).forEach((k) => {
-        if (f[k] !== initial[k]) (changed as Record<string, unknown>)[k] = f[k];
+        if (JSON.stringify(f[k]) !== JSON.stringify(initial[k])) (changed as Record<string, unknown>)[k] = f[k];
       });
       await dapi.edit(c.id, changed);
       setMsg(changed.secret ? "Saved. The new secret is used from the next deploy or check." : "Saved.");
@@ -1067,6 +1075,17 @@ function Settings({
             value={{ name: f.brand_name || "", color: f.brand_color || "", logo: f.brand_logo || "" }}
             onChange={(b) => {
               setF({ ...f, brand_name: b.name, brand_color: b.color, brand_logo: b.logo });
+              setMsg("");
+            }}
+          />
+        </div>
+      </Card>
+      <Card title="Tools (MCPs)" sub="Which tools their portal offers when building assistants, from which catalog version. Applied on the next deploy.">
+        <div className="p-5">
+          <ToolsPicker
+            value={{ catalog: f.mcp_catalog || "", tools: f.mcp_tools === undefined ? null : f.mcp_tools }}
+            onChange={(t) => {
+              setF({ ...f, mcp_catalog: t.catalog, mcp_tools: t.tools });
               setMsg("");
             }}
           />

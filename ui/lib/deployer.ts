@@ -24,7 +24,14 @@ export type DeployRow = {
   message: string;
   actor: string;
   run_url: string;
-  detail: { warnings?: string[]; health?: HealthDetail; rolled_back_to?: string; url?: string };
+  detail: {
+    warnings?: string[];
+    health?: HealthDetail;
+    rolled_back_to?: string;
+    url?: string;
+    /** The MCP catalog this deploy shipped. */
+    mcp_catalog?: { ref: string; sha: string; mcps: string[] } | null;
+  };
   at: string;
   started?: string;
 };
@@ -73,6 +80,9 @@ export type Client = {
   users_group: string;
   /** Share their assistants with the portal on each deploy (default on). */
   share_agents: boolean;
+  /** MCP catalog version ("" = always the newest) and tools (null = all). */
+  mcp_catalog: string;
+  mcp_tools: string[] | null;
   brand_name: string;
   brand_color: string;
   /** PNG data URL, or "". */
@@ -122,6 +132,8 @@ export type ClientForm = {
   warehouse_id?: string;
   users_group?: string;
   share_agents?: boolean;
+  mcp_catalog?: string;
+  mcp_tools?: string[] | null;
   brand_name?: string;
   brand_color?: string;
   brand_logo?: string;
@@ -169,5 +181,17 @@ export const dapi = {
       `/api/clients/${enc(id)}/check/${enc(checkId)}`
     ),
   releases: () => send<{ releases: Release[]; repo: string }>("GET", "/api/releases"),
+  mcps: (ref = "") =>
+    send<{ repo: string; versions: string[]; latest: string; ref: string; tools: { slug: string; name: string; description: string; version: string }[] }>(
+      "GET",
+      `/api/mcps${ref ? `?ref=${enc(ref)}` : ""}`
+    ),
+  rollout: (version: string, clients: string[], canary: string, parallel: number) =>
+    send<{ rollout_id: string; started: string[]; canary?: string; skipped: { client: string; reason: string }[] }>("POST", "/api/rollouts", {
+      version,
+      clients,
+      canary,
+      parallel,
+    }),
   setup: (fresh = false) => send<Setup>("GET", `/api/setup${fresh ? "?fresh=true" : ""}`),
 };

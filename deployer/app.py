@@ -147,6 +147,21 @@ def rollback(env: str, payload: dict = Body(default={}), x_forwarded_access_toke
     return clients.start(env, (payload.get("version") or "").strip(), "rollback", who["user_name"])
 
 
+@app.post("/api/rollouts")
+def start_rollout(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Deploy one version to many clients: a canary first, then the rest in a wave."""
+    who = allowed(x_forwarded_access_token)
+    try:
+        parallel = int(payload.get("parallel") or 5)
+    except (TypeError, ValueError):
+        parallel = 0
+    out = clients.rollout((payload.get("version") or "").strip(), payload.get("clients") or [],
+                          (payload.get("canary") or "").strip(), parallel, who["user_name"])
+    log.info("rollout %s of %s to %d clients by %s", out.get("rollout_id"), payload.get("version"),
+             len(out.get("started") or []), who["user_name"])
+    return out
+
+
 @app.post("/api/clients/{env}/check")
 def check(env: str, x_forwarded_access_token: str = Header(None)):
     who = allowed(x_forwarded_access_token)
@@ -163,6 +178,13 @@ def check_result(env: str, check_id: str, x_forwarded_access_token: str = Header
 def deploy_status(deploy_id: str, x_forwarded_access_token: str = Header(None)):
     allowed(x_forwarded_access_token)
     return clients.status(deploy_id)
+
+
+@app.get("/api/mcps")
+def mcp_catalog(ref: str = "", x_forwarded_access_token: str = Header(None)):
+    """The MCP catalog's versions and the tools in one of them (newest by default)."""
+    allowed(x_forwarded_access_token)
+    return clients.mcp_catalog(ref)
 
 
 @app.get("/api/releases")

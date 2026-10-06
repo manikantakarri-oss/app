@@ -1,0 +1,49 @@
+# Roll a release out to many clients in two waves.
+#
+# Wave 1 is one canary client. Only if it comes up does wave 2 start: every
+# other chosen client, a few at a time, stopping at the first failure (a
+# failed client is put back on its previous version by deploy.py itself).
+# Each client runs in its own GitHub Environment, as a single deploy does.
+# Started by the Portal Deployer, which records every client's deploy first.
+name: Roll out to clients
+run-name: "rollout ${{ inputs.version }} [${{ inputs.rollout_id }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version: {description: "Release tag", required: true, type: string}
+      rollout_id: {description: "Rollout id (the deployer fills it in)", required: true, type: string}
+      canary: {description: 'JSON {"client","deploy_id"} or empty', required: false, type: string, default: ""}
+      rest: {description: 'JSON [{"client","deploy_id"}, ...]', required: true, type: string}
+      parallel: {description: "Clients at a time in wave 2", required: false, type: string, default: "5"}
+      actor: {description: "Who asked", required: false, type: string, default: ""}
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    if: ${{ inputs.canary != '' }}
+    uses: ./.github/workflows/deploy-one.yml
+    with:
+      client: ${{ fromJSON(inputs.canary).client }}
+      version: ${{ inputs.version }}
+      deploy_id: ${{ fromJSON(inputs.canary).deploy_id }}
+      actor: ${{ inputs.actor }}
+    secrets: inherit
+
+  rest:
+    needs: canary
+    if: ${{ always() && (needs.canary.result == 'success' || needs.canary.result == 'skipped') && inputs.rest != '[]' }}
+    strategy:
+      fail-fast: true
+      max-parallel: ${{ fromJSON(inputs.parallel) }}
+      matrix:
+        include: ${{ fromJSON(inputs.rest) }}
+    uses: ./.github/workflows/deploy-one.yml
+    with:
+      client: ${{ matrix.client }}
+      version: ${{ inputs.version }}
+      deploy_id: ${{ matrix.deploy_id }}
+      actor: ${{ inputs.actor }}
+    secrets: inherit

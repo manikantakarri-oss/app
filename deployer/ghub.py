@@ -212,5 +212,61 @@ def find_run(workflow: str, marker: str) -> dict | None:
     return None
 
 
+# --- the MCP catalog ----------------------------------------------------------
+
+def mcp_repo() -> str:
+    r = os.environ.get("MCP_REPO") or "manikantakarri-oss/mcps"
+    if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", r):
+        raise DeployError("MCP_REPO must be owner/name.", 500)
+    return r
+
+
+def mcp_versions() -> list[str]:
+    """The catalog's version tags, newest first."""
+    from workspace import VERSION_RE, _vkey
+
+    tags = [t.get("name", "") for t in (call("GET", "/repos/%s/tags" % mcp_repo(), params={"per_page": 100}) or [])]
+    return sorted((t for t in tags if VERSION_RE.match(t)), key=_vkey, reverse=True)
+
+
+def mcp_tools(ref: str) -> list[dict]:
+    """The MCPs in one catalog version, read from its mcp.yaml cards. A version
+    tag never changes, so it is kept; "main" is re-read after five minutes."""
+    import io
+    import tarfile
+
+    import yaml
+
+    if not re.match(r"^[A-Za-z0-9._/-]{1,100}$", ref) or ".." in ref:
+        raise DeployError("Not a catalog version: %r" % ref, 400)
+    hit = _cache.get("mcp:" + ref)
+    if hit and (hit[0] == 0 or hit[0] > time.time()):
+        return hit[1]
+    headers = {"Authorization": "Bearer " + token()} if os.environ.get("MCP_REPO_TOKEN") is None else \
+        {"Authorization": "Bearer " + os.environ["MCP_REPO_TOKEN"]}
+    try:
+        r = _http.get("https://codeload.github.com/%s/tar.gz/%s" % (mcp_repo(), ref), headers=headers, follow_redirects=True)
+    except httpx.HTTPError as exc:
+        raise DeployError("Could not reach GitHub (%s)." % type(exc).__name__, 502) from exc
+    if r.status_code >= 400:
+        raise DeployError("Could not read MCP catalog %s (HTTP %d)." % (ref, r.status_code), 502)
+    out = []
+    with tarfile.open(fileobj=io.BytesIO(r.content), mode="r:gz") as tf:
+        for m in tf.getmembers():
+            parts = m.name.split("/")
+            if m.isfile() and len(parts) == 3 and parts[2] == "mcp.yaml" and not parts[1].startswith((".", "_")):
+                try:
+                    card = yaml.safe_load(tf.extractfile(m).read()) or {}
+                except yaml.YAMLError:
+                    continue
+                if isinstance(card, dict):
+                    out.append({"slug": parts[1], "name": str(card.get("name") or parts[1]),
+                                "description": " ".join(str(card.get("description") or "").split())[:300],
+                                "version": str(card.get("version") or "")})
+    out.sort(key=lambda t: t["name"].lower())
+    _cache["mcp:" + ref] = (0 if ref.startswith("v") else time.time() + 300, out)
+    return out
+
+
 def actions_url() -> str:
     return "https://github.com/%s/actions" % repo()

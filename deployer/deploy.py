@@ -27,6 +27,7 @@ and HOME_* / REGISTRY_SCHEMA for the record (see home.py, registry.py).
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -38,6 +39,15 @@ import workspace as ws  # noqa: E402
 from common import APP_RE, CLIENT_RE, COLOR_RE, ID_RE, VERSION_RE, Api, DeployError, check_logo, m2m_token  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _allow(raw: str):
+    raw = raw.strip()
+    if raw in ("", "*", "all"):
+        return None
+    if raw.lower() == "none":
+        return []
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
 
 def config(env: dict) -> dict:
@@ -57,6 +67,12 @@ def config(env: dict) -> dict:
         "users_group": "" if (env.get("USERS_GROUP") or "users").lower() in ("-", "none") else (env.get("USERS_GROUP") or "users"),
         # Share the client's assistants with the portal on each deploy unless switched off.
         "share_agents": (env.get("SHARE_AGENTS") or "all").strip().lower() != "none",
+        # The MCP catalog: which repo, which version ("" = newest tag), and which
+        # MCPs this client gets ("" or "*" = all, "none" = none, else a list).
+        "mcp_repo": (env.get("MCP_REPO") or "manikantakarri-oss/mcps").strip(),
+        "mcp_ref": (env.get("MCP_CATALOG") or "").strip(),
+        "mcp_allow": _allow(env.get("MCP_ALLOW") or ""),
+        "mcp_token": env.get("MCP_REPO_TOKEN") or "",
         "brand": {"name": (env.get("BRAND_NAME") or "").strip()[:40], "color": (env.get("BRAND_COLOR") or "").strip(),
                   "logo": (env.get("BRAND_LOGO") or "").strip()},
     }
@@ -136,6 +152,8 @@ def ship(api: Api, c: dict, rec: Recorder, scopes: list[str], workdir: str, **kw
     rec.warnings += ws.grant_access(api, app, c["log_table"], warehouse, c["users_group"], rec.say, c.get("share_agents", True))
     path = ws.release_path(c["client_id"], c["app"], c["version"])
     ws.stage(REPO, c["version"], os.path.join(workdir, "release"), c["log_table"], warehouse, c.get("brand"))
+    if c.get("mcp_repo"):
+        ship_mcps(c, rec, os.path.join(workdir, "release"))
     ws.upload(os.path.join(workdir, "release"), path, rec.say)
     rec.failed_from = True  # the live app changes from here, so a failure puts the old version back
     changed = ws.set_scopes(api, c["app"], app, scopes, rec.say)
@@ -144,6 +162,48 @@ def ship(api: Api, c: dict, rec: Recorder, scopes: list[str], workdir: str, **kw
         ws.restart(api, c["app"], rec.say, **kw)
     rec.say("Checking the portal is up")
     return verify(api, c["app"], c["version"], **kw)
+
+
+def _gh(token: str):
+    import httpx
+
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+
+    def get(path):
+        r = httpx.get("https://api.github.com" + path, headers=headers, timeout=30)
+        if r.status_code >= 400:
+            raise DeployError("GitHub refused %s (HTTP %d)." % (path.split("?")[0], r.status_code), 502)
+        return r.json()
+    return get
+
+
+def ship_mcps(c: dict, rec: Recorder, release: str, gh_get=None, download=None) -> None:
+    """Put this client's MCPs, at its pinned catalog version, inside the release:
+    the portal then lists and installs only these, from its own files, with no
+    GitHub access needed from the client's workspace."""
+    import httpx
+
+    if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", c["mcp_repo"]):
+        raise DeployError("MCP_REPO must be owner/name.")
+    gh_get = gh_get or _gh(c.get("mcp_token", ""))
+    ref, sha = ws.mcp_ref(c["mcp_repo"], c["mcp_ref"], gh_get)
+    if download is None:
+        headers = {"Authorization": "Bearer " + c["mcp_token"]} if c.get("mcp_token") else {}
+        r = httpx.get("https://codeload.github.com/%s/tar.gz/%s" % (c["mcp_repo"], sha), headers=headers,
+                      follow_redirects=True, timeout=120)
+        if r.status_code >= 400:
+            raise DeployError("Could not download the MCP catalog %s (HTTP %d)." % (ref, r.status_code), 502)
+        blob = r.content
+    else:
+        blob = download(sha)
+    shipped = ws.stage_mcps(blob, c["mcp_allow"], release, {"repo": c["mcp_repo"], "ref": ref, "sha": sha})
+    missing = sorted(set(c["mcp_allow"] or []) - set(shipped))
+    if missing:
+        rec.warnings.append("Not in MCP catalog %s, so not included: %s." % (ref, ", ".join(missing)))
+    rec.mcps = {"ref": ref, "sha": sha[:12], "mcps": shipped}
+    rec.say("Including %d tool%s from the MCP catalog %s (%s)" % (len(shipped), "" if len(shipped) == 1 else "s", ref, sha[:7]))
 
 
 def roll_back(api: Api, c: dict, rec: Recorder, reason: str, **kw) -> int:
@@ -177,7 +237,8 @@ def run(c: dict, rec: Recorder, api: Api, scopes: list[str], workdir: str, **kw)
         return 1
     registry.safe(registry.record_health, str(uuid.uuid4()), c["client"], h, c["actor"], c["run_url"])
     note = " (%d warning%s)" % (len(rec.warnings), "" if len(rec.warnings) == 1 else "s") if rec.warnings else ""
-    rec("succeeded", "Live on %s%s" % (c["version"], note), h.get("summary", ""), health=h, url=h.get("url", ""))
+    rec("succeeded", "Live on %s%s" % (c["version"], note), h.get("summary", ""), health=h, url=h.get("url", ""),
+        mcp_catalog=getattr(rec, "mcps", None))
     return 0
 
 

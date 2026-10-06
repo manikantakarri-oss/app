@@ -1,0 +1,78 @@
+# Deploy (or roll back) one release to one client. Called by deploy.yml (one
+# client) and rollout.yml (many, in waves), so both run exactly the same steps.
+#
+# The job runs inside the client's GitHub Environment (`client-<name>`), so only
+# this job sees that client's service principal secret. The deploy tooling is
+# always taken from this branch; the portal code shipped is the release tag
+# (`git archive <version>` in deployer/workspace.py), which is why the checkout
+# fetches all tags.
+name: Deploy one client
+
+on:
+  workflow_call:
+    inputs:
+      client: {required: true, type: string}
+      version: {required: true, type: string}
+      action: {required: false, type: string, default: deploy}
+      deploy_id: {required: true, type: string}
+      actor: {required: false, type: string, default: ""}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: ${{ inputs.client }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.client }}
+    timeout-minutes: 60
+    # One deploy per client at a time; a second one waits rather than racing.
+    # (Only here: the same group on the calling workflow would wait on itself.)
+    concurrency:
+      group: deploy-${{ inputs.client }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: databricks/setup-cli@main
+
+      - name: Install
+        run: pip install "httpx>=0.27"
+
+      # Inputs are passed as environment variables, never pasted into the
+      # script, and deploy.py validates every one of them.
+      - name: Deploy
+        env:
+          CLIENT: ${{ inputs.client }}
+          VERSION: ${{ inputs.version }}
+          ACTION: ${{ inputs.action }}
+          DEPLOY_ID: ${{ inputs.deploy_id }}
+          ACTOR: ${{ inputs.actor || github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          PORTAL_LOG_TABLE: ${{ vars.PORTAL_LOG_TABLE }}
+          WAREHOUSE_ID: ${{ vars.WAREHOUSE_ID }}
+          USERS_GROUP: ${{ vars.USERS_GROUP }}
+          SHARE_AGENTS: ${{ vars.SHARE_AGENTS }}
+          MCP_REPO: ${{ vars.MCP_REPO }}
+          MCP_CATALOG: ${{ vars.MCP_CATALOG }}
+          MCP_ALLOW: ${{ vars.MCP_ALLOW }}
+          MCP_REPO_TOKEN: ${{ secrets.MCP_REPO_TOKEN }}
+          BRAND_NAME: ${{ vars.BRAND_NAME }}
+          BRAND_COLOR: ${{ vars.BRAND_COLOR }}
+          BRAND_LOGO: ${{ vars.BRAND_LOGO }}
+          HOME_HOST: ${{ vars.HOME_HOST }}
+          HOME_CLIENT_ID: ${{ vars.HOME_CLIENT_ID }}
+          HOME_CLIENT_SECRET: ${{ secrets.HOME_CLIENT_SECRET }}
+          HOME_WAREHOUSE_ID: ${{ vars.HOME_WAREHOUSE_ID }}
+          REGISTRY_SCHEMA: ${{ vars.REGISTRY_SCHEMA }}
+        run: python deployer/deploy.py
