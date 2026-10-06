@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, SourceItem } from "@/lib/api";
-import { Spinner } from "./bits";
+import { Select, Spinner, useLoad } from "./bits";
 import { Access, AccessStep, Finished, Section, WizardFrame } from "./BuilderParts";
 
 const ALL_STEPS = [
@@ -299,8 +299,6 @@ function DataStep({
 }) {
   const [warehouses, setWarehouses] = useState<SourceItem[] | null>(null);
   const [whNote, setWhNote] = useState("");
-  const [catalogs, setCatalogs] = useState<SourceItem[]>([]);
-  const [schemas, setSchemas] = useState<SourceItem[]>([]);
   const [found, setFound] = useState<SourceItem[]>([]);
   const [catalog, setCatalog] = useState("");
   const [schema, setSchema] = useState("");
@@ -319,15 +317,16 @@ function DataStep({
         setWarehouses([]);
         setWhNote(e.message);
       });
-    api.builderSources("catalogs").then((d) => setCatalogs(d.items)).catch(() => {});
   }, []);
 
   useEffect(() => {
-    setSchemas([]);
     setSchema("");
     setFound([]);
-    if (catalog) api.builderSources("schemas", catalog).then((d) => setSchemas(d.items)).catch(() => {});
   }, [catalog]);
+  const catsL = useLoad(() => api.builderSources("catalogs"), []);
+  const schsL = useLoad(catalog ? () => api.builderSources("schemas", catalog) : null, [catalog]);
+  const catalogs = catsL.data?.items || [];
+  const schemas = schsL.data?.items || [];
 
   useEffect(() => {
     setFound([]);
@@ -363,23 +362,20 @@ function DataStep({
 
       <label className="block">
         <span className="label">1. Which SQL warehouse should run the questions?</span>
-        <select
-          className="field mt-2 max-w-xl"
+        <Select
+          className="mt-2 max-w-xl"
           value={warehouse}
-          onChange={(e) => setWarehouse(e.target.value)}
-          disabled={warehouses === null}
-        >
-          <option value="">{warehouses === null ? "Loading…" : warehouses.length ? "Choose one…" : "None found"}</option>
-          {warehouses?.map((w) => (
-            <option key={w.value} value={w.value}>
-              {w.label}
-              {w.detail ? ` (${w.detail.trim()})` : ""}
-            </option>
-          ))}
-          {warehouse && !warehouses?.some((w) => w.value === warehouse) && warehouses !== null ? (
-            <option value={warehouse}>{warehouse}</option>
-          ) : null}
-        </select>
+          onChange={setWarehouse}
+          loading={warehouses === null}
+          placeholder="Choose one…"
+          empty="No warehouses found"
+          options={[
+            ...(warehouses || []).map((w) => ({ value: w.value, label: w.label, detail: w.detail?.trim() || undefined })),
+            ...(warehouse && warehouses !== null && !warehouses.some((w) => w.value === warehouse)
+              ? [{ value: warehouse, label: warehouse }]
+              : []),
+          ]}
+        />
         <span className="help">
           A warehouse is the compute that runs the data queries. If you are not sure, pick the one your team
           already uses.
@@ -417,25 +413,19 @@ function DataStep({
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="text-[13px] font-medium muted">Catalog (the top-level area)</span>
-              <select className="field mt-1" value={catalog} onChange={(e) => setCatalog(e.target.value)}>
-                <option value="">Choose…</option>
-                {catalogs.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+              <Select className="mt-1" value={catalog} onChange={setCatalog} options={catalogs} loading={catsL.loading} />
             </label>
             <label className="block">
               <span className="text-[13px] font-medium muted">Schema (the group inside it)</span>
-              <select className="field mt-1" value={schema} onChange={(e) => setSchema(e.target.value)} disabled={!catalog}>
-                <option value="">Choose…</option>
-                {schemas.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
+              <Select
+                className="mt-1"
+                value={schema}
+                onChange={setSchema}
+                options={schemas}
+                disabled={!catalog}
+                loading={schsL.loading}
+                placeholder={catalog ? "Choose…" : "Pick a catalog first"}
+              />
             </label>
           </div>
 

@@ -51,7 +51,7 @@ import time
 
 import yaml
 
-from builder import AGENTS, _add_tools, _check_id, act
+from builder import AGENTS, _add_tools, _check_id, act, list_tools
 from dbx import DbxError, app_token, call, http
 
 log = logging.getLogger("portal.mcps")
@@ -604,8 +604,8 @@ def deploy_and_attach(agent_id: str, pending: list, who: dict, user_tok: str, vo
                 time.sleep(10)
             if volumes and e["needs"]["volumes"]:
                 grant_volumes([e], volumes, user_tok)  # before the first call can reach for a folder
-            existing, _ = act("GET", AGENTS + "/" + agent_id + "/tools", user_tok)
-            used = {(t.get("tool_id") or (t.get("name") or "").rsplit("/", 1)[-1]) for t in existing.get("tools") or []}
+            existing, _ = list_tools(agent_id, user_tok)
+            used = {(t.get("tool_id") or (t.get("name") or "").rsplit("/", 1)[-1]) for t in existing}
             _add_tools(agent_id, [p["tool"]], used, user_tok)
             log.info("MCP %s is running and was added to assistant %s", e["slug"], agent_id)
         except DbxError as exc:

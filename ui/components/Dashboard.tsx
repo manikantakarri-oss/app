@@ -354,7 +354,7 @@ function Mine({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[15px] font-medium">{middleShort(a.display_name, 40)}</span>
-                        <span className="mt-0.5 line-clamp-2 block text-[13px] faint">{a.blurb || k.label}</span>
+                        <span className="mt-0.5 line-clamp-2 text-[13px] faint">{a.blurb || k.label}</span>
                       </span>
                     </button>
                   );

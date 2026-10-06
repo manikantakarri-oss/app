@@ -228,13 +228,14 @@ def ensure_table() -> None:
     with _ready_lock:
         if _ready:
             return
-        store.ensure_schema(QUALIFIED, _run)
-        _run(
+        store.ensure_table(
+            QUALIFIED,
             "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
             "at TIMESTAMP, actor STRING, action STRING, category STRING, target STRING, label STRING, "
-            "status STRING, http_status INT, ms INT, error_kind STRING, error STRING, detail STRING)"
+            "status STRING, http_status INT, ms INT, error_kind STRING, error STRING, detail STRING)",
+            "DELETE FROM " + QUALIFIED + " WHERE at < current_timestamp() - INTERVAL " + str(RETENTION_DAYS) + " DAYS",
+            _run,
         )
-        _run("DELETE FROM " + QUALIFIED + " WHERE at < current_timestamp() - INTERVAL " + str(RETENTION_DAYS) + " DAYS")
         _ready = True
 
 

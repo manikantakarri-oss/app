@@ -633,6 +633,25 @@ h1, h2, h3, h4,
   .status-ready { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
   .status-wait { background: var(--bubble); color: var(--ink-faint); }
 
+  /* Selectable cards (the builder's tool picker): the assistant-card look, with
+     a check in the corner; chosen = brand border and tint, blocked = dimmed. */
+  .pick-card {
+    @apply flex h-full w-full flex-col rounded-xl p-4 text-left transition;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .pick-card:hover:not([data-blocked="true"]) { border-color: color-mix(in srgb, var(--brand) 55%, var(--line)); box-shadow: var(--shadow); }
+  .pick-card:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .pick-card[data-on="true"] { border-color: var(--brand); background: color-mix(in srgb, var(--brand-soft) 60%, var(--surface)); }
+  .pick-card[data-blocked="true"] { opacity: .55; cursor: not-allowed; }
+  .pick-check {
+    @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition;
+    border: 1.5px solid var(--line);
+    background: var(--surface);
+    color: var(--brand-ink);
+  }
+  .pick-card[data-on="true"] .pick-check { background: var(--brand); border-color: var(--brand); }
+
   /* Recent conversation tiles on the home page. */
   .recent-tile {
     @apply flex w-full min-w-0 items-start gap-3 rounded-xl p-4 text-left transition;
@@ -734,3 +753,63 @@ h1, h2, h3, h4,
   .agent-card, .agent-card .go { transition: none; }
   .agent-card:hover:not(:disabled) { transform: none; }
 }
+
+/* Select (bits.tsx): the themed replacement for the native <select>. The list
+   is as wide as its field and positioned against the window (never clipped). */
+.select-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease;
+}
+.select-btn > svg { flex-shrink: 0; color: var(--ink-faint); transition: transform .15s ease; }
+.select-btn[data-open] > svg { transform: rotate(180deg); }
+.select-btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
+.select-btn[data-open] { border-color: var(--brand); }
+.select-btn:disabled { opacity: .55; cursor: not-allowed; }
+.select-pop {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+.select-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-faint);
+}
+.select-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 14px;
+  color: var(--ink);
+}
+.select-list { overflow-y: auto; padding: 4px; overscroll-behavior: contain; }
+.select-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.select-opt[data-active] { background: color-mix(in srgb, var(--brand-soft) 70%, transparent); }
+.select-opt[aria-selected="true"] { background: var(--brand-soft); }
+.select-opt[aria-disabled] { opacity: .5; cursor: not-allowed; }
+.select-btn[data-loading] { opacity: 1; cursor: progress; }
+.select-btn[data-loading] .select-spin { color: var(--brand); }

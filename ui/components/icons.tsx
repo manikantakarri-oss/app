@@ -268,6 +268,12 @@ export const ChevronRightIcon = ({ size }: P) => (
   </Svg>
 );
 
+export const ChevronDownIcon = ({ size }: P) => (
+  <Svg size={size}>
+    <path d="m6 9.5 6 6 6-6" />
+  </Svg>
+);
+
 export const ClockIcon = ({ size }: P) => (
   <Svg size={size}>
     <circle cx="12" cy="12" r="8" />

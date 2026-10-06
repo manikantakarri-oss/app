@@ -1,7 +1,8 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
-import { SearchIcon } from "./icons";
+import { ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { CheckIcon, ChevronDownIcon, SearchIcon } from "./icons";
 
 /** Page through a list. Resets to the first page whenever `reset` changes
  *  (a new filter, search or period), and never points past the last page. */
@@ -194,5 +195,285 @@ export function SectionHead({ title, children }: { title: string; children?: Rea
       <h2 className="text-[15px] font-semibold tracking-[-0.01em]">{title}</h2>
       {children ? <p className="mt-1 text-sm muted max-w-2xl">{children}</p> : null}
     </div>
+  );
+}
+
+/** Fetch a list for a dropdown and say whether it is still on its way.
+ *  `load` is null while there is nothing to fetch yet (e.g. no catalog
+ *  chosen). A reply that arrives after the inputs changed is dropped, so a
+ *  slow answer for an old choice never replaces the current list. */
+export function useLoad<T>(load: (() => Promise<T>) | null, deps: unknown[]) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setData(null);
+    setError("");
+    if (!load) {
+      setLoading(false);
+      return;
+    }
+    let live = true;
+    setLoading(true);
+    load()
+      .then((d) => live && setData(d))
+      .catch((e) => live && setError(e?.message || String(e)))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return { data, loading, error };
+}
+
+export type SelectOption = {
+  value: string;
+  label: string;
+  /** A second, quieter line (a description). Never widens the list. */
+  detail?: string;
+  disabled?: boolean;
+  /** Short reason shown on the right of a disabled option, e.g. "Added". */
+  note?: string;
+};
+
+/** The one dropdown every form uses, in place of the browser's own `<select>`.
+ *
+ *  The browser draws a native list as wide as its longest option and ignores
+ *  the theme, so a long description ran far past the form (seen with app
+ *  descriptions). This list is exactly as wide as its field, cuts long names
+ *  with "…" (full text on hover), puts descriptions on a second line, follows
+ *  light/dark, and gets a search box once there are more than 8 options. It is
+ *  rendered at the end of the page and positioned against the window, so a
+ *  card with `overflow-hidden` never clips it, and opens upwards when there is no room below. Keyboard: arrows,
+ *  Home/End, Enter, Escape.
+ *
+ *  `loading` (the options are still being fetched) shows a spinner and
+ *  "Loading…" and keeps it shut; once loaded with nothing to offer it says
+ *  `empty` instead of opening an empty list. Pair it with `useLoad`. */
+export function Select({
+  value,
+  onChange,
+  options,
+  placeholder = "Choose…",
+  disabled,
+  className = "",
+  ariaLabel,
+  searchFrom = 9,
+  loading = false,
+  empty = "Nothing found",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: SelectOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  ariaLabel?: string;
+  searchFrom?: number;
+  loading?: boolean;
+  empty?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(-1);
+  const [box, setBox] = useState<{ left: number; width: number; top?: number; bottom?: number; max: number } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const id = useId();
+  const chosen = options.find((o) => o.value === value);
+  const none = !loading && !disabled && options.length === 0;
+  const shut = disabled || loading || none;
+  const label = loading ? "Loading…" : chosen ? chosen.label : none ? empty : placeholder;
+  const searchable = options.length >= searchFrom;
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? options.filter((o) => (o.label + " " + (o.detail || "") + " " + o.value).toLowerCase().includes(needle))
+    : options;
+
+  const place = useCallback(() => {
+    const r = btn.current?.getBoundingClientRect();
+    if (!r) return;
+    const below = window.innerHeight - r.bottom - 12;
+    const above = r.top - 12;
+    const up = below < 240 && above > below;
+    const max = Math.max(160, Math.min(340, up ? above : below));
+    setBox(
+      up
+        ? { left: r.left, width: r.width, bottom: window.innerHeight - r.top + 4, max }
+        : { left: r.left, width: r.width, top: r.bottom + 4, max },
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    const onMove = (e: Event) => {
+      if (list.current && e.target instanceof Node && list.current.contains(e.target)) return;
+      place();
+    };
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!btn.current?.contains(t) && !list.current?.contains(t)) setOpen(false);
+    };
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open, place]);
+
+  useEffect(() => {
+    if (!open) return;
+    setQ("");
+    setActive(Math.max(0, options.findIndex((o) => o.value === value)));
+    if (searchable) setTimeout(() => search.current?.focus(), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (shut) setOpen(false);
+  }, [shut]);
+
+  useEffect(() => {
+    list.current?.querySelector(`[data-i="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  function pick(o: SelectOption | undefined) {
+    if (!o || o.disabled) return;
+    onChange(o.value);
+    setOpen(false);
+    btn.current?.focus();
+  }
+
+  function step(from: number, dir: 1 | -1) {
+    for (let i = from + dir; i >= 0 && i < shown.length; i += dir) if (!shown[i].disabled) return i;
+    return from;
+  }
+
+  function onKey(e: React.KeyboardEvent) {
+    if (!open) {
+      if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+        e.preventDefault();
+        setOpen(true);
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+      btn.current?.focus();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((a) => step(a, 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((a) => step(a, -1));
+    } else if (e.key === "Home" && !searchable) {
+      e.preventDefault();
+      setActive(step(-1, 1));
+    } else if (e.key === "End" && !searchable) {
+      e.preventDefault();
+      setActive(step(shown.length, -1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      pick(shown[active]);
+    } else if (e.key === "Tab") {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={btn}
+        type="button"
+        className={`field select-btn ${className}`}
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        aria-label={ariaLabel}
+        disabled={shut}
+        aria-busy={loading || undefined}
+        data-loading={loading || undefined}
+        data-open={open || undefined}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={onKey}
+        title={chosen ? chosen.label + (chosen.detail ? " — " + chosen.detail : "") : undefined}
+      >
+        <span className={`min-w-0 flex-1 truncate text-left ${chosen && !loading ? "" : "faint"}`}>{label}</span>
+        {loading ? (
+          <span aria-hidden className="select-spin h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        ) : (
+          <ChevronDownIcon size={16} />
+        )}
+      </button>
+      {/* In a portal: inside the field's <label>, a click on an option would
+          also "click" the field and open the list again. */}
+      {open && box ? createPortal(
+        <div
+          ref={list}
+          className="select-pop"
+          style={{ left: box.left, width: box.width, top: box.top, bottom: box.bottom, maxHeight: box.max }}
+          onKeyDown={onKey}
+        >
+          {searchable ? (
+            <div className="select-search">
+              <SearchIcon size={15} />
+              <input
+                ref={search}
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setActive(0);
+                }}
+                placeholder={`Search ${options.length.toLocaleString()} options`}
+                aria-label="Search the options"
+                aria-controls={id}
+              />
+            </div>
+          ) : null}
+          <div id={id} role="listbox" className="select-list" tabIndex={-1}>
+            {shown.length === 0 ? (
+              <p className="px-3 py-3 text-[13px] faint">
+                {options.length ? `Nothing matches “${q.trim()}”.` : "Nothing to choose from."}
+              </p>
+            ) : null}
+            {shown.map((o, i) => (
+              <div
+                key={o.value}
+                data-i={i}
+                role="option"
+                aria-selected={o.value === value}
+                aria-disabled={o.disabled || undefined}
+                data-active={i === active || undefined}
+                className="select-opt"
+                title={o.label + (o.detail ? " — " + o.detail : "")}
+                onMouseEnter={() => !o.disabled && setActive(i)}
+                onClick={() => pick(o)}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-medium">{o.label}</span>
+                  {o.detail ? <span className="line-clamp-2 text-[12.5px] leading-[1.35] faint">{o.detail}</span> : null}
+                </span>
+                {o.note ? <span className="shrink-0 text-[12px] faint">{o.note}</span> : null}
+                {o.value === value ? (
+                  <span className="shrink-0" style={{ color: "var(--brand)" }}>
+                    <CheckIcon size={15} />
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+    </>
   );
 }

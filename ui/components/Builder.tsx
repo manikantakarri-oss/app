@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, BuilderTool, FileSettings, McpEntry, SourceItem, ToolType } from "@/lib/api";
-import { CardList, Empty, ErrorBox, Spinner } from "./bits";
+import { CardList, Empty, ErrorBox, Select, Spinner, useLoad } from "./bits";
 import { middleShort } from "@/lib/people";
 import { PlusIcon } from "./icons";
 import { Access, AccessStep, Done, Finished, Section, VolumeField, WizardFrame } from "./BuilderParts";
 import { KnowledgeWizard } from "./KnowledgeBuilder";
 import { GenieWizard } from "./GenieBuilder";
-import { isCatalogTool, McpPicker, ToolProgress, ToolWait } from "./McpCatalog";
+import { ChosenRow, isCatalogTool, McpPicker, ToolProgress, ToolWait } from "./McpCatalog";
 
 type Row = Awaited<ReturnType<typeof api.builderAgents>>["agents"][number];
 
@@ -743,68 +743,62 @@ function Abilities({
 
       <McpPicker catalog={catalog} err={catalogErr} note={catalogNote} tools={tools} setTools={setTools} />
 
-      <h4 className="pt-2 text-[15px] font-semibold">Other abilities</h4>
-      {others.length === 0 ? (
-        <p className="rounded-xl p-4 text-[15px] muted" style={{ background: "var(--canvas)" }}>
-          Nothing else added.
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {others.map((t) => {
-            const a = ABILITY[t.type];
-            return (
-              <li key={t.type + t.ref} className="rounded-xl p-4" style={{ border: "1px solid var(--line)" }}>
-                <div className="flex flex-wrap items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[15px] font-semibold">{a?.title || t.type.replace(/_/g, " ")}</p>
-                    <p className="break-all text-[13px] faint">{t.ref}</p>
-                  </div>
-                  {!t.readonly ? (
-                    <button
-                      type="button"
-                      className="btn btn-quiet"
-                      onClick={() => setTools(tools.filter((x) => x !== t))}
-                    >
-                      Remove
-                    </button>
-                  ) : (
-                    <span className="text-[13px] faint">Added in Databricks. Left as it is.</span>
-                  )}
-                </div>
-                {!t.readonly ? (
-                  <label className="mt-3 block">
-                    <span className="text-[13px] font-medium muted">When should it use this?</span>
-                    <input
-                      className="field mt-1"
-                      value={t.description}
-                      onChange={(e) =>
-                        setTools(tools.map((x) => (x === t ? { ...x, description: e.target.value } : x)))
-                      }
-                      placeholder="For example: when someone asks about the weather"
-                    />
-                  </label>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {adding ? (
-        <AddAbility
-          have={tools}
-          onAdd={(t) => {
-            setTools([...tools, t]);
-            setAdding(false);
-          }}
-          onCancel={() => setAdding(false)}
-        />
-      ) : (
-        <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
-          <PlusIcon size={16} />
-          Add an ability
-        </button>
-      )}
+      {/* Abilities that are not ready-made tools: functions, data, documents and
+          connections in Databricks. Same card and rows as the picker above. */}
+      <section className="card min-w-0 overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+          <div className="min-w-0">
+            <h4 className="text-[15px] font-semibold tracking-[-0.01em]">Other abilities</h4>
+            <p className="mt-0.5 text-[13px] faint">Functions, data, documents and connections already in Databricks.</p>
+          </div>
+          {!adding ? (
+            <button
+              type="button"
+              className="btn btn-quiet !min-h-[34px] !text-[13px]"
+              onClick={() => setAdding(true)}
+            >
+              <PlusIcon size={15} />
+              Add an ability
+            </button>
+          ) : null}
+        </div>
+        {others.length === 0 && !adding ? (
+          <p className="border-t px-5 py-4 text-[13px] faint" style={{ borderColor: "var(--line)" }}>
+            None added.
+          </p>
+        ) : null}
+        {others.length ? (
+          <ul>
+            {others.map((t) => {
+              const a = ABILITY[t.type];
+              return (
+                <ChosenRow
+                  key={t.type + t.ref}
+                  title={a?.title || t.type.replace(/_/g, " ")}
+                  sub={t.ref}
+                  value={t.description}
+                  placeholder="For example: when someone asks about the weather"
+                  onChange={t.readonly ? undefined : (v) => setTools(tools.map((x) => (x === t ? { ...x, description: v } : x)))}
+                  onRemove={t.readonly ? undefined : () => setTools(tools.filter((x) => x !== t))}
+                  locked={t.readonly ? "Added in Databricks. Left as it is." : undefined}
+                />
+              );
+            })}
+          </ul>
+        ) : null}
+        {adding ? (
+          <div className="border-t p-5" style={{ borderColor: "var(--line)" }}>
+            <AddAbility
+              have={tools}
+              onAdd={(t) => {
+                setTools([...tools, t]);
+                setAdding(false);
+              }}
+              onCancel={() => setAdding(false)}
+            />
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }
@@ -818,63 +812,44 @@ function AddAbility({
   onAdd: (t: BuilderTool) => void;
   onCancel: () => void;
 }) {
-  const [types, setTypes] = useState<ToolType[]>([]);
   const [kind, setKind] = useState("");
-  const [catalogs, setCatalogs] = useState<SourceItem[]>([]);
-  const [schemas, setSchemas] = useState<SourceItem[]>([]);
   const [catalog, setCatalog] = useState("");
   const [schema, setSchema] = useState("");
-  const [items, setItems] = useState<SourceItem[]>([]);
   const [pick, setPick] = useState("");
   const [typed, setTyped] = useState("");
   const [desc, setDesc] = useState("");
-  const [note, setNote] = useState("");
-  const [loading, setLoading] = useState(false);
+  const browse = BROWSE.has(kind);
 
-  useEffect(() => {
-    api.builderTypes().then((d) => setTypes(d.types)).catch(() => {});
-  }, []);
+  // Each list says whether it is still loading, so its dropdown can show it.
+  const typesL = useLoad(() => api.builderTypes(), []);
+  const catsL = useLoad(kind && browse ? () => api.builderSources("catalogs") : null, [kind]);
+  const schsL = useLoad(browse && catalog ? () => api.builderSources("schemas", catalog) : null, [kind, catalog]);
+  const itemsL = useLoad(
+    !kind ? null : !browse ? () => api.builderSources(kind) : catalog && schema ? () => api.builderSources(kind, catalog, schema) : null,
+    [kind, catalog, schema],
+  );
+  const types: ToolType[] = typesL.data?.types || [];
+  const catalogs = catsL.data?.items || [];
+  const schemas = schsL.data?.items || [];
+  const items = itemsL.data?.items || [];
+  const note = itemsL.error || itemsL.data?.note || catsL.error || catsL.data?.note || "";
 
-  // Reset the picker whenever the kind changes.
+  // Reset the choices below whatever changed.
   useEffect(() => {
     setCatalog("");
     setSchema("");
-    setSchemas([]);
-    setItems([]);
     setPick("");
     setTyped("");
-    setNote("");
-    if (!kind) return;
-    setLoading(true);
-    const first = BROWSE.has(kind) ? api.builderSources("catalogs") : api.builderSources(kind);
-    first
-      .then((d) => {
-        if (BROWSE.has(kind)) setCatalogs(d.items);
-        else setItems(d.items);
-        setNote(d.note);
-      })
-      .catch((e) => setNote(e.message))
-      .finally(() => setLoading(false));
   }, [kind]);
-
   useEffect(() => {
-    if (!BROWSE.has(kind) || !catalog) return;
     setSchema("");
-    setItems([]);
-    api.builderSources("schemas", catalog).then((d) => setSchemas(d.items)).catch(() => {});
-  }, [catalog, kind]);
-
-  useEffect(() => {
-    if (!BROWSE.has(kind) || !catalog || !schema) return;
     setPick("");
-    api.builderSources(kind, catalog, schema).then((d) => {
-      setItems(d.items);
-      setNote(d.note);
-    }).catch(() => {});
-  }, [schema, catalog, kind]);
+  }, [catalog]);
+  useEffect(() => setPick(""), [schema]);
 
   const ref = (typed || pick).trim();
-  const taken = have.some((t) => t.type === kind && t.ref === ref);
+  const added = (r: string) => have.some((t) => t.type === kind && t.ref === r);
+  const taken = added(ref);
   const current = types.find((t) => t.type === kind);
   const a = ABILITY[kind];
 
@@ -898,7 +873,17 @@ function AddAbility({
         </button>
       </div>
 
-      {!kind ? (
+      {!kind && typesL.loading ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2" aria-busy>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="card h-[74px] animate-pulse" />
+          ))}
+        </div>
+      ) : !kind && typesL.error ? (
+        <div className="mt-4">
+          <ErrorBox>Could not load the kinds of ability ({typesL.error}).</ErrorBox>
+        </div>
+      ) : !kind ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           {types.map((t) => {
             const info = ABILITY[t.type];
@@ -920,30 +905,25 @@ function AddAbility({
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="text-[13px] font-medium muted">1. Catalog (the top-level area)</span>
-                <select className="field mt-1" value={catalog} onChange={(e) => setCatalog(e.target.value)}>
-                  <option value="">{loading ? "Loading…" : "Choose…"}</option>
-                  {catalogs.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  className="mt-1"
+                  value={catalog}
+                  onChange={setCatalog}
+                  options={catalogs}
+                  loading={catsL.loading}
+                />
               </label>
               <label className="block">
                 <span className="text-[13px] font-medium muted">2. Schema (the group inside it)</span>
-                <select
-                  className="field mt-1"
+                <Select
+                  className="mt-1"
                   value={schema}
-                  onChange={(e) => setSchema(e.target.value)}
+                  onChange={setSchema}
+                  options={schemas}
                   disabled={!catalog}
-                >
-                  <option value="">Choose…</option>
-                  {schemas.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
+                  loading={schsL.loading}
+                  placeholder={catalog ? "Choose…" : "Pick a catalog first"}
+                />
               </label>
             </div>
           ) : null}
@@ -952,25 +932,18 @@ function AddAbility({
             <span className="text-[13px] font-medium muted">
               {BROWSE.has(kind) ? `3. Choose the ${a?.noun}` : `Choose the ${a?.noun}`}
             </span>
-            <select
-              className="field mt-1"
+            <Select
+              className="mt-1"
               value={pick}
-              onChange={(e) => {
-                setPick(e.target.value);
+              onChange={(v) => {
+                setPick(v);
                 setTyped("");
               }}
-              disabled={loading || items.length === 0}
-            >
-              <option value="">
-                {loading ? "Loading…" : items.length ? "Choose one…" : BROWSE.has(kind) ? "Pick a catalog and schema first" : "Nothing found"}
-              </option>
-              {items.map((i) => (
-                <option key={i.value} value={i.value}>
-                  {i.label}
-                  {i.detail ? ` — ${i.detail}` : ""}
-                </option>
-              ))}
-            </select>
+              options={items.map((i) => (added(i.value) ? { ...i, disabled: true, note: "Added" } : i))}
+              loading={itemsL.loading}
+              disabled={browse && !(catalog && schema)}
+              placeholder={browse && !(catalog && schema) ? "Pick a catalog and schema first" : "Choose one…"}
+            />
           </label>
 
           {note ? <p className="help">{note}</p> : null}

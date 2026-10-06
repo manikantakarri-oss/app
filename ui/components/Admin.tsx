@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AdminAgent, api } from "@/lib/api";
-import { CardList, ErrorBox, Notice, Spinner, StatusDot } from "./bits";
+import { CardList, ErrorBox, Notice, Select, Spinner, StatusDot } from "./bits";
 import { middleShort } from "@/lib/people";
 import { ShieldIcon } from "./icons";
 
@@ -216,29 +216,31 @@ function AgentDetail({
           <div className="card p-5">
             <h3 className="text-base font-semibold">Let someone use this assistant</h3>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <select
-                className="field w-auto"
-                aria-label="A team or one person"
+              <Select
+                className="!w-[180px] shrink-0"
+                ariaLabel="A team or one person"
                 value={kind}
-                onChange={(e) => setKind(e.target.value as "group" | "user")}
+                onChange={(v) => setKind(v as "group" | "user")}
                 disabled={readOnly}
-              >
-                <option value="group">A team (group)</option>
-                <option value="user">One person</option>
-              </select>
-              <select
-                className="field w-auto min-w-[220px] flex-1"
-                aria-label="Who to give access to"
-                value={who}
-                onChange={(e) => setWho(e.target.value)}
-                disabled={readOnly}
-              >
-                {options.map((o: any) => (
-                  <option key={o.name} value={o.name}>
-                    {kind === "group" ? o.name : `${o.display} (${o.name})`}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: "group", label: "A team (group)" },
+                  { value: "user", label: "One person" },
+                ]}
+              />
+              <div className="min-w-[220px] flex-1">
+                <Select
+                  ariaLabel="Who to give access to"
+                  value={who}
+                  onChange={setWho}
+                  disabled={readOnly || !options.length}
+                  placeholder={kind === "group" ? "No teams found" : "No people found"}
+                  options={options.map((o: any) =>
+                    kind === "group"
+                      ? { value: o.name, label: o.name }
+                      : { value: o.name, label: o.display || o.name, detail: o.display && o.display !== o.name ? o.name : undefined },
+                  )}
+                />
+              </div>
               <button
                 type="button"
                 className="btn btn-primary"

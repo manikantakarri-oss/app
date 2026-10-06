@@ -53,6 +53,51 @@ def ensure_schema(qualified_table: str, runner=None) -> None:
         pass
 
 
+def ensure_table(qualified_table: str, create_sql: str, cleanup_sql: str = "", runner=None) -> None:
+    """Make sure one of the portal's tables exists, without demanding more than it needs.
+
+    Seen on Azure Databricks: `CREATE TABLE IF NOT EXISTS` is refused with
+    PERMISSION_DENIED when the identity lacks CREATE TABLE on the schema, even
+    though the table is already there. A deployed app whose service principal
+    was only given SELECT/MODIFY on existing tables would then fail on every
+    page. So: try to create; if that is refused, check the table can be read and
+    carry on. Only when the table is neither creatable nor readable is it an
+    error, and then the message names the grants that fix it.
+
+    The retention clean-up (`cleanup_sql`) is best effort for the same reason.
+    """
+    run_ = runner or run
+    ensure_schema(qualified_table, run_)
+    try:
+        run_(create_sql)
+    except DbxError as exc:
+        if "PERMISSION" not in str(exc).upper() and exc.status not in (401, 403):
+            raise
+        try:
+            run_("SELECT 1 FROM " + qualified_table + " LIMIT 1")
+        except DbxError:
+            raise DbxError(grant_hint(qualified_table, str(exc)), 403)
+    if cleanup_sql:
+        try:
+            run_(cleanup_sql)
+        except DbxError:
+            pass
+
+
+def grant_hint(qualified_table: str, cause: str = "") -> str:
+    """Plain words for an admin: what the portal's identity needs, as SQL to run."""
+    parts = [p.strip("`") for p in qualified_table.split(".")]
+    catalog, schema = parts[0], ".".join(parts[:2])
+    who = "`<the app's service principal>`"
+    return (
+        "The portal cannot use its table " + ".".join(parts) + ". A workspace admin can fix this by running:\n"
+        f"GRANT USE CATALOG ON CATALOG {catalog} TO {who};\n"
+        f"GRANT USE SCHEMA, CREATE TABLE, SELECT, MODIFY ON SCHEMA {schema} TO {who};\n"
+        "and giving the service principal CAN_USE on a SQL warehouse."
+        + (f"\n\nDatabricks said: {cause[:240]}" if cause else "")
+    )
+
+
 def _first_warehouse(tok: str) -> str:
     resp = http().get(
         host() + "/api/2.0/sql/warehouses", headers={"Authorization": "Bearer " + tok}, timeout=30

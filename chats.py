@@ -64,15 +64,13 @@ def ensure_table() -> None:
     with _lock:
         if _ready:
             return
-        store.ensure_schema(QUALIFIED)
-        store.run(
+        store.ensure_table(
+            QUALIFIED,
             "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
             "conversation_id STRING, user_name STRING, endpoint STRING, idx INT, "
-            "role STRING, content STRING, meta STRING, created_at TIMESTAMP)"
-        )
-        store.run(
+            "role STRING, content STRING, meta STRING, created_at TIMESTAMP)",
             "DELETE FROM " + QUALIFIED + " WHERE created_at < current_timestamp() - INTERVAL "
-            + str(RETENTION_DAYS) + " DAYS"
+            + str(RETENTION_DAYS) + " DAYS",
         )
         _ready = True
 

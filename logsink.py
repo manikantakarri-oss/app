@@ -70,15 +70,14 @@ def ensure_table() -> None:
     with _ready_lock:
         if _ready:
             return
-        store.ensure_schema(QUALIFIED, _run)
-        _run(
+        store.ensure_table(
+            QUALIFIED,
             "CREATE TABLE IF NOT EXISTS " + QUALIFIED + " ("
             "logged_at TIMESTAMP, level STRING, source STRING, actor STRING, "
-            "method STRING, path STRING, status INT, message STRING)"
-        )
-        _run(
+            "method STRING, path STRING, status INT, message STRING)",
             "DELETE FROM " + QUALIFIED + " WHERE logged_at < current_timestamp() - INTERVAL "
-            + str(RETENTION_DAYS) + " DAYS"
+            + str(RETENTION_DAYS) + " DAYS",
+            _run,
         )
         _ready = True
 

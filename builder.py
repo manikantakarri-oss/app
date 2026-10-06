@@ -87,7 +87,14 @@ TOOL_TYPES: dict[str, dict] = {
     },
 }
 
-MAX_TOOLS = 20
+# No cap on tools per Supervisor Agent. Databricks documents "up to 50 different
+# agents and tools" (Azure Databricks docs, Supervisor Agent, updated 2026-10-02)
+# and its create screen stops there, but the API does not enforce it. Tested live
+# on 2026-10-06 (Azure): one agent took 123 tools (116 UC functions + 7 Genie
+# spaces) added one at a time, listed all 123, and answered a question. More than
+# 50 sub-agents specifically was not tested (only 7 Genie spaces existed).
+# The tools list pages at 100 (`next_page_token`), so always read it with
+# `list_tools`, or edits past 100 tools would miss the rest.
 
 
 def tool_types() -> list:
@@ -127,6 +134,19 @@ def act(method: str, path: str, user_tok: str, **kw) -> tuple[object, str]:
     return call(method, path, app_token(), **kw), "the portal's service identity"
 
 
+def list_tools(agent_id: str, user_tok: str) -> tuple[list, str]:
+    """Every tool on an agent. Databricks returns 100 per page."""
+    tools, token, by = [], "", "you"
+    for _ in range(50):  # 5000 tools; a guard against a token that never ends
+        data, by = act("GET", AGENTS + "/" + agent_id + "/tools", user_tok,
+                       params={"page_token": token} if token else None)
+        tools += data.get("tools") or []
+        token = data.get("next_page_token") or ""
+        if not token:
+            break
+    return tools, by
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
 
@@ -163,8 +183,6 @@ def clean_spec(payload: dict) -> dict:
                 raise DbxError("Not a valid catalog tool: " + mcp[:40], 400)
             tool["mcp"] = mcp
         tools.append(tool)
-    if len(tools) > MAX_TOOLS:
-        raise DbxError("A supervisor can have at most %d tools." % MAX_TOOLS, 400)
 
     return {
         "display_name": name,
@@ -298,9 +316,9 @@ def list_agents(user_tok: str) -> dict:
 def get_agent(agent_id: str, user_tok: str) -> dict:
     _check_id(agent_id)
     agent, by = act("GET", AGENTS + "/" + agent_id, user_tok)
-    tools_data, _ = act("GET", AGENTS + "/" + agent_id + "/tools", user_tok)
+    tools_data, _ = list_tools(agent_id, user_tok)
     tools = []
-    for t in tools_data.get("tools") or []:
+    for t in tools_data:
         kind = t.get("tool_type") or ""
         if kind not in TOOL_TYPES:
             # A tool made in Databricks that this builder cannot edit. Keep it
@@ -415,10 +433,10 @@ def update_agent(agent_id: str, spec: dict, who: dict, user_tok: str) -> dict:
     act("PATCH", AGENTS + "/" + agent_id, user_tok,
         params={"update_mask": "display_name,description,instructions"}, json=body)
 
-    existing, by = act("GET", AGENTS + "/" + agent_id + "/tools", user_tok)
+    existing, by = list_tools(agent_id, user_tok)
     have = {}
     used = set()
-    for t in existing.get("tools") or []:
+    for t in existing:
         tid = t.get("tool_id") or (t.get("name") or "").rsplit("/", 1)[-1]
         used.add(tid)
         have[(t.get("tool_type"), _ref_of(t))] = {"tool_id": tid, "description": t.get("description") or ""}

@@ -2,7 +2,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { api, SourceItem } from "@/lib/api";
-import { ErrorBox } from "./bits";
+import { ErrorBox, Select, useLoad } from "./bits";
 
 /** Pieces shared by the assistant wizard and the Genie wizard, so the two look
  *  and behave identically: the step frame, the access step, the review section
@@ -345,7 +345,6 @@ export function AccessStep({
   const [data, setData] = useState<Awaited<ReturnType<typeof api.builderPrincipals>> | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [kind, setKind] = useState<"group" | "user">("group");
-  const [find, setFind] = useState("");
   const [pick, setPick] = useState("");
   const [typed, setTyped] = useState("");
 
@@ -353,12 +352,12 @@ export function AccessStep({
     api.builderPrincipals().then(setData).catch((e) => setLoadErr(e.message));
   }, []);
 
+  const has = (k: string, p: string) => access.some((a) => a.kind === k && a.principal === p);
+
   const options = (kind === "group"
     ? (data?.groups || []).map((g) => ({ value: g.name, label: g.name }))
-    : (data?.users || []).map((u) => ({ value: u.name, label: `${u.display} (${u.name})` }))
-  ).filter((o) => !find.trim() || o.label.toLowerCase().includes(find.trim().toLowerCase()));
-
-  const has = (k: string, p: string) => access.some((a) => a.kind === k && a.principal === p);
+    : (data?.users || []).map((u) => ({ value: u.name, label: u.display || u.name, detail: u.display && u.display !== u.name ? u.name : undefined }))
+  ).map((o) => (has(kind, o.value) ? { ...o, disabled: true, note: "Added" } : o));
 
   function add(p: string) {
     const who = p.trim();
@@ -407,42 +406,31 @@ export function AccessStep({
         <div className="mt-3 grid gap-3 md:grid-cols-[220px_minmax(0,1fr)_auto] md:items-end">
           <label className="block">
             <span className="text-[13px] font-medium muted">Who</span>
-            <select
-              className="field mt-1"
+            <Select
+              className="mt-1"
               value={kind}
-              onChange={(e) => {
-                setKind(e.target.value as "group" | "user");
+              onChange={(v) => {
+                setKind(v as "group" | "user");
                 setPick("");
-                setFind("");
               }}
-            >
-              <option value="group">A team (group)</option>
-              <option value="user">One person</option>
-            </select>
+              options={[
+                { value: "group", label: "A team (group)" },
+                { value: "user", label: "One person" },
+              ]}
+            />
           </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-[13px] font-medium muted">Search</span>
-              <input
-                className="field mt-1"
-                value={find}
-                onChange={(e) => setFind(e.target.value)}
-                placeholder={kind === "group" ? "Type part of a team name" : "Type a name or email"}
-              />
-            </label>
-            <label className="block">
-              <span className="text-[13px] font-medium muted">Choose</span>
-              <select className="field mt-1" value={pick} onChange={(e) => setPick(e.target.value)} disabled={!options.length}>
-                <option value="">{data === null && !loadErr ? "Loading…" : options.length ? "Choose one…" : "No match"}</option>
-                {options.map((o) => (
-                  <option key={o.value} value={o.value} disabled={has(kind, o.value)}>
-                    {o.label}
-                    {has(kind, o.value) ? " (added)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          <label className="block min-w-0">
+            <span className="text-[13px] font-medium muted">Choose</span>
+            <Select
+              className="mt-1"
+              value={pick}
+              onChange={setPick}
+              options={options}
+              loading={data === null && !loadErr}
+              placeholder={kind === "group" ? "Choose a team…" : "Choose a person…"}
+              empty={kind === "group" ? "No teams found" : "No people found"}
+            />
+          </label>
           <button type="button" className="btn btn-primary" onClick={() => add(pick)} disabled={!pick}>
             Add
           </button>
@@ -510,26 +498,16 @@ export function VolumeField({
   suffix: string;
   onChange: (v: string) => void;
 }) {
-  const [catalogs, setCatalogs] = useState<SourceItem[]>([]);
-  const [schemas, setSchemas] = useState<SourceItem[]>([]);
-  const [volumes, setVolumes] = useState<SourceItem[]>([]);
   const [catalog, setCatalog] = useState("");
   const [schema, setSchema] = useState("");
+  useEffect(() => setSchema(""), [catalog]);
 
-  useEffect(() => {
-    api.builderSources("catalogs").then((d) => setCatalogs(d.items)).catch(() => {});
-  }, []);
-  useEffect(() => {
-    setSchemas([]);
-    setSchema("");
-    setVolumes([]);
-    if (catalog) api.builderSources("schemas", catalog).then((d) => setSchemas(d.items)).catch(() => {});
-  }, [catalog]);
-  useEffect(() => {
-    setVolumes([]);
-    if (catalog && schema)
-      api.builderSources("volume", catalog, schema).then((d) => setVolumes(d.items)).catch(() => {});
-  }, [catalog, schema]);
+  const catsL = useLoad(() => api.builderSources("catalogs"), []);
+  const schsL = useLoad(catalog ? () => api.builderSources("schemas", catalog) : null, [catalog]);
+  const volsL = useLoad(catalog && schema ? () => api.builderSources("volume", catalog, schema) : null, [catalog, schema]);
+  const catalogs = catsL.data?.items || [];
+  const schemas = schsL.data?.items || [];
+  const volumes = volsL.data?.items || [];
 
   const path = value.split(".").length === 3 ? "/Volumes/" + value.split(".").join("/") + suffix : "";
 
@@ -539,41 +517,32 @@ export function VolumeField({
       <div className="mt-2 grid gap-3 sm:grid-cols-3">
         <label className="block">
           <span className="text-[13px] font-medium muted">1. Catalog</span>
-          <select className="field mt-1" value={catalog} onChange={(e) => setCatalog(e.target.value)}>
-            <option value="">Choose…</option>
-            {catalogs.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+          <Select className="mt-1" value={catalog} onChange={setCatalog} options={catalogs} loading={catsL.loading} />
         </label>
         <label className="block">
           <span className="text-[13px] font-medium muted">2. Schema</span>
-          <select className="field mt-1" value={schema} onChange={(e) => setSchema(e.target.value)} disabled={!catalog}>
-            <option value="">Choose…</option>
-            {schemas.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            className="mt-1"
+            value={schema}
+            onChange={setSchema}
+            options={schemas}
+            disabled={!catalog}
+            loading={schsL.loading}
+            placeholder={catalog ? "Choose…" : "Pick a catalog first"}
+          />
         </label>
         <label className="block">
           <span className="text-[13px] font-medium muted">3. Folder</span>
-          <select
-            className="field mt-1"
+          <Select
+            className="mt-1"
             value=""
-            onChange={(e) => e.target.value && onChange(e.target.value)}
+            onChange={(v) => v && onChange(v)}
+            options={volumes}
             disabled={!schema}
-          >
-            <option value="">Choose…</option>
-            {volumes.map((v) => (
-              <option key={v.value} value={v.value}>
-                {v.label}
-              </option>
-            ))}
-          </select>
+            loading={volsL.loading}
+            placeholder={schema ? "Choose…" : "Pick a schema first"}
+            empty="No folders here"
+          />
         </label>
       </div>
 

@@ -141,6 +141,45 @@ def _():
     assert h["recent"][0]["target"] == "no-such-endpoint"
 
 
+@case("tables: a refused CREATE on an existing table is fine; an unreachable table says which grants fix it")
+def _():
+    import store
+    from dbx import DbxError
+
+    def runner(answers):
+        seen = []
+
+        def run(sql, params=None):
+            seen.append(sql.split()[0])
+            for start, outcome in answers:
+                if sql.startswith(start):
+                    if isinstance(outcome, Exception):
+                        raise outcome
+                    return outcome
+            return []
+        return run, seen
+
+    denied = DbxError("PERMISSION_DENIED: User does not have CREATE TABLE on Schema 'c.s'.", 403)
+    # Exists: CREATE refused, SELECT works -> no error, clean-up still attempted.
+    run, seen = runner([("CREATE SCHEMA", denied), ("CREATE TABLE", denied), ("SELECT 1", [[1]])])
+    store.ensure_table("`c`.`s`.`t`", "CREATE TABLE IF NOT EXISTS `c`.`s`.`t` (a INT)", "DELETE FROM `c`.`s`.`t`", run)
+    assert seen == ["CREATE", "CREATE", "SELECT", "DELETE"], seen
+    # Unreachable: a 403 whose message names the grants, not a raw Databricks error.
+    run, _ = runner([("CREATE", denied), ("SELECT 1", DbxError("PERMISSION_DENIED: no SELECT", 403))])
+    try:
+        store.ensure_table("`c`.`s`.`t`", "CREATE TABLE IF NOT EXISTS `c`.`s`.`t` (a INT)", "", run)
+        raise AssertionError("expected an error")
+    except DbxError as exc:
+        assert exc.status == 403 and "GRANT USE CATALOG ON CATALOG c" in str(exc) and "CAN_USE on a SQL warehouse" in str(exc)
+    # Anything that is not a permission problem still surfaces as it was.
+    run, _ = runner([("CREATE TABLE", DbxError("warehouse is stopped", 502))])
+    try:
+        store.ensure_table("`c`.`s`.`t`", "CREATE TABLE IF NOT EXISTS `c`.`s`.`t` (a INT)", "", run)
+        raise AssertionError("expected an error")
+    except DbxError as exc:
+        assert exc.status == 502 and "stopped" in str(exc)
+
+
 @case("durable write: every value is a bound parameter; the table name is the only SQL text")
 def _():
     calls = []

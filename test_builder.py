@@ -193,6 +193,24 @@ def _():
     assert len(redesc) == 1 and redesc[0][4] == {"description": ""}
 
 
+@case("no tool cap, and the tools list is read across pages (Databricks returns 100 at a time)")
+def _():
+    many = [{"type": "uc_function", "ref": "c.s.f%03d" % i, "description": ""} for i in range(130)]
+    assert len(builder.clean_spec({"display_name": "x", "tools": many})["tools"]) == 130
+
+    pages = {"": {"tools": [{"tool_id": "t%d" % i} for i in range(100)], "next_page_token": "p2"},
+             "p2": {"tools": [{"tool_id": "t%d" % i} for i in range(100, 123)]}}
+    asked = []
+
+    def paged(method, path, token, **kw):
+        asked.append((kw.get("params") or {}).get("page_token", ""))
+        return pages[asked[-1]]
+
+    tools, _ = run(paged, builder.list_tools, "abc123", "USER")
+    assert len(tools) == 123, len(tools)
+    assert asked == ["", "p2"], asked
+
+
 @case("invalid agent ids cannot reach the URL")
 def _():
     for bad in ("../x", "a/b", "", "a b"):
