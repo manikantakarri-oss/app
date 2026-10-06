@@ -91,6 +91,9 @@ export type Release = {
 };
 
 export type Check = { label: string; ok: boolean; detail: string };
+/** The connection check: what is in place, who it signed in as, and the
+ *  catalogs that login can see (offered for chat history). */
+export type TestResult = { ok: boolean; checks: Check[]; who: string; catalogs?: string[] };
 
 export type SetupCheck = { key: string; label: string; status: "ok" | "fail" | "blocked"; detail: string; fix: string };
 export type Setup = { ready: boolean; problems: number; checks: SetupCheck[]; repo: string; checked_at: number };
@@ -133,7 +136,7 @@ export const dapi = {
   session: () => send<DeploySession>("GET", "/api/session"),
   clients: () => send<{ clients: Client[]; note: string; repo: string; actions_url: string }>("GET", "/api/clients"),
   client: (id: string) => send<ClientDetail>("GET", `/api/clients/${enc(id)}`),
-  test: (f: ClientForm) => send<{ ok: boolean; checks: Check[]; who: string }>("POST", "/api/clients/test", f),
+  test: (f: ClientForm) => send<TestResult>("POST", "/api/clients/test", f),
   add: (f: ClientForm) => send<{ id: string }>("POST", "/api/clients", f),
   edit: (id: string, f: ClientForm) => send<{ id: string }>("PATCH", `/api/clients/${enc(id)}`, f),
   remove: (id: string) => send<{ ok: boolean }>("DELETE", `/api/clients/${enc(id)}`),

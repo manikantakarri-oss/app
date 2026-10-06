@@ -1,9 +1,9 @@
 "use client";
 
 import { ReactNode, useState } from "react";
-import { Check, dapi, Release } from "@/lib/deployer";
+import { dapi, Release, TestResult } from "@/lib/deployer";
 import { WizardFrame } from "@/components/BuilderParts";
-import { ErrorBox, Spinner } from "@/components/bits";
+import { ErrorBox, Select, Spinner } from "@/components/bits";
 import { CheckIcon, CloseIcon } from "@/components/icons";
 import { CopyButton, Field, hostLabel, latestStable } from "./parts";
 import { Brand, BrandingEditor } from "./Branding";
@@ -58,7 +58,7 @@ export function AddClient({
   const [host, setHost] = useState("");
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
-  const [test, setTest] = useState<{ ok: boolean; checks: Check[]; who: string } | null>(null);
+  const [test, setTest] = useState<TestResult | null>(null);
   const [testErr, setTestErr] = useState("");
   const [testing, setTesting] = useState(false);
   const [history, setHistory] = useState(true);
@@ -81,7 +81,7 @@ export function AddClient({
   const problems = [
     !name.trim() ? "Enter the client's name." : !slugOk ? "Fix the short name." : "",
     !test ? "Check the connection to continue." : "",
-    history && !catalogOk ? "Enter a catalog for chat history, or switch history off." : !everyone && !group.trim() ? "Enter the group name." : !appOk ? "Fix the app name." : "",
+    history && !catalogOk ? "Choose a catalog for chat history, or switch history off." : !everyone && !group.trim() ? "Enter the group name." : !appOk ? "Fix the app name." : "",
     "",
   ];
 
@@ -103,7 +103,12 @@ export function AddClient({
     setTestErr("");
     setTest(null);
     try {
-      setTest(await dapi.test({ host, client_id: clientId.trim(), secret: secret.trim(), app_name: appName, log_table: logTable }));
+      const r = await dapi.test({ host, client_id: clientId.trim(), secret: secret.trim(), app_name: appName, log_table: logTable });
+      setTest(r);
+      // One catalog: nothing to choose. Otherwise a typed name stays, if real.
+      const cats = r.catalogs || [];
+      if (cats.length === 1) setCatalog(cats[0]);
+      else if (catalog && cats.length && !cats.includes(catalog)) setCatalog("");
     } catch (e: any) {
       setTestErr(e.message);
     } finally {
@@ -257,13 +262,22 @@ export function AddClient({
         <div className="space-y-6">
           <Intro title="Options" text="Sensible defaults. Change them only if the client asks." />
           <Choice label="Chat history and dashboards" hint="Keeps each person's conversations and powers the dashboards. Stored in the client's own workspace." on={history} onChange={setHistory}>
-            <Field
-              label="Catalog"
-              hint={catalog && catalogOk ? `Kept in ${catalog}.agent_portal` : "A catalog in their workspace that the service principal may use."}
-              error={catalog && !catalogOk ? "Letters, digits, underscores and dashes only." : ""}
-            >
-              <input className="field font-mono !text-[13px]" value={catalog} onChange={(e) => setCatalog(e.target.value.trim())} placeholder="main" />
-            </Field>
+            {test?.catalogs?.length ? (
+              <Field
+                label="Catalog in their workspace"
+                hint={catalog ? `Kept in ${catalog}.agent_portal, created on the first deploy.` : `${test.catalogs.length} catalogs the service principal can see.`}
+              >
+                <Select value={catalog} onChange={setCatalog} options={test.catalogs.map((c) => ({ value: c, label: c }))} placeholder="Choose a catalog" />
+              </Field>
+            ) : (
+              <Field
+                label="Catalog in their workspace"
+                hint={catalog && catalogOk ? `Kept in ${catalog}.agent_portal` : "The service principal could not list catalogs, so type one it may use."}
+                error={catalog && !catalogOk ? "Letters, digits, underscores and dashes only." : ""}
+              >
+                <input className="field font-mono !text-[13px]" value={catalog} onChange={(e) => setCatalog(e.target.value.trim())} placeholder="Catalog name" />
+              </Field>
+            )}
           </Choice>
           <div>
             <p className="text-[13px] font-medium muted">Who can open the portal</p>
@@ -392,7 +406,7 @@ function Row({ k, children }: { k: string; children: ReactNode }) {
   );
 }
 
-function Checks({ result }: { result: { ok: boolean; checks: Check[]; who: string } }) {
+function Checks({ result }: { result: TestResult }) {
   const bad = result.checks.filter((c) => !c.ok).length;
   return (
     <div className="rounded-xl" style={{ border: "1px solid var(--line)" }} aria-live="polite">

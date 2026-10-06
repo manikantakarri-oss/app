@@ -1035,7 +1035,7 @@ function Settings({
       <Card title="Portal options" sub="Applied on the next deploy.">
         <div className="grid gap-4 p-5 md:grid-cols-2">
           <Field label="Chat history table" hint="catalog.schema.table in their workspace. Empty turns history and dashboards off.">
-            <input className="field font-mono !text-[13px]" value={f.log_table} onChange={set("log_table")} placeholder="main.agent_portal.portal_logs" />
+            <input className="field font-mono !text-[13px]" value={f.log_table} onChange={set("log_table")} placeholder="catalog.agent_portal.portal_logs" />
           </Field>
           <Field label="Who can open the portal" hint="A group in their workspace. Empty means everyone.">
             <input className="field" value={f.users_group} onChange={set("users_group")} placeholder="Everyone" />

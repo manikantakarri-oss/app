@@ -216,7 +216,22 @@ def test(payload: dict, *, http_api=Api) -> dict:
         got = api.call("GET", "/api/2.1/unity-catalog/catalogs/" + cat, quiet_404=True)
         checks.append({"label": "Catalog %s" % cat, "ok": got is not None,
                        "detail": "" if got is not None else "Not found, or the service principal cannot see it."})
-    return {"ok": all(c["ok"] for c in checks), "checks": checks, "who": me.get("displayName") or me.get("userName") or cid}
+    # The catalogs this login can see, so the form offers real names instead
+    # of a guess (system and Databricks' own catalogs left out).
+    catalogs: list[str] = []
+    try:
+        for page in range(10):
+            d = api.call("GET", "/api/2.1/unity-catalog/catalogs", params={"max_results": 200, **({"page_token": token} if page else {})}) or {}
+            catalogs += [c.get("name", "") for c in d.get("catalogs") or []]
+            token = d.get("next_page_token") or ""
+            if not token:
+                break
+    except DeployError:
+        catalogs = []
+    hidden = {"system", "samples", "hive_metastore", "__databricks_internal"}
+    catalogs = sorted({c for c in catalogs if c and c not in hidden and not c.startswith("__")}, key=str.lower)
+    return {"ok": all(c["ok"] for c in checks), "checks": checks, "who": me.get("displayName") or me.get("userName") or cid,
+            "catalogs": catalogs}
 
 
 # --- changing ---------------------------------------------------------------

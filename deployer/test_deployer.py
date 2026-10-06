@@ -221,6 +221,32 @@ def _():
     raises(deploy.config, {**env, "BRAND_LOGO": "data:image/gif;base64,R0lG"}, contains="PNG")
 
 
+@case("the connection check lists the client's real catalogs for chat history, without Databricks' own")
+def _():
+    class Api:
+        def __init__(self, host, token):
+            pass
+
+        def call(self, method, path, params=None, quiet_404=False):
+            if path.endswith("/Me"):
+                return {"displayName": "agent-portal-deployer", "groups": [{"display": "admins"}]}
+            if path == "/api/2.1/unity-catalog/catalogs":
+                if (params or {}).get("page_token"):
+                    return {"catalogs": [{"name": "Zeta"}]}
+                return {"catalogs": [{"name": "workspace"}, {"name": "system"}, {"name": "__databricks_internal"},
+                                     {"name": "mcp-test"}, {"name": "samples"}], "next_page_token": "p2"}
+            if path == "/api/2.0/sql/warehouses":
+                return {"warehouses": [{"id": "x"}]}
+            return {}
+    saved = clients.m2m_token
+    clients.m2m_token = lambda h, c, s: "T"
+    try:
+        out = clients.test({"host": "https://adb-1.2.azuredatabricks.net", "client_id": "abc-1234-5678", "secret": "s"}, http_api=Api)
+    finally:
+        clients.m2m_token = saved
+    assert out["ok"] and out["catalogs"] == ["mcp-test", "workspace", "Zeta"], out["catalogs"]
+
+
 # --- staging -----------------------------------------------------------------
 
 @case("app.yaml: only the env block changes, per client")
