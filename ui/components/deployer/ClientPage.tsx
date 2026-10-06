@@ -316,8 +316,9 @@ export function ClientPage({
             load();
             onChanged();
           }}
-          onApply={async () => {
-            const r = await dapi.deploy(c.id, c.version);
+          latest={latest}
+          onApply={async (version: string) => {
+            const r = await dapi.deploy(c.id, version);
             setWatch(r.deploy_id);
             setTab("overview");
             onChanged();
@@ -885,16 +886,23 @@ function CheckDetail({ row }: { row: HealthRow }) {
 function Settings({
   client: c,
   busy,
+  latest,
   onSaved,
   onApply,
   onRemoved,
 }: {
   client: ClientDetail;
   busy: boolean;
+  latest: string;
   onSaved: () => void;
-  onApply: () => Promise<void>;
+  onApply: (version: string) => Promise<void>;
   onRemoved: () => void;
 }) {
+  // Branding is read by the portal from v1.2.0 on; an older live version
+  // would be redeployed unchanged, so offer the newest version instead.
+  const brandingFrom = "v1.2.0";
+  const tooOld = !!c.version && compareVersions(c.version, brandingFrom) < 0;
+  const applyTo = tooOld ? latest : c.version;
   const initial: ClientForm = {
     name: c.name,
     host: c.host,
@@ -1018,11 +1026,13 @@ function Settings({
       {pending && !dirty ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl px-4 py-3" style={{ border: "1px solid var(--brand)", background: "color-mix(in srgb, var(--brand-soft) 50%, var(--surface))" }}>
           <p className="min-w-0 flex-1 text-[14px]">
-            {c.version
-              ? `Apply the changes to their portal now? This redeploys ${c.version} with the new settings, about a minute.`
-              : "These apply with the first deploy."}
+            {!c.version
+              ? "These apply with the first deploy."
+              : tooOld && applyTo && compareVersions(applyTo, brandingFrom) >= 0
+                ? `${c.version} cannot show branding (it arrived in ${brandingFrom}). Deploy ${applyTo} to apply everything, about a minute.`
+                : `Apply the changes to their portal now? This redeploys ${c.version} with the new settings, about a minute.`}
           </p>
-          {c.version ? (
+          {c.version && applyTo ? (
             <button
               type="button"
               className="btn btn-primary"
@@ -1031,7 +1041,7 @@ function Settings({
                 setApplying(true);
                 setErr("");
                 try {
-                  await onApply();
+                  await onApply(applyTo);
                   setPending(false);
                 } catch (e: any) {
                   setErr(e.message);
@@ -1040,7 +1050,7 @@ function Settings({
                 }
               }}
             >
-              {applying ? "Starting…" : "Apply now"}
+              {applying ? "Starting…" : applyTo !== c.version ? `Deploy ${applyTo}` : "Apply now"}
             </button>
           ) : null}
         </div>
