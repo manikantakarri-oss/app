@@ -193,7 +193,12 @@ export default function Page() {
   const byName = new Map((agents || []).map((a) => [a.name, a]));
   const sideRecents = (recents || []).filter((c) => byName.get(c.endpoint)?.ready).slice(0, 6);
   const shortName = session.display_name.includes("@") ? nameOf(session.display_name) : session.display_name;
-  const role = (session.is_admin ? "Administrator" : "Member") + (session.auth_mode === "local-dev" ? " · local" : "");
+  // The running version, for admins: it is what the deployer shows for this
+  // client, so support can match the two at a glance.
+  const role =
+    (session.is_admin ? "Administrator" : "Member") +
+    (session.auth_mode === "local-dev" ? " · local" : "") +
+    (session.is_admin && session.version ? ` · ${session.version}` : "");
 
   return (
     <Tabs.Root

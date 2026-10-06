@@ -149,7 +149,7 @@ def _require_admin(forwarded):
 def session(x_forwarded_access_token: str = Header(None)):
     who, _ = _who(x_forwarded_access_token)
     events.note(action="opened_portal")
-    return {**who, "auth_mode": auth_mode(), "chat_history": chats.enabled()}
+    return {**who, "auth_mode": auth_mode(), "chat_history": chats.enabled(), "version": VERSION}
 
 
 @app.get("/api/agents")

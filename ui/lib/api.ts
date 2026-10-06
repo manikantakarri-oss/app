@@ -28,6 +28,8 @@ export type Session = {
   is_admin: boolean;
   auth_mode: string;
   chat_history: boolean;
+  /** The release this portal runs (set by the deployer); empty in a checkout. */
+  version?: string;
 };
 
 export type Grant = {
