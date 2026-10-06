@@ -8,6 +8,8 @@ portal, so the scripts run on a bare GitHub runner after one `pip install`.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import time
 
@@ -26,6 +28,10 @@ VERSION_RE = re.compile(r"^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$")
 ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 GROUP_RE = re.compile(r"^[A-Za-z0-9 _.@-]{1,100}$")
 WAREHOUSE_RE = re.compile(r"^[0-9a-f]{16}$")
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+# GitHub caps a variable at 48 KB; the deployer UI shrinks logos well under this.
+LOGO_MAX = 40_000
+PNG_MAGIC = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 
 
 class DeployError(Exception):
@@ -121,3 +127,21 @@ def wait(check, timeout: float, every: float = 10.0, sleep=None, clock=None):
         if clock() >= end:
             return None
         sleep(every)
+
+
+def check_logo(logo: str) -> bytes:
+    prefix = "data:image/png;base64,"
+    if not logo.startswith(prefix):
+        raise DeployError("The logo must be a PNG image.")
+    if len(logo) > LOGO_MAX:
+        raise DeployError("The logo is too large. Use a smaller image (it is stored at up to 256 pixels).")
+    try:
+        raw = base64.b64decode(logo[len(prefix):], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise DeployError("The logo could not be read.") from exc
+    if raw[:8] != PNG_MAGIC or len(raw) < 24:
+        raise DeployError("The logo is not a valid PNG image.")
+    w, h = int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+    if not (1 <= w <= 512 and 1 <= h <= 512):
+        raise DeployError("The logo must be at most 512 pixels on each side.")
+    return raw

@@ -29,7 +29,8 @@ import subprocess
 
 import httpx
 
-from common import (APP_RE, GROUP_RE, TABLE_RE, TIMEOUT, VERSION_RE, WAREHOUSE_RE, Api, DeployError, wait)
+from common import (APP_RE, COLOR_RE, GROUP_RE, TABLE_RE, TIMEOUT, VERSION_RE, WAREHOUSE_RE, Api, DeployError, check_logo,
+                    wait)
 
 APPS = "/api/2.0/apps"
 # The portal files that make up a release. Everything else in the repo (tests,
@@ -151,9 +152,11 @@ def deploy(api: Api, name: str, path: str, say, timeout: float = 900, **kw) -> d
 
 # --- upload -----------------------------------------------------------------
 
-def stage(repo: str, version: str, out: str, log_table: str, warehouse: str) -> str:
+def stage(repo: str, version: str, out: str, log_table: str, warehouse: str, brand: dict | None = None) -> str:
     """Write the release's files to `out`: the portal at `version` (from git),
-    a VERSION file, and app.yaml set up for this client."""
+    a VERSION file, the client's logo (branding/logo.png) and app.yaml set up
+    for this client."""
+    brand = brand or {}
     if not VERSION_RE.match(version):
         raise DeployError("Not a release version: %r" % version)
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "refs/tags/" + version], cwd=repo,
@@ -172,22 +175,32 @@ def stage(repo: str, version: str, out: str, log_table: str, warehouse: str) -> 
             shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
     with open(os.path.join(out, "VERSION"), "w", encoding="utf-8") as f:
         f.write(version + "\n")
+    if brand.get("logo"):
+        os.makedirs(os.path.join(out, "branding"), exist_ok=True)
+        with open(os.path.join(out, "branding", "logo.png"), "wb") as f:
+            f.write(check_logo(brand["logo"]))
     path = os.path.join(out, "app.yaml")
     with open(path, encoding="utf-8") as f:
         text = f.read()
     with open(path, "w", encoding="utf-8") as f:
-        f.write(client_yaml(text, log_table, warehouse))
+        f.write(client_yaml(text, log_table, warehouse, brand.get("name", ""), brand.get("color", "")))
     return out
 
 
-def client_yaml(text: str, log_table: str, warehouse: str) -> str:
+def client_yaml(text: str, log_table: str, warehouse: str, brand_name: str = "", brand_color: str = "") -> str:
     """app.yaml with this client's env block. Only `env:` is replaced; the
-    command and the rest stay as released."""
+    command and the rest stay as released. Free text (the portal name) is
+    written as a JSON string, which YAML reads as a quoted scalar, so a colon,
+    a quote or a # in the name cannot break the file."""
     lines = ["env:"]
     if log_table:
         lines += ["  - name: PORTAL_LOG_TABLE", "    value: " + log_table]
     if warehouse:
         lines += ["  - name: PORTAL_LOG_WAREHOUSE", "    value: " + warehouse]
+    if brand_name:
+        lines += ["  - name: PORTAL_BRAND_NAME", "    value: " + json.dumps(brand_name[:40])]
+    if brand_color and COLOR_RE.match(brand_color):
+        lines += ["  - name: PORTAL_BRAND_COLOR", '    value: "%s"' % brand_color]
     block = "\n".join(lines) + "\n" if len(lines) > 1 else "env: []\n"
     # The env block runs from "env:" to the next top-level key or comment.
     new, n = re.subn(r"(?m)^env:\n(?:[ \t]+.*\n|\n)*", block, text)

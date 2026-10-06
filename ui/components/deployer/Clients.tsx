@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { Client, Release, Setup } from "@/lib/deployer";
+import { initials } from "@/lib/people";
+import { contrast, hexToRgb, HEX_RE } from "@/lib/brand";
 import { Card, Chips, Find, Quiet } from "@/components/Ops";
 import { ErrorBox, Notice, Pager, usePage } from "@/components/bits";
 import { BuildingIcon, PlusIcon, PulseIcon, RocketIcon, SparkleIcon, TagIcon } from "@/components/icons";
@@ -187,10 +189,15 @@ export function ClientsPage({
                 {pg.rows.map((c) => (
                   <li key={c.id} style={{ borderTop: "1px solid var(--line)" }}>
                     <button type="button" className="block w-full px-5 py-4 text-left transition hover:bg-[var(--canvas)]" onClick={() => onOpen(c.id)}>
-                      <span className="block truncate font-semibold" title={c.name}>
-                        {c.name}
+                      <span className="flex min-w-0 items-center gap-3">
+                        <ClientMark c={c} />
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold" title={c.name}>
+                            {c.name}
+                          </span>
+                          <span className="block truncate text-xs faint">{c.host ? hostLabel(c.host) : "Workspace not set"}</span>
+                        </span>
                       </span>
-                      <span className="block truncate text-xs faint">{c.host ? hostLabel(c.host) : "Workspace not set"}</span>
                       <span className="mt-2.5 flex flex-wrap items-center gap-2">
                         <Version v={c.version} />
                         <HealthTag status={c.health?.status} />
@@ -229,12 +236,17 @@ export function ClientsPage({
                         style={{ borderTop: "1px solid var(--line)" }}
                         onClick={() => onOpen(c.id)}
                       >
-                        <td className="max-w-[320px] px-5 py-3.5">
-                          <span className="block truncate font-semibold" title={c.name}>
-                            {c.name}
-                          </span>
-                          <span className="block truncate text-xs faint" title={c.host}>
-                            {c.host ? hostLabel(c.host) : "Workspace not set"}
+                        <td className="max-w-[340px] px-5 py-3.5">
+                          <span className="flex min-w-0 items-center gap-3">
+                            <ClientMark c={c} />
+                            <span className="min-w-0">
+                              <span className="block truncate font-semibold" title={c.name}>
+                                {c.name}
+                              </span>
+                              <span className="block truncate text-xs faint" title={c.host}>
+                                {c.host ? hostLabel(c.host) : "Workspace not set"}
+                              </span>
+                            </span>
                           </span>
                         </td>
                         <td className="px-3 py-3.5">
@@ -291,5 +303,25 @@ export function ClientsPage({
         </div>
       )}
     </>
+  );
+}
+
+/** The client's logo, or their initials on their brand colour. */
+function ClientMark({ c }: { c: Client }) {
+  if (c.brand_logo) {
+    return (
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg" style={{ background: "#fff", border: "1px solid var(--line)" }} aria-hidden>
+        <img src={c.brand_logo} alt="" className="h-full w-full object-contain p-1" />
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[12px] font-semibold"
+      style={HEX_RE.test(c.brand_color) ? { background: c.brand_color, color: contrast(hexToRgb(c.brand_color), [255, 255, 255]) >= 3 ? "#fff" : "#111" } : { background: "var(--bubble)", color: "var(--ink-dim)" }}
+      aria-hidden
+    >
+      {initials(c.name)}
+    </span>
   );
 }

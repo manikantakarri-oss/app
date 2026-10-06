@@ -60,6 +60,9 @@
   /* The home banner: deep teal into near-black, white text on top. */
   --hero-from: #058ea8;
   --hero-to: #0b3b3f;
+  /* The logo tile and avatars; a client brand (lib/brand.ts) overrides these. */
+  --mark-from: #2ecfc7;
+  --mark-to: #058ea8;
   --page: #f6f5f4;
   /* Primary button: deep enough teal for white text to read (about 4.5:1 on
      average across the gradient), unlike the light brand teal itself. */
@@ -531,9 +534,9 @@ h1, h2, h3, h4,
   .side-icon-btn:focus-visible { outline: 2px solid var(--side-accent); outline-offset: -2px; }
   .side-mark {
     @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px];
-    background: linear-gradient(135deg, #2ecfc7, #058ea8);
+    background: linear-gradient(135deg, var(--mark-from), var(--mark-to));
     color: #fff;
-    box-shadow: 0 4px 14px -4px rgba(46, 207, 199, 0.55);
+    box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--mark-from) 55%, transparent);
   }
 
   .topbar {
@@ -820,3 +823,7 @@ h1, h2, h3, h4,
 .notes ul { list-style: disc; padding-left: 1.2em; margin: 0.35em 0; }
 .notes ol { list-style: decimal; padding-left: 1.2em; margin: 0.35em 0; }
 .notes code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bubble); border-radius: 4px; padding: 0 4px; }
+
+/* A client's own logo in the brand tile: shown on a neutral tile, as given. */
+.side-mark.has-logo { background: #fff; box-shadow: 0 0 0 1px var(--side-line); padding: 3px; overflow: hidden; }
+.side-mark.has-logo img { width: 100%; height: 100%; object-fit: contain; }

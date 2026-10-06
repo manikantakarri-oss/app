@@ -10,3 +10,6 @@ ui/.next/
 ui/out/
 ui/tsconfig.tsbuildinfo
 ui/out-deployer/
+
+# A client logo staged by the deployer (never committed; it lives in the client settings).
+branding/

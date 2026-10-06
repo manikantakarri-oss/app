@@ -167,6 +167,60 @@ def _():
     assert clients.SECRET not in clients.clean({"name": "Acme 2"}, new=False)
 
 
+def tiny_png(w=2, h=2) -> str:
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    raw = b"".join(bytes([0]) + bytes([255, 0, 0, 255]) * w for _ in range(h))
+    png = (bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
+@case("branding: name, colour and logo are checked; only PNG data URLs within size and 512 px pass")
+def _():
+    out = clients.clean_brand({"brand_name": "Acme: AI \"Assist\" #1", "brand_color": "#1A73E8", "brand_logo": tiny_png()})
+    assert out["BRAND_COLOR"] == "#1a73e8" and out["BRAND_NAME"].startswith("Acme")
+    assert clients.clean_brand({"brand_logo": ""}) == {"BRAND_LOGO": ""}  # empty removes it
+    assert clients.clean_brand({}) == {}
+    raises(clients.clean_brand, {"brand_color": "blue"}, contains="colour")
+    raises(clients.clean_brand, {"brand_name": "x" * 41}, contains="too long")
+    raises(clients.clean_brand, {"brand_logo": "data:image/svg+xml;base64,PHN2Zz4="}, contains="PNG")
+    raises(clients.clean_brand, {"brand_logo": "data:image/png;base64,aGVsbG8gd29ybGQgdGhpcyBpcyBub3QgYSBwbmc="}, contains="not a valid PNG")
+    raises(clients.clean_brand, {"brand_logo": tiny_png(600, 2)}, contains="512")
+    raises(clients.clean_brand, {"brand_logo": "data:image/png;base64," + "A" * 50000}, contains="too large")
+
+
+@case("branding reaches app.yaml safely quoted, and the logo is written as branding/logo.png")
+def _():
+    text = "command: [a]\nenv:\n  - name: X\n    value: y\n"
+    out = ws.client_yaml(text, "", "", 'Acme: AI "Assist" #1', "#1a73e8")
+    import yaml
+
+    env = {e["name"]: e["value"] for e in yaml.safe_load(out)["env"]}
+    assert env == {"PORTAL_BRAND_NAME": 'Acme: AI "Assist" #1', "PORTAL_BRAND_COLOR": "#1a73e8"}, env
+    assert "PORTAL_BRAND_COLOR" not in ws.client_yaml(text, "", "", "", "red")
+    with tempfile.TemporaryDirectory() as d:
+        repo = os.path.join(d, "repo")
+        os.makedirs(repo)
+        with open(os.path.join(repo, "app.yaml"), "w") as f:
+            f.write(text)
+        git = lambda *a: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=repo, check=True, capture_output=True)
+        git("init", "-q")
+        git("add", "-A")
+        git("commit", "-qm", "r")
+        git("tag", "v1.0.0")
+        out = ws.stage(repo, "v1.0.0", os.path.join(d, "out"), "", "", {"name": "Acme", "color": "#1a73e8", "logo": tiny_png()})
+        with open(os.path.join(out, "branding", "logo.png"), "rb") as f:
+            assert f.read(4) == bytes([0x89, 0x50, 0x4E, 0x47])
+    env = {"CLIENT": "client-acme", "VERSION": "v1.2.3", "DEPLOY_ID": CFG["deploy_id"], "DATABRICKS_HOST": "h",
+           "DATABRICKS_CLIENT_ID": "c", "DATABRICKS_CLIENT_SECRET": "s"}
+    raises(deploy.config, {**env, "BRAND_COLOR": "red"}, contains="colour")
+    raises(deploy.config, {**env, "BRAND_LOGO": "data:image/gif;base64,R0lG"}, contains="PNG")
+
+
 # --- staging -----------------------------------------------------------------
 
 @case("app.yaml: only the env block changes, per client")

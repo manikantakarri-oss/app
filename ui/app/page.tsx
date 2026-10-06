@@ -29,6 +29,7 @@ import {
   WandIcon,
 } from "@/components/icons";
 import { initials, nameOf } from "@/lib/people";
+import { applyBrand } from "@/lib/brand";
 
 /** Every section: one place each, in the order people need them. Workspace is
  *  for everyone; Manage is for admins and replaces the old tabbed admin console
@@ -100,6 +101,25 @@ export default function Page() {
       .then(setSession)
       .catch((e) => setFatal(e.message));
   }, []);
+
+  // The client's branding: colours (cached for the next visit's first
+  // paint), the tab title and the browser icon.
+  const brandName = session?.brand?.name || "Agent Portal";
+  const brandLogo = session?.brand?.logo || "";
+  useEffect(() => {
+    if (!session) return;
+    applyBrand(session.brand?.color || "");
+    document.title = brandName;
+    if (brandLogo) {
+      let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.href = brandLogo;
+    }
+  }, [session, brandName, brandLogo]);
 
   useEffect(() => {
     if (!session) return;
@@ -225,12 +245,10 @@ export default function Page() {
         >
           {/* Brand */}
           <div className={`flex h-16 shrink-0 items-center gap-3 px-5 ${rail ? "lg:justify-center lg:px-0" : ""}`}>
-            <button type="button" className="flex min-w-0 items-center gap-3" onClick={() => goPage("agents")} title="Agent Portal home">
-              <span className="side-mark" aria-hidden>
-                <SparkleIcon size={20} />
-              </span>
+            <button type="button" className="flex min-w-0 items-center gap-3" onClick={() => goPage("agents")} title={`${brandName} home`}>
+              <BrandMark logo={brandLogo} />
               <span className={`min-w-0 text-left leading-tight ${rail ? "lg:hidden" : ""}`}>
-                <span className="block text-[15px] font-semibold tracking-[-0.01em]">Agent Portal</span>
+                <span className="block truncate text-[15px] font-semibold tracking-[-0.01em]">{brandName}</span>
                 <span className="block truncate text-[12px]" style={{ color: "var(--side-faint)" }}>
                   AI assistants for your team
                 </span>
@@ -311,7 +329,7 @@ export default function Page() {
             <div className={`flex items-center gap-3 rounded-lg p-1.5 ${rail ? "lg:flex-col lg:gap-2 lg:p-0" : ""}`} title={session.user_name}>
               <span
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold"
-                style={{ background: "linear-gradient(135deg, #2ecfc7, #058ea8)", color: "#fff" }}
+                style={{ background: "linear-gradient(135deg, var(--mark-from), var(--mark-to))", color: "#fff" }}
                 aria-hidden
               >
                 {initials(session.display_name)}
@@ -367,7 +385,7 @@ export default function Page() {
                 </>
               ) : (
                 <>
-                  <span className="hidden shrink-0 muted sm:inline">Agent Portal</span>
+                  <span className="hidden max-w-[220px] shrink-0 truncate muted sm:inline">{brandName}</span>
                   <span className="hidden faint sm:inline" aria-hidden>
                     <ChevronRightIcon size={14} />
                   </span>
@@ -509,6 +527,23 @@ function PageHead({ eyebrow, title, text }: { eyebrow: string; title: string; te
       <h1 className="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.02em]">{title}</h1>
       <p className="mt-1.5 max-w-2xl text-[15px] muted">{text}</p>
     </div>
+  );
+}
+
+/** The brand tile: the client's logo when they have one, else the portal's mark. */
+function BrandMark({ logo, big }: { logo?: string; big?: boolean }) {
+  const size = big ? "!h-12 !w-12 !rounded-2xl" : "";
+  if (logo) {
+    return (
+      <span className={`side-mark has-logo ${size}`} aria-hidden>
+        <img src={logo} alt="" />
+      </span>
+    );
+  }
+  return (
+    <span className={`side-mark ${size}`} aria-hidden>
+      <SparkleIcon size={big ? 26 : 20} />
+    </span>
   );
 }
 

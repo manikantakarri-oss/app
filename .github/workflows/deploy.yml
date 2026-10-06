@@ -80,6 +80,9 @@ jobs:
           PORTAL_LOG_TABLE: ${{ vars.PORTAL_LOG_TABLE }}
           WAREHOUSE_ID: ${{ vars.WAREHOUSE_ID }}
           USERS_GROUP: ${{ vars.USERS_GROUP }}
+          BRAND_NAME: ${{ vars.BRAND_NAME }}
+          BRAND_COLOR: ${{ vars.BRAND_COLOR }}
+          BRAND_LOGO: ${{ vars.BRAND_LOGO }}
           HOME_HOST: ${{ vars.HOME_HOST }}
           HOME_CLIENT_ID: ${{ vars.HOME_CLIENT_ID }}
           HOME_CLIENT_SECRET: ${{ secrets.HOME_CLIENT_SECRET }}

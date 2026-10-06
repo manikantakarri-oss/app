@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import registry  # noqa: E402
 import workspace as ws  # noqa: E402
-from common import APP_RE, CLIENT_RE, ID_RE, VERSION_RE, Api, DeployError, m2m_token  # noqa: E402
+from common import APP_RE, CLIENT_RE, COLOR_RE, ID_RE, VERSION_RE, Api, DeployError, check_logo, m2m_token  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -55,6 +55,8 @@ def config(env: dict) -> dict:
         "log_table": env.get("PORTAL_LOG_TABLE", ""),
         "warehouse": env.get("WAREHOUSE_ID", ""),
         "users_group": "" if (env.get("USERS_GROUP") or "users").lower() in ("-", "none") else (env.get("USERS_GROUP") or "users"),
+        "brand": {"name": (env.get("BRAND_NAME") or "").strip()[:40], "color": (env.get("BRAND_COLOR") or "").strip(),
+                  "logo": (env.get("BRAND_LOGO") or "").strip()},
     }
     # Inputs reach this script as environment variables, never pasted into the
     # workflow's shell, and are checked before use.
@@ -68,6 +70,10 @@ def config(env: dict) -> dict:
         raise DeployError("Bad deploy id.")
     if not APP_RE.match(c["app"]):
         raise DeployError("APP_NAME %r is not allowed." % c["app"])
+    if c["brand"]["color"] and not COLOR_RE.match(c["brand"]["color"]):
+        raise DeployError("BRAND_COLOR %r is not a colour like #1A73E8." % c["brand"]["color"])
+    if c["brand"]["logo"]:
+        check_logo(c["brand"]["logo"])  # refuse a bad logo before touching the client's app
     if not (c["host"] and c["client_id"] and c["secret"]):
         raise DeployError("This client is missing its workspace address, service principal id or secret. "
                           "Open it in the deployer and fill in its settings.")
@@ -127,7 +133,7 @@ def ship(api: Api, c: dict, rec: Recorder, scopes: list[str], workdir: str, **kw
         rec.warnings.append("Could not find a SQL warehouse: %s" % exc)
     rec.warnings += ws.grant_access(api, app, c["log_table"], warehouse, c["users_group"], rec.say)
     path = ws.release_path(c["client_id"], c["app"], c["version"])
-    ws.stage(REPO, c["version"], os.path.join(workdir, "release"), c["log_table"], warehouse)
+    ws.stage(REPO, c["version"], os.path.join(workdir, "release"), c["log_table"], warehouse, c.get("brand"))
     ws.upload(os.path.join(workdir, "release"), path, rec.say)
     rec.failed_from = True  # the live app changes from here, so a failure puts the old version back
     changed = ws.set_scopes(api, c["app"], app, scopes, rec.say)

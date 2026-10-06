@@ -5,6 +5,7 @@ import { Check, dapi, Release } from "@/lib/deployer";
 import { ErrorBox, Spinner } from "@/components/bits";
 import { CheckIcon, ChevronLeftIcon, CloseIcon } from "@/components/icons";
 import { CopyButton, Field, hostLabel, latestStable, PageHead } from "./parts";
+import { Brand, BrandingEditor } from "./Branding";
 
 const slugOf = (s: string) =>
   s
@@ -57,6 +58,7 @@ export function AddClient({
   const [group, setGroup] = useState("");
   const [appName, setAppName] = useState("agent-portal");
   const [warehouse, setWarehouse] = useState("");
+  const [brand, setBrand] = useState<Brand>({ name: "", color: "", logo: "" });
   const latest = latestStable(releases);
   const [deployNow, setDeployNow] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -102,6 +104,9 @@ export function AddClient({
         log_table: logTable,
         warehouse_id: warehouse.trim(),
         users_group: everyone ? "" : group.trim(),
+        brand_name: brand.name.trim(),
+        brand_color: brand.color,
+        brand_logo: brand.logo,
       });
       let deployError = "";
       if (deployNow && latest) {
@@ -272,6 +277,13 @@ export function AddClient({
                   </div>
                 ) : null}
               </div>
+
+              <details className="rounded-xl px-4 py-3" style={{ border: "1px solid var(--line)" }} open={!!(brand.logo || brand.color || brand.name)}>
+                <summary className="cursor-pointer text-[13px] font-medium muted">Branding (optional): their logo, name and colour</summary>
+                <div className="mt-4">
+                  <BrandingEditor value={brand} onChange={setBrand} />
+                </div>
+              </details>
 
               <details className="rounded-xl px-4 py-3" style={{ border: "1px solid var(--line)" }}>
                 <summary className="cursor-pointer text-[13px] font-medium muted">Advanced</summary>

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 
 from fastapi import BackgroundTasks, Body, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -149,7 +150,7 @@ def _require_admin(forwarded):
 def session(x_forwarded_access_token: str = Header(None)):
     who, _ = _who(x_forwarded_access_token)
     events.note(action="opened_portal")
-    return {**who, "auth_mode": auth_mode(), "chat_history": chats.enabled(), "version": VERSION}
+    return {**who, "auth_mode": auth_mode(), "chat_history": chats.enabled(), "version": VERSION, "brand": BRAND}
 
 
 @app.get("/api/agents")
@@ -764,6 +765,38 @@ def _version() -> str:
 
 
 VERSION = _version()
+
+# A client's branding, set by the deployer: PORTAL_BRAND_NAME and
+# PORTAL_BRAND_COLOR in app.yaml, and the logo as branding/logo.png in the
+# release (always a PNG: the deployer converts uploads, so no SVG with script
+# is ever served from the portal's own origin). All optional; unbranded = the
+# default name and teal. The UI turns the colour into a palette (lib/brand.ts).
+LOGO = os.path.join(HERE, "branding", "logo.png")
+
+
+def _brand() -> dict:
+    color = (os.environ.get("PORTAL_BRAND_COLOR") or "").strip()
+    logo = ""
+    if os.path.isfile(LOGO):
+        logo = "/api/brand/logo?v=%d" % int(os.path.getmtime(LOGO))
+    return {
+        "name": (os.environ.get("PORTAL_BRAND_NAME") or "").strip()[:40],
+        "color": color if re.fullmatch(r"#[0-9a-fA-F]{6}", color) else "",
+        "logo": logo,
+    }
+
+
+BRAND = _brand()
+
+
+@app.get("/api/brand/logo")
+def brand_logo():
+    if not BRAND["logo"]:
+        raise HTTPException(404, "No logo")
+    with open(LOGO, "rb") as f:
+        body = f.read()
+    return Response(body, media_type="image/png", headers={
+        "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/api/health")

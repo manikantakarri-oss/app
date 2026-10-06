@@ -33,6 +33,7 @@ import {
   when,
 } from "./parts";
 import { Notes } from "./Notes";
+import { BrandingEditor } from "./Branding";
 
 const FINAL = ["succeeded", "failed", "rolled_back"];
 const POLL_MS = 4000;
@@ -310,8 +311,15 @@ export function ClientPage({
       ) : (
         <Settings
           client={c}
+          busy={busy}
           onSaved={() => {
             load();
+            onChanged();
+          }}
+          onApply={async () => {
+            const r = await dapi.deploy(c.id, c.version);
+            setWatch(r.deploy_id);
+            setTab("overview");
             onChanged();
           }}
           onRemoved={onRemoved}
@@ -874,7 +882,19 @@ function CheckDetail({ row }: { row: HealthRow }) {
 
 // ------------------------------------------------------------ settings -----
 
-function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onSaved: () => void; onRemoved: () => void }) {
+function Settings({
+  client: c,
+  busy,
+  onSaved,
+  onApply,
+  onRemoved,
+}: {
+  client: ClientDetail;
+  busy: boolean;
+  onSaved: () => void;
+  onApply: () => Promise<void>;
+  onRemoved: () => void;
+}) {
   const initial: ClientForm = {
     name: c.name,
     host: c.host,
@@ -883,6 +903,9 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
     log_table: c.log_table,
     warehouse_id: c.warehouse_id,
     users_group: c.users_group,
+    brand_name: c.brand_name,
+    brand_color: c.brand_color,
+    brand_logo: c.brand_logo,
     secret: "",
   };
   const [f, setF] = useState<ClientForm>(initial);
@@ -891,6 +914,8 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState(false);
   const [typed, setTyped] = useState("");
+  const [pending, setPending] = useState(false);
+  const [applying, setApplying] = useState(false);
   const slug = c.id.replace(/^client-/, "");
   const dirty = JSON.stringify(f) !== JSON.stringify(initial);
   const set = (k: keyof ClientForm) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -908,7 +933,8 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
         if (f[k] !== initial[k]) changed[k] = f[k];
       });
       await dapi.edit(c.id, changed);
-      setMsg(changed.secret ? "Saved. The new secret is used from the next deploy or check." : "Saved. Changes apply on the next deploy.");
+      setMsg(changed.secret ? "Saved. The new secret is used from the next deploy or check." : "Saved.");
+      setPending(true);
       setF({ ...f, secret: "" });
       onSaved();
     } catch (e: any) {
@@ -947,6 +973,17 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
           </Field>
         </div>
       </Card>
+      <Card title="Branding" sub="Their logo, name and colour in their portal. Applied when you apply or deploy.">
+        <div className="p-5">
+          <BrandingEditor
+            value={{ name: f.brand_name || "", color: f.brand_color || "", logo: f.brand_logo || "" }}
+            onChange={(b) => {
+              setF({ ...f, brand_name: b.name, brand_color: b.color, brand_logo: b.logo });
+              setMsg("");
+            }}
+          />
+        </div>
+      </Card>
       <Card title="Portal options" sub="Applied on the next deploy.">
         <div className="grid gap-4 p-5 md:grid-cols-2">
           <Field label="Chat history table" hint="catalog.schema.table in their workspace. Empty turns history and dashboards off.">
@@ -978,6 +1015,36 @@ function Settings({ client: c, onSaved, onRemoved }: { client: ClientDetail; onS
           </span>
         ) : null}
       </div>
+      {pending && !dirty ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl px-4 py-3" style={{ border: "1px solid var(--brand)", background: "color-mix(in srgb, var(--brand-soft) 50%, var(--surface))" }}>
+          <p className="min-w-0 flex-1 text-[14px]">
+            {c.version
+              ? `Apply the changes to their portal now? This redeploys ${c.version} with the new settings, about a minute.`
+              : "These apply with the first deploy."}
+          </p>
+          {c.version ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={applying || busy}
+              onClick={async () => {
+                setApplying(true);
+                setErr("");
+                try {
+                  await onApply();
+                  setPending(false);
+                } catch (e: any) {
+                  setErr(e.message);
+                } finally {
+                  setApplying(false);
+                }
+              }}
+            >
+              {applying ? "Starting…" : "Apply now"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {err ? <ErrorBox>{err}</ErrorBox> : null}
 
       <section className="rounded-2xl p-5" style={{ border: "1px solid color-mix(in srgb, var(--err) 35%, var(--line))" }}>

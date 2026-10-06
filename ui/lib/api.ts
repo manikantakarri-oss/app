@@ -30,6 +30,8 @@ export type Session = {
   chat_history: boolean;
   /** The release this portal runs (set by the deployer); empty in a checkout. */
   version?: string;
+  /** The client's branding (deployer); empty strings when unbranded. */
+  brand?: { name: string; color: string; logo: string };
 };
 
 export type Grant = {

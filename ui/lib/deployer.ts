@@ -67,6 +67,10 @@ export type Client = {
   log_table: string;
   warehouse_id: string;
   users_group: string;
+  brand_name: string;
+  brand_color: string;
+  /** PNG data URL, or "". */
+  brand_logo: string;
   ready: boolean;
   version: string;
   last_deploy: DeployRow | null;
@@ -101,6 +105,9 @@ export type ClientForm = {
   log_table?: string;
   warehouse_id?: string;
   users_group?: string;
+  brand_name?: string;
+  brand_color?: string;
+  brand_logo?: string;
 };
 
 async function send<T>(method: string, path: string, body?: unknown): Promise<T> {

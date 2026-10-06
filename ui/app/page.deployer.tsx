@@ -179,7 +179,7 @@ export default function DeployerPage() {
           <div className="flex items-center gap-3 rounded-lg p-1.5" title={session.user_name}>
             <span
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold"
-              style={{ background: "linear-gradient(135deg, #2ecfc7, #058ea8)", color: "#fff" }}
+              style={{ background: "linear-gradient(135deg, var(--mark-from), var(--mark-to))", color: "#fff" }}
               aria-hidden
             >
               {initials(session.display_name)}

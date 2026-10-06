@@ -10,8 +10,8 @@ import uuid
 
 import ghub
 import registry
-from common import (APP_RE, CLIENT_RE, GROUP_RE, ID_RE, TABLE_RE, VERSION_RE, WAREHOUSE_RE, Api, DeployError, host,
-                    m2m_token)
+from common import (APP_RE, CLIENT_RE, COLOR_RE, GROUP_RE, ID_RE, TABLE_RE, VERSION_RE, WAREHOUSE_RE, Api, DeployError,
+                    check_logo, host, m2m_token)
 
 SECRET = "DATABRICKS_CLIENT_SECRET"
 # How long a deploy may sit in "requested" before we say GitHub never started it.
@@ -85,11 +85,38 @@ def clean(payload: dict, *, new: bool) -> dict:
         if g and g.lower() not in ("-", "none") and not GROUP_RE.match(g):
             raise DeployError("That group name is not valid.")
         out["USERS_GROUP"] = g
+    out.update(clean_brand(payload))
     secret = (payload.get("secret") or "").strip()
     if new and not secret:
         raise DeployError("Enter the service principal's secret.")
     if secret:
         out[SECRET] = secret
+    return out
+
+
+
+
+def clean_brand(payload: dict) -> dict:
+    """Branding fields from the form; only those present are returned, and an
+    empty value removes that one. The logo must be a small PNG data URL: the
+    UI converts every upload (SVG included) to PNG, so the portal never
+    serves an SVG that could carry script."""
+    out: dict = {}
+    if "brand_name" in payload:
+        name = (payload.get("brand_name") or "").strip()
+        if len(name) > 40:
+            raise DeployError("The portal name is too long (40 characters at most).")
+        out["BRAND_NAME"] = name
+    if "brand_color" in payload:
+        color = (payload.get("brand_color") or "").strip()
+        if color and not COLOR_RE.match(color):
+            raise DeployError("The brand colour must look like #1A73E8.")
+        out["BRAND_COLOR"] = color.lower()
+    if "brand_logo" in payload:
+        logo = (payload.get("brand_logo") or "").strip()
+        if logo:
+            check_logo(logo)
+        out["BRAND_LOGO"] = logo
     return out
 
 
@@ -107,6 +134,9 @@ def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: 
         "log_table": v.get("PORTAL_LOG_TABLE", ""),
         "warehouse_id": v.get("WAREHOUSE_ID", ""),
         "users_group": v.get("USERS_GROUP", ""),
+        "brand_name": v.get("BRAND_NAME", ""),
+        "brand_color": v.get("BRAND_COLOR", ""),
+        "brand_logo": v.get("BRAND_LOGO", ""),
         "ready": bool(v.get("DATABRICKS_HOST") and v.get("DATABRICKS_CLIENT_ID")),
         "version": current,
         "last_deploy": last,

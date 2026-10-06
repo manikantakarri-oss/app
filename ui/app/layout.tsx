@@ -16,12 +16,16 @@ export const metadata: Metadata = {
 // localStorage throws in private windows, and a broken theme must not stop the
 // portal from loading. `?theme=light|dark` overrides for one visit,
 // which makes a specific appearance easy to share or screenshot. With no saved
-// choice the CSS media query follows the OS.
+// choice the CSS media query follows the OS. A client's brand colours (cached
+// by lib/brand.ts after the first visit) are applied here too, so a branded
+// portal never flashes the default teal.
 const BOOT = `(function(){try{
 var q=new URLSearchParams(location.search).get('theme');
 var v=q||localStorage.getItem('agent-portal-theme');
 if(q&&(q==='light'||q==='dark'))localStorage.setItem('agent-portal-theme',q);
 if(v==='light'||v==='dark')document.documentElement.setAttribute('data-theme',v);
+var b=localStorage.getItem('agent-portal-brand');
+if(b){var st=document.createElement('style');st.id='brand-css';st.textContent=b;document.head.appendChild(st);}
 }catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
