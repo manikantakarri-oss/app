@@ -95,6 +95,12 @@ export default function DeployerPage() {
       .catch((e) => setSetupErr(e.message));
   }, [session, loadClients, loadReleases]);
 
+  // Releases change outside this page (a tag pushed, a deploy finished), so
+  // the list is reloaded each time the page is shown.
+  useEffect(() => {
+    if (session?.allowed && view.page === "releases") loadReleases();
+  }, [view.page, session, loadReleases]);
+
   // Keep the overview current while something is deploying somewhere.
   useEffect(() => {
     if (!clients?.clients.some((c) => c.in_progress)) return;
@@ -241,7 +247,10 @@ export default function DeployerPage() {
               releases={releases}
               notice={notice?.id === view.id ? notice.text : ""}
               onBack={() => go({ page: "clients" })}
-              onChanged={loadClients}
+              onChanged={() => {
+                loadClients();
+                loadReleases(); // which clients run which version changes with every deploy
+              }}
               onRemoved={() => {
                 loadClients();
                 go({ page: "clients" });
