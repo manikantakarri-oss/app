@@ -159,7 +159,7 @@ def ship(api: Api, c: dict, rec: Recorder, scopes: list[str], workdir: str, **kw
     ws.stage(REPO, c["version"], os.path.join(workdir, "release"), c["log_table"], warehouse, c.get("brand"))
     if c.get("mcp_repo"):
         ship_mcps(c, rec, os.path.join(workdir, "release"))
-    ws.upload(os.path.join(workdir, "release"), path, rec.say)
+    ws.upload(api, os.path.join(workdir, "release"), path, rec.say)
     rec.failed_from = True  # the live app changes from here, so a failure puts the old version back
     changed = ws.set_scopes(api, c["app"], app, scopes, rec.say)
     ws.deploy(api, c["app"], path, rec.say, **kw)

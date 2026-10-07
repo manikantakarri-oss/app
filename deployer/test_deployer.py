@@ -4,6 +4,7 @@ is faked. Run: python deployer/test_deployer.py
 from __future__ import annotations
 
 import base64
+import shutil
 import os
 import subprocess
 import sys
@@ -523,19 +524,50 @@ def _():
         and deploy._allow("a, b") == ["a", "b"]
 
 
-@case("upload clears the release folder first, so a redeploy never keeps files the release dropped")
+@case("upload clears the release folder first, then imports every file over the API (no CLI, so no all-apis needed)")
 def _():
-    calls = []
-    saved = ws.subprocess.run
+    import base64 as b64
 
-    class Done:
-        returncode, stdout, stderr = 0, "", ""
-    ws.subprocess.run = lambda args, **kw: calls.append(args[:3]) or Done()
+    src = tempfile.mkdtemp()
+    os.makedirs(os.path.join(src, "web", "_next"))
+    open(os.path.join(src, "app.py"), "w").write("print(1)")
+    open(os.path.join(src, "web", "_next", "a.js"), "w").write("x")
+    api = FakeApi()
+    api.fail[("POST", "/workspace/delete")] = DeployError("Path (/x) doesn't exist.", 404)
+    root = "/Workspace/Users/sp/agent-portal/agent-portal/v1.4.0"
+    ws.upload(api, src, root, lambda s: None)
+    calls = [(c[1].rsplit("/", 1)[-1], (c[2] or {}).get("path")) for c in api.calls]
+    assert calls[0] == ("delete", root), calls  # cleared first; a missing folder is fine
+    assert ("mkdirs", root + "/web/_next") in calls
+    imports = {c[2]["path"]: c[2] for c in api.calls if c[1].endswith("/workspace/import")}
+    assert set(imports) == {root + "/app.py", root + "/web/_next/a.js"}, imports
+    assert imports[root + "/app.py"]["format"] == "AUTO" and b64.b64decode(imports[root + "/app.py"]["content"]) == b"print(1)"
+    shutil.rmtree(src)
+
+
+@case("sign-in asks for all-apis, and falls back to the installer's own scopes when the secret has only those")
+def _():
+    asked = []
+
+    class R:
+        def __init__(self, code, body):
+            self.status_code, self._b, self.text = code, body, str(body)
+
+        def json(self):
+            return self._b
+    saved = common.httpx.post
+
+    def post(url, data=None, auth=None, timeout=None):
+        asked.append(data["scope"])
+        if data["scope"] == "all-apis":
+            return R(403, {"error_description": "Scopes 'all-apis' are not assigned to the client x"})
+        return R(200, {"access_token": "T"})
+    common.httpx.post = post
     try:
-        ws.upload("/tmp/release", "/Workspace/Users/sp/agent-portal/agent-portal/v1.4.0", lambda s: None)
+        assert common.m2m_token("https://x.cloud.databricks.com", "id", "s") == "T"
     finally:
-        ws.subprocess.run = saved
-    assert calls == [["databricks", "workspace", "delete"], ["databricks", "workspace", "import-dir"]], calls
+        common.httpx.post = saved
+    assert asked == ["all-apis", " ".join(common.SCOPES)] and "access-management" in common.SCOPES, asked
 
 
 @case("tool secrets: put in the client's agent-portal scope with the portal allowed to use them; removed ones deleted")

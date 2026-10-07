@@ -20,7 +20,7 @@ const ASK = `Hi! To set up the Agent Portal in your Databricks workspace, we nee
 
 1. Settings > Identity and access > Service principals > Add service principal > Add new. Name it: agent-portal-deployer
 2. Settings > Identity and access > Groups > admins > Add members > agent-portal-deployer
-3. Open agent-portal-deployer > Secrets > Generate secret
+3. Open agent-portal-deployer > Secrets > Generate secret. If it asks for scopes, choose all-apis, or these: apps, workspace, sql, unity-catalog, model-serving, supervisor-agents, secrets, access-management
 4. For chat history, pick a catalog and run in the SQL editor:
    GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <your_catalog> TO \`<application id>\`;
 
@@ -243,7 +243,7 @@ export function AddClient({
               <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[13px]">
                 <li>Add a service principal named agent-portal-deployer</li>
                 <li>Put it in the admins group</li>
-                <li>Generate a secret for it</li>
+                <li>Generate a secret for it (scopes: all-apis, or the eight in the message)</li>
                 <li>For chat history: allow it on a catalog</li>
               </ol>
             </div>

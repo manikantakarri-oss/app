@@ -21,11 +21,14 @@ app (running, deployment succeeded) and says the inside check was skipped.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shutil
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -273,20 +276,47 @@ def client_yaml(text: str, log_table: str, warehouse: str, brand_name: str = "",
     return new if n else text.rstrip("\n") + "\n\n" + block
 
 
-def upload(folder: str, path: str, say) -> None:
-    """Copy the staged release into the workspace with the Databricks CLI (it
-    signs in from DATABRICKS_HOST / DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET)."""
+def upload(api: Api, folder: str, path: str, say) -> None:
+    """Copy the staged release into the workspace over the Workspace API, as
+    the client's service principal. (Not the Databricks CLI: it always asks
+    for the `all-apis` scope, which a client may not give.) Files are imported
+    with format AUTO, as `import-dir` does."""
     say("Uploading the files")
-    env = {k: v for k, v in os.environ.items() if k != "DATABRICKS_CONFIG_PROFILE"}
-    # Start from an empty folder. `import-dir --overwrite` replaces files but
-    # never removes ones the release no longer has, so redeploying a version
-    # (Apply now) kept a tool the client had since been unticked from (seen
-    # live). The running app is not affected: it runs from its own snapshot.
-    subprocess.run(["databricks", "workspace", "delete", path, "--recursive"], capture_output=True, text=True, env=env)
-    out = subprocess.run(["databricks", "workspace", "import-dir", folder, path, "--overwrite"],
-                         capture_output=True, text=True, env=env)
-    if out.returncode != 0:
-        raise DeployError("Uploading the files failed: " + (out.stderr or out.stdout)[-400:], 502)
+    # Start from an empty folder: overwriting never removes files the release
+    # no longer has, so redeploying a version (Apply now) kept a tool the client
+    # had since been unticked from (seen live). The running app is not
+    # affected: it runs from its own snapshot.
+    try:
+        api.call("POST", "/api/2.0/workspace/delete", json={"path": path, "recursive": True})
+    except DeployError as exc:
+        if exc.status != 404 and "RESOURCE_DOES_NOT_EXIST" not in str(exc) and "doesn't exist" not in str(exc):
+            raise
+    dirs, files = [path], []
+    for root, subdirs, names in os.walk(folder):
+        rel = os.path.relpath(root, folder).replace(os.sep, "/")
+        base = path if rel == "." else path + "/" + rel
+        dirs += [base + "/" + d for d in subdirs]
+        files += [(os.path.join(root, n), base + "/" + n) for n in names]
+    for d in dirs:  # parents first (os.walk is top-down)
+        api.call("POST", "/api/2.0/workspace/mkdirs", json={"path": d})
+
+    def put(item):
+        local, remote = item
+        with open(local, "rb") as fh:
+            data = base64.b64encode(fh.read()).decode()
+        body = {"path": remote, "format": "AUTO", "overwrite": True, "content": data}
+        for attempt in range(7):
+            try:
+                api.call("POST", "/api/2.0/workspace/import", json=body)
+                return
+            except DeployError as exc:
+                # Seen live: a hundred quick imports get 429 "Too many requests".
+                if exc.status in (429, 502, 503) and attempt < 6:
+                    time.sleep(min(2 ** attempt, 20))
+                    continue
+                raise DeployError("Uploading %s failed: %s" % (remote[len(path) + 1:], exc), exc.status) from exc
+    with ThreadPoolExecutor(4) as pool:
+        list(pool.map(put, files))
 
 
 # --- access -----------------------------------------------------------------

@@ -59,26 +59,38 @@ def host(raw: str) -> str:
     return h
 
 
+# The only API scopes a deploy uses (Databricks' scope reference, checked live
+# on AWS 2026-10-07 with a secret holding just these: sign-in, apps, SQL,
+# catalogs, endpoints and their permissions, Agent Bricks, secrets, workspace
+# files). Permission changes are `access-management`; "Me" is in every scope.
+SCOPES = ("apps", "workspace", "sql", "unity-catalog", "model-serving", "supervisor-agents", "secrets",
+          "access-management")
+
+
 def m2m_token(workspace: str, client_id: str, secret: str) -> str:
-    """An OAuth token for a service principal (machine-to-machine)."""
-    try:
-        r = httpx.post(host(workspace) + "/oidc/v1/token", data={"grant_type": "client_credentials", "scope": "all-apis"},
-                       auth=(client_id, secret), timeout=TIMEOUT)
-    except httpx.HTTPError as exc:
-        raise DeployError("Could not reach the workspace (%s)." % type(exc).__name__, 502) from exc
+    """An OAuth token for a service principal (machine-to-machine). Asks for
+    `all-apis` first; a secret created with only the scopes above gets those."""
+    def ask(scope: str):
+        try:
+            return httpx.post(host(workspace) + "/oidc/v1/token", data={"grant_type": "client_credentials", "scope": scope},
+                              auth=(client_id, secret), timeout=TIMEOUT)
+        except httpx.HTTPError as exc:
+            raise DeployError("Could not reach the workspace (%s)." % type(exc).__name__, 502) from exc
+    r = ask("all-apis")
+    if r.status_code == 403 and "not assigned to the client" in r.text:
+        r = ask(" ".join(SCOPES))
     if r.status_code != 200:
         try:
             why = r.json().get("error_description") or ""
         except ValueError:
             why = ""
-        # Seen live (AWS, 2026-10-06): an OAuth *app connection*'s id and
-        # secret authenticate fine but answer 403 "Scopes 'all-apis' are not
-        # assigned to the client". It is not a service principal.
+        # Seen live (AWS): "Scopes ... are not assigned to the client" for an
+        # OAuth app connection, and for a real service principal whose secret
+        # was created with other scopes. Either way, the secret's scopes.
         if "not assigned to the client" in why:
-            raise DeployError("The id and secret are right, but that login may not call Databricks APIs. It is "
-                              "probably an OAuth app connection, not a service principal. In the workspace, open "
-                              "Settings, Identity and access, Service principals, add one, put it in the admins "
-                              "group, and generate the secret on its Secrets tab. (Databricks: %s)" % why[:200], 401)
+            raise DeployError("The id and secret are right, but the secret does not allow what the installer needs. "
+                              "On the service principal's Secrets tab, generate a new secret with the scope all-apis, "
+                              "or with these: %s. (Databricks: %s)" % (", ".join(SCOPES), why[:200]), 401)
         if r.status_code == 401 or "authentication failed" in why.lower():
             raise DeployError("The workspace did not recognise that id and secret. Check both, and that the secret "
                               "has not expired.", 401)
