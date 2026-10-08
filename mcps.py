@@ -63,6 +63,9 @@ REF = os.environ.get("PORTAL_MCP_REF", "main")
 TOKEN = os.environ.get("PORTAL_MCP_TOKEN", "")
 
 SOURCE_ROOT = "/Workspace/Shared/agent-portal-mcps"
+# The start of the description of an app the assistant designer made, so it can be told apart from
+# one made by hand (and from the catalog's), and so a retry may replace its own earlier attempt.
+GEN_MARK = "Created with the assistant designer."
 # A release made by the Portal Deployer carries this client's MCPs, at its
 # pinned catalog version, in `mcp_catalog/` (with CATALOG.json saying which
 # version). When it is there it is the catalog: only these MCPs are listed or
@@ -380,6 +383,150 @@ def listing(user_tok: str, refresh: bool = False) -> dict:
 
 # --- deploying -----------------------------------------------------------------
 
+# --- reading what a tool really does -----------------------------------------
+
+_source_cache: dict[str, tuple[float, dict]] = {}
+
+
+def parse_source(files: dict) -> dict:
+    """What a tool's own files say it does, read as text and **never run**.
+
+    The card (`mcp.yaml`) says it in plain words; the server file says what each ability really
+    takes. Parsing the server with `ast` gives every `@mcp.tool` function's parameters and docstring,
+    which is how the assistant designer tells whether a tool can do what an admin asked, instead
+    of guessing from its name. The folders a designer-made tool was built for are read from its
+    `_READ_FOLDERS` / `_WRITE_FOLDERS` constants. A file that does not parse yields no abilities
+    rather than an error.
+    """
+    import ast
+
+    readme = files.get("README.md", b"").decode("utf-8", "replace").strip()[:1500]
+    abilities = []
+    folders = {"read": [], "write": []}
+    try:
+        tree = ast.parse(files.get("server.py", b"").decode("utf-8", "replace"))
+    except (SyntaxError, ValueError):
+        tree = None
+    for node in tree.body if tree else []:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            key = {"_READ_FOLDERS": "read", "_WRITE_FOLDERS": "write"}.get(node.targets[0].id)
+            if key:
+                try:
+                    folders[key] = [str(x) for x in ast.literal_eval(node.value)][:20]
+                except (ValueError, SyntaxError):
+                    pass
+    # An ability is a function registered as a tool: with a `@mcp.tool` decorator (how the catalog's
+    # tools are written), or by a call, `mcp.tool(...)(fn)` or `mcp.tool(fn)` (how the designer's are,
+    # because it wraps model-written functions it does not edit).
+    registered: set = set()
+    for node in ast.walk(tree) if tree else []:
+        if not isinstance(node, ast.Call):
+            continue
+        outer = node.func
+        if isinstance(outer, ast.Call) and isinstance(outer.func, ast.Attribute) and outer.func.attr == "tool":
+            registered |= {a.id for a in node.args if isinstance(a, ast.Name)}
+        elif isinstance(outer, ast.Attribute) and outer.attr == "tool":
+            registered |= {a.id for a in node.args if isinstance(a, ast.Name)}
+    for node in ast.walk(tree) if tree else []:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not (node.name in registered or any("tool" in ast.unparse(d) for d in node.decorator_list)):
+            continue
+        a = node.args
+        pos = a.posonlyargs + a.args
+        defaults = [None] * (len(pos) - len(a.defaults)) + list(a.defaults)
+        params = [
+            {"name": arg.arg, "type": ast.unparse(arg.annotation) if arg.annotation else "",
+             "default": ast.unparse(d) if d is not None else None}
+            for arg, d in zip(pos, defaults) if arg.arg not in ("self", "cls")
+        ]
+        abilities.append({"name": node.name, "parameters": params,
+                          "details": " ".join((ast.get_docstring(node) or "").split())[:700]})
+    return {"readme": readme, "abilities": abilities[:50], "folders": folders}
+
+
+def source_summary(slug: str) -> dict:
+    """`parse_source` for a catalog tool, cached for the catalog's lifetime."""
+    now = time.time()
+    hit = _source_cache.get(slug)
+    if hit and now - hit[0] < CACHE_SECONDS:
+        return hit[1]
+    out = parse_source(dict(_files(_archive(), slug)))
+    _source_cache[slug] = (now, out)
+    return out
+
+
+# --- tools already installed in the workspace -----------------------------------------------------
+# The catalog lists what is in git. A tool can also be running with no entry there: one the assistant
+# designer built earlier (its source is kept in the workspace), or one someone deployed by hand. The
+# designer must be able to see these, or it offers to build what is already installed.
+
+def _export(path: str, user_tok: str) -> bytes:
+    import base64
+
+    data, _ = act("GET", "/api/2.0/workspace/export", user_tok, params={"path": path, "format": "AUTO"}, quiet=True)
+    return base64.b64decode(data.get("content") or "")
+
+
+def installed(user_tok: str) -> list:
+    """Tool apps running in this workspace that are not catalog tools, with where each is up to."""
+    apps, _ = _apps(user_tok)
+    try:
+        in_catalog = {e["app_name"] for e in catalog()[0]}
+    except DbxError:
+        in_catalog = set()
+    try:
+        data, _ = act("GET", "/api/2.0/workspace/list", user_tok, params={"path": SOURCE_ROOT}, quiet=True)
+        kept = {o["path"].rsplit("/", 1)[-1] for o in data.get("objects") or []}
+    except DbxError:
+        kept = set()
+    out = []
+    for name, a in sorted(apps.items()):
+        if name in in_catalog or not APP_RE.match(name or ""):
+            continue
+        slug = name[4:] if name.startswith("mcp-") else ""
+        made = (a.get("description") or "").startswith(GEN_MARK)
+        if not (name.startswith("mcp-") or made):
+            continue  # an ordinary app (the portal itself, a deployer): not a tool
+        state, note = _state(a, _progress.get(name))
+        out.append({"name": name, "description": " ".join((a.get("description") or "").replace(GEN_MARK, "").split()),
+                    "state": state, "note": note, "url": a.get("url") or "", "made_by_designer": made,
+                    "source_kept": bool(slug and slug in kept)})
+    return out
+
+
+def installed_detail(name: str, user_tok: str, found: dict | None = None) -> dict:
+    """One installed tool in full: its card and what each ability takes, when its source is kept.
+
+    Pass `found` (its entry from `installed`) when the list was just read, so it is not read again."""
+    import yaml as _yaml
+
+    if not APP_RE.match(name or ""):
+        raise DbxError("That is not a tool name.", 400)
+    found = found or {t["name"]: t for t in installed(user_tok)}.get(name)
+    if not found:
+        raise DbxError("There is no installed tool called %s." % name, 404)
+    out = {**found, "card": {}, "abilities": [], "folders": {"read": [], "write": []}, "readme": "", "needs": {"secrets": [], "volumes": []}}
+    slug = name[4:] if name.startswith("mcp-") else ""
+    if not found["source_kept"]:
+        return out
+    base = SOURCE_ROOT + "/" + slug
+    files = {}
+    for f in ("mcp.yaml", "server.py", "README.md"):
+        try:
+            files[f] = _export(base + "/" + f, user_tok)
+        except DbxError:
+            pass
+    try:
+        card = _yaml.safe_load(files.get("mcp.yaml", b"")) or {}
+    except _yaml.YAMLError:
+        card = {}
+    card = card if isinstance(card, dict) else {}
+    out["card"] = {"name": str(card.get("name") or ""), "tools": _tools(card.get("tools"))}
+    out["needs"] = _needs(card.get("needs"))
+    out.update(parse_source(files))
+    return out
+
 def find(slug: str) -> dict:
     entries, _ = catalog()
     for e in entries:
@@ -406,13 +553,13 @@ def _files(blob: bytes, slug: str) -> list:
     return out
 
 
-def start(slug: str, who: dict, user_tok: str) -> dict:
+def start(slug: str, who: dict, user_tok: str, entry: dict | None = None) -> dict:
     """Make sure the app exists (and is on), then hand the slow part to run().
 
     Quick on purpose: it runs inside the request. Copying the files and deploying
     takes a while and happens in the background.
     """
-    entry = find(slug)
+    entry = entry or find(slug)  # a tool made by the assistant designer is not in the catalog
     if entry["problem"]:
         raise DbxError(entry["problem"], 400)
     name = entry["app_name"]
@@ -484,12 +631,13 @@ def _ensure_active(name: str, user_tok: str) -> None:
         time.sleep(5)
 
 
-def run(entry: dict, user_tok: str) -> None:
-    """Background: download the source, copy it into the workspace, deploy it."""
+def run(entry: dict, user_tok: str, files: list | None = None) -> None:
+    """Background: download the source (or take `files` already in hand, for a tool
+    that is not in the catalog), copy it into the workspace, deploy it."""
     name, slug = entry["app_name"], entry["slug"]
     base = SOURCE_ROOT + "/" + slug
     try:
-        files = _files(_archive(), slug)
+        files = files if files is not None else _files(_archive(), slug)
         log.info("MCP %s: copying %d files to %s", slug, len(files), base)
         # Replace the folder wholesale so a file removed from git is removed here too.
         try:
@@ -612,7 +760,7 @@ def needs_install(state: str) -> bool:
     return state in ("not_deployed", "failed", "stopped")
 
 
-def install(entry: dict, who: dict, user_tok: str) -> bool:
+def install(entry: dict, who: dict, user_tok: str, files: list | None = None) -> bool:
     """Create (or switch on) the app and deploy it. Returns once the deployment is
     submitted, False if another request is already installing the same app.
 
@@ -628,12 +776,12 @@ def install(entry: dict, who: dict, user_tok: str) -> bool:
     try:
         for _ in range(30):
             try:
-                start(entry["slug"], who, user_tok)
+                start(entry["slug"], who, user_tok, entry=entry if files is not None else None)
             except Removing:
                 _progress[name] = {"phase": "copying", "message": "Waiting for the old copy to go away.", "at": time.time()}
                 time.sleep(10)
                 continue
-            run(entry, user_tok)  # records its own failure
+            run(entry, user_tok, files)  # records its own failure
             return True
         raise DbxError("the previous copy was still being removed after 5 minutes", 504)
     except DbxError as exc:

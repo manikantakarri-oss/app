@@ -28,6 +28,13 @@ command:
 # Optional: PORTAL_LOG_WAREHOUSE pins a warehouse id (otherwise a running one the
 # service principal can use is picked), PORTAL_CHAT_TABLE puts chats elsewhere,
 # PORTAL_CHAT_RETENTION_DAYS (default 180) sets how long chats are kept.
+#
+# The "Describe it in your own words" assistant designer (beta) needs no setting here: each
+# admin picks the AI model on the screen, from the chat models they can use, and it is
+# remembered in their browser. Optional, per client: PORTAL_BUILDER_MODEL,
+# PORTAL_BUILDER_CODE_MODEL and PORTAL_BUILDER_JUDGE_MODEL pin a default model for the
+# interview, for writing new tools' code, and for marking the test answers (admins can
+# still choose another). PORTAL_DESIGNER=off switches the designer off.
 env:
   - name: PORTAL_LOG_TABLE
     value: databrickspoc.agent_builder.portal_logs

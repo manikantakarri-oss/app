@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, BuilderTool, FileSettings, McpEntry, SourceItem, ToolType } from "@/lib/api";
-import { CardList, Empty, ErrorBox, Select, Spinner, useLoad } from "./bits";
+import { api, BuilderTool, DesignerInfo, FileSettings, McpEntry, SourceItem, ToolType } from "@/lib/api";
+import { CardList, Empty, ErrorBox, Select, Spinner, Tag, useLoad } from "./bits";
 import { middleShort } from "@/lib/people";
 import { PlusIcon } from "./icons";
 import { Access, AccessStep, Done, Finished, Section, VolumeField, WizardFrame } from "./BuilderParts";
 import { KnowledgeWizard } from "./KnowledgeBuilder";
 import { GenieWizard } from "./GenieBuilder";
+import { Designer } from "./Designer";
 import { ChosenRow, isCatalogTool, McpPicker, ToolProgress, ToolWait } from "./McpCatalog";
 
 type Row = Awaited<ReturnType<typeof api.builderAgents>>["agents"][number];
@@ -123,7 +124,11 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
     | { v: "assistant"; id: string | null }
     | { v: "genie"; id: string | null }
     | { v: "docs"; id: string | null }
+    | { v: "designer" }
   >({ v: "home" });
+  // The "describe it in your own words" beta: offered unless an operator switched it off. When it is
+  // on but this admin has no AI model to use, it is shown with the reason, not hidden.
+  const [designer, setDesigner] = useState<DesignerInfo | null>(null);
   const [done, setDone] = useState<Finished | null>(null);
 
   async function load() {
@@ -151,6 +156,10 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
   }
   useEffect(() => {
     load();
+    api
+      .designerStatus()
+      .then(setDesigner)
+      .catch(() => setDesigner(null));
   }, []);
 
   const finished = (d: Finished) => {
@@ -168,6 +177,9 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
   if (view.v === "genie") {
     return <GenieWizard id={view.id} onCancel={() => setView({ v: "home" })} onFinished={finished} />;
   }
+  if (view.v === "designer") {
+    return <Designer onCancel={() => setView({ v: "home" })} onFinished={finished} />;
+  }
 
   if (view.v === "pick") {
     return (
@@ -178,6 +190,34 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
           </button>
           <h2 className="text-xl font-semibold">What kind of assistant do you want to create?</h2>
         </div>
+        {designer?.enabled ? (
+          <>
+            <section
+              className="mb-6 rounded-2xl p-6"
+              style={{ background: "var(--brand-soft)", border: "1px solid var(--brand)" }}
+              aria-label="Describe it in your own words"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-lg font-semibold">Not sure which to choose? Just describe it.</h3>
+                <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
+              </div>
+              <p className="mt-1 max-w-3xl text-[15px] muted">
+                Tell us what you want in your own words. We ask a few short questions, pick the right kind of assistant, and show you
+                everything before anything is created.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button type="button" className="btn btn-primary btn-lg" disabled={!designer.ready} onClick={() => setView({ v: "designer" })}>
+                  Describe your assistant →
+                </button>
+                {!designer.ready ? <p className="max-w-xl text-sm muted">{designer.reason}</p> : null}
+              </div>
+            </section>
+            <div className="mb-4 flex items-center gap-3 text-sm muted">
+              <span>Or choose the kind yourself</span>
+              <span aria-hidden className="h-px flex-1" style={{ background: "var(--line)" }} />
+            </div>
+          </>
+        ) : null}
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-4">
           <button type="button" className="choice !p-6" aria-pressed={false} onClick={() => setView({ v: "assistant", id: null })}>
             <span>

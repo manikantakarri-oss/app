@@ -75,6 +75,157 @@ export type BuilderTool = {
   /** Folder name of a catalog tool the person ticked; the server decides whether it needs deploying. */
   mcp?: string;
 };
+export type DesignerKind = "supervisor" | "genie" | "knowledge";
+/** A tool the designer proposes to create. `fingerprint` is what an approval is tied to. */
+export type DesignerNewTool = {
+  kind: "uc_function" | "mcp";
+  name: string;
+  slug?: string;
+  description: string;
+  sql?: string;
+  example?: string;
+  code?: string;
+  abilities?: { name: string; description: string; changes_data: boolean }[];
+  hosts?: string[];
+  secrets?: string[];
+  volumes?: { volume: string; access: "read" | "write" }[];
+  problems: string[];
+  fingerprint: string;
+  report: {
+    kind: "uc_function" | "mcp";
+    hosts?: string[];
+    settings?: string[];
+    folders?: { volume: string; access: string }[];
+    reads_files?: boolean;
+    saves_files?: boolean;
+    calls_internet?: boolean;
+    may_change_outside?: boolean;
+    packages?: string[];
+    lines?: number;
+  };
+};
+export type DesignerToolResult = {
+  key: string;
+  kind: "uc_function" | "mcp";
+  created?: boolean;
+  started?: boolean;
+  app_name?: string;
+  example?: string;
+  example_result?: unknown[][] | null;
+  example_error?: string;
+  error?: string;
+};
+/** What the interview has worked out so far. Same shape the three builders take. */
+export type DesignerDraft = {
+  kind?: DesignerKind;
+  display_name?: string;
+  description?: string;
+  instructions?: string;
+  tools?: { type: string; ref: string; description: string; mcp?: string }[];
+  files?: { upload_volume: string; output_volume: string; accepts: string };
+  warehouse_id?: string;
+  tables?: string[];
+  sample_questions?: string[];
+  notes?: string;
+  sources?: { volume: string; subfolder: string; name: string; description: string }[];
+  access?: { kind: "group" | "user"; principal: string }[];
+  access_decided?: boolean;
+  chat?: boolean;
+  gaps?: string[];
+  /** Each thing asked for, checked against what the tools really do. */
+  coverage?: { need: string; status: "covered" | "partly" | "missing"; by?: string; note?: string }[];
+  /** Tools to create before the assistant is built; the admin reads them first. */
+  new_tools?: DesignerNewTool[];
+};
+/** What was shown for a message; `looked` is only for display and is never sent back. */
+export type DesignerMessage = { role: "user" | "assistant"; content: string; options?: string[]; looked?: string[] };
+/** A chat model this admin can use. `fit` says honestly how well it is known to suit the designer. */
+export type DesignerModel = {
+  name: string;
+  label: string;
+  kind: "hosted" | "external" | "custom";
+  maker: string;
+  recommended: boolean;
+  /** False = it cannot call functions, which the interview needs. null = not reported. */
+  tools: boolean | null;
+  /** Real prices from the workspace, in DBUs per million tokens (null when not reported). */
+  price_in: number | null;
+  price_out: number | null;
+  /** "Low cost" / "Moderate cost" / "Higher cost", from the real price. */
+  cost: string;
+  detail: string;
+  fit: string;
+};
+/** The three jobs a model can do. Empty = let the portal choose. */
+export type DesignerModels = { chat: string; code: string; judge: string };
+export type DesignerInfo = {
+  enabled: boolean;
+  ready: boolean;
+  reason: string;
+  models: DesignerModel[];
+  defaults: DesignerModels;
+};
+export type DesignerStep = { key: string; label: string; done: boolean };
+export type DesignerTurn = {
+  reply: string;
+  options: string[];
+  multiple: boolean;
+  draft: DesignerDraft;
+  ready: boolean;
+  problems: string[];
+  kind_label: string;
+  /** The checklist in plain words (what is settled, what is not). */
+  progress: DesignerStep[];
+  /** What it looked at to answer, e.g. "your tables". */
+  looked: string[];
+  /** The models actually used, after defaults. */
+  models: DesignerModels;
+  /** Said when a model had to be swapped (for example one Databricks has retired). */
+  notice: string;
+  /** Said when the model answered without looking at anything (so it may miss what you already have). */
+  warning: string;
+};
+export type DesignerTest = { question: string; expect: string; type: "typical" | "edge" | "out_of_scope" };
+export type DesignerResult = {
+  verdict: "pass" | "fail" | "ungraded";
+  reason: string;
+  answer: string;
+  tools?: string[];
+};
+/** One call to try a new tool with, and what came back. */
+export type ToolTest = { ability: string; arguments: Record<string, unknown>; expect: string; expect_error: boolean };
+export type ToolResult = {
+  /** pass / fail (crashed, or refused a realistic call) / look (worth a glance) / unchecked (the test said nothing about the tool) */
+  verdict: "pass" | "fail" | "look" | "unchecked";
+  kind: string;
+  reason: string;
+  ability: string;
+  arguments: Record<string, unknown>;
+  expect_error: boolean;
+  preview: string;
+};
+export type ToolPlan = { tests: ToolTest[]; skipped: { ability: string; why: string }[]; notice: string };
+/** A repair the code model proposes. Nothing is installed until it has been read and approved. */
+export type ToolFix = {
+  slug: string;
+  name: string;
+  code: string;
+  what: string;
+  diff: string[];
+  fingerprint: string;
+  problems: string[];
+  no_change: boolean;
+  notice: string;
+};
+export type DesignerBuilt = {
+  kind: DesignerKind;
+  name: string;
+  endpoint_name?: string;
+  warnings?: string[];
+  deploying?: string[];
+  access_pending?: number;
+  chat?: boolean;
+};
 export type FileSettings = { upload_volume: string; output_volume: string; accepts: string };
 export type BuilderAgent = {
   agent_id: string;
@@ -417,6 +568,41 @@ export const api = {
   builderUpdate: (id: string, spec: BuilderSpec) =>
     send<{ agent_id: string; acted_as: string; warnings: string[]; deploying: string[] }>("PUT", `/api/admin/builder/agents/${id}`, spec),
   builderDelete: (id: string) => send<{ deleted: string }>("DELETE", `/api/admin/builder/agents/${id}`),
+  designerStatus: () => request<DesignerInfo>("/api/admin/designer/status"),
+  designerTurn: (messages: DesignerMessage[], draft: DesignerDraft, models: Partial<DesignerModels> = {}) =>
+    request<DesignerTurn>("/api/admin/designer/turn", {
+      // only what the interview needs: no display-only fields
+      messages: messages.map((m) => ({ role: m.role, content: m.content, options: m.options })),
+      draft,
+      models,
+    }),
+  designerBuild: (draft: DesignerDraft) => request<DesignerBuilt>("/api/admin/designer/build", { draft }),
+  designerToolsCreate: (draft: DesignerDraft, approved: string[]) =>
+    request<{ results: DesignerToolResult[] }>("/api/admin/designer/tools/create", { draft, approved }),
+  designerToolsStatus: (apps: string[]) =>
+    request<{ apps: Record<string, { state: string; note: string }> }>(
+      `/api/admin/designer/tools/status?apps=${encodeURIComponent(apps.join(","))}`
+    ),
+  toolTestPlan: (slug: string, models: Partial<DesignerModels> = {}) =>
+    request<ToolPlan>("/api/admin/designer/tool-test/plan", { slug, models }),
+  toolTestRun: (slug: string, test: ToolTest, models: Partial<DesignerModels> = {}) =>
+    request<ToolResult>("/api/admin/designer/tool-test/run", { slug, test, models }),
+  toolTestFix: (slug: string, failures: ToolResult[], models: Partial<DesignerModels> = {}) =>
+    request<ToolFix>("/api/admin/designer/tool-test/fix", { slug, failures, models }),
+  toolTestApply: (slug: string, code: string, approved: string, what: string) =>
+    request<{ started: boolean; app_name: string; since: string }>("/api/admin/designer/tool-test/apply", { slug, code, approved, what }),
+  toolTestReady: (slug: string, since: string) =>
+    request<{ ready: boolean; failed: boolean; note: string }>(
+      `/api/admin/designer/tool-test/ready?slug=${encodeURIComponent(slug)}&since=${encodeURIComponent(since)}`
+    ),
+  designerTestPlan: (draft: DesignerDraft, models: Partial<DesignerModels> = {}) =>
+    request<{ tests: DesignerTest[] }>("/api/admin/designer/test-plan", { draft, models }),
+  designerState: (endpoint: string) =>
+    request<{ state: "waiting" | "starting" | "ready" }>(
+      `/api/admin/designer/assistant-state?endpoint=${encodeURIComponent(endpoint)}`
+    ),
+  designerTestRun: (endpoint: string, question: string, expect: string, models: Partial<DesignerModels> = {}) =>
+    request<DesignerResult>("/api/admin/designer/test-run", { endpoint, question, expect, models }),
   meta: (payload: Record<string, string>) => request<unknown>("/api/admin/meta", payload),
   logs: (days: number) => request<LogsResult>(`/api/admin/logs?days=${days}`),
   /** Databricks' own audit record (system.access.audit), as sentences. */

@@ -223,6 +223,54 @@ def _():
     ], replay
 
 
+@case("several tools asked for at once: each approval goes right after its own request")
+def _():
+    # Seen live (2026-10-08, the Media Planner built by the assistant designer): the
+    # endpoint answers "The approval response ID does not match the request" when
+    # all the requests come first and all the responses after.
+    hist = [{"role": "user", "content": "plan"}]
+    out = [
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Let me look."}]},
+        {"type": "mcp_approval_request", "id": "A", "name": "get_rate_card", "arguments": "{}"},
+        {"type": "mcp_approval_request", "id": "B", "name": "find_inventory", "arguments": "{}"},
+    ]
+    replay = adapters.build_approval_replay(hist, out, adapters.pending_approvals({"output": out}))
+    resp = lambda i: {"type": "mcp_approval_response", "approval_request_id": i, "approve": True}  # noqa: E731
+    assert replay == [hist[0], out[0], out[1], resp("A"), out[2], resp("B")], replay
+
+
+@case("a parallel tool call is accepted by an endpoint that enforces the request-then-response order")
+def _():
+    import httpx
+    import chat
+
+    reqs = [{"type": "mcp_approval_request", "id": "A", "name": "get_rate_card", "arguments": "{}"},
+            {"type": "mcp_approval_request", "id": "B", "name": "find_inventory", "arguments": "{}"}]
+    text = lambda t: {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": t}]}  # noqa: E731
+    err = {"output": [text("Invalid approval response. The approval response ID does not match the request.")]}
+
+    def endpoint(inp):
+        """The real rule: a request is only answered by the response right after it."""
+        asked = [i for i in inp if i.get("type") == "mcp_approval_request"]
+        if not asked:
+            return {"output": [text("Let me look."), *reqs]}
+        for n, item in enumerate(inp):
+            if item.get("type") == "mcp_approval_request":
+                nxt = inp[n + 1] if n + 1 < len(inp) else {}
+                if nxt.get("type") != "mcp_approval_response" or nxt.get("approval_request_id") != item["id"]:
+                    return err
+        return {"output": [{"type": "function_call_output", "name": "get_rate_card"}, text("Here is your plan.")]}
+
+    saved = chat._post
+    chat._post = lambda ep, payload, tok: httpx.Response(200, json=endpoint(payload["input"]))
+    try:
+        out = chat.ask("e", "agent/v1/responses", [{"role": "user", "content": "plan"}], "TOK")
+    finally:
+        chat._post = saved
+    assert "Here is your plan." in out["reply"] and "Invalid approval" not in out["reply"], out["reply"]
+    assert out["tools"][:2] == ["get_rate_card", "find_inventory"], out["tools"]
+
+
 # ------------------------------------------------------- shapes not yet deployed
 
 

@@ -12,6 +12,7 @@ so the portal can be deleted and rebuilt without losing configuration.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -31,12 +32,15 @@ import genie
 import knowledge
 import chats
 import dashboard
+import designer
 import events
 import files as filestore
+import forge
 import llm
 import logbuf
 import logsink
 import mcps
+import tooltest
 from dbx import DbxError, app_token, auth_mode, user_token
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -478,7 +482,12 @@ def builder_create(
     x_forwarded_access_token: str = Header(None),
 ):
     who, tok = _require_admin(x_forwarded_access_token)
-    spec = builder.clean_spec(payload)
+    return _create_supervisor(builder.clean_spec(payload), who, tok, background)
+
+
+def _create_supervisor(spec: dict, who: dict, tok: str, background: BackgroundTasks, via: str = "") -> dict:
+    """Create a Supervisor Agent from a validated spec. Shared by the wizard and the
+    assistant designer, so both follow the same rules."""
     events.note(action="created_assistant", label=spec.get("display_name"))
     # Catalog tools whose app is not running yet are installed after the agent
     # exists and added to it when ready; the rest are attached now.
@@ -496,7 +505,7 @@ def builder_create(
         pending += more
         out = builder.create_agent(spec, who, tok)
     deploying = [p["entry"]["name"] for p in pending]
-    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Combines tools", "tools": len(spec.get("tools") or []), "deploying": deploying})
+    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Combines tools", "tools": len(spec.get("tools") or []), "deploying": deploying, **({"via": via} if via else {})})
     events.note(target=out.get("endpoint_name") or out.get("agent_id"))
     volumes = mcps.volumes_for(spec)
     if pending:
@@ -559,14 +568,18 @@ def genie_create(
     x_forwarded_access_token: str = Header(None),
 ):
     who, tok = _require_admin(x_forwarded_access_token)
-    gspec = genie.clean(payload)
-    events.note(action="created_assistant", label=gspec.get("title"), detail={"type": "Answers from data"})
+    return _create_genie(genie.clean(payload), who, tok, background)
+
+
+def _create_genie(gspec: dict, who: dict, tok: str, background: BackgroundTasks, via: str = "") -> dict:
+    events.note(action="created_assistant", label=gspec.get("title"), detail={"type": "Answers from data", **({"via": via} if via else {})})
     out = genie.create(gspec, who, tok)
     events.note(target=out.get("space_id"))
     chat_ = out.pop("_chat", None)
     if chat_:
         # Same follow-up as any supervisor: tag and share its endpoint once it exists.
         background.add_task(builder.finish_provisioning, chat_["agent_id"], chat_["endpoint_name"], chat_["spec"], who)
+        out["endpoint_name"] = chat_["endpoint_name"]
     return out
 
 
@@ -656,8 +669,11 @@ def knowledge_create(
     x_forwarded_access_token: str = Header(None),
 ):
     who, tok = _require_admin(x_forwarded_access_token)
-    spec = knowledge.clean(payload)
-    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Answers from documents", "folders": len(spec.get("sources") or [])})
+    return _create_knowledge(knowledge.clean(payload), who, tok, background)
+
+
+def _create_knowledge(spec: dict, who: dict, tok: str, background: BackgroundTasks, via: str = "") -> dict:
+    events.note(action="created_assistant", label=spec.get("display_name"), detail={"type": "Answers from documents", "folders": len(spec.get("sources") or []), **({"via": via} if via else {})})
     out = knowledge.create(spec, who, tok)
     events.note(target=out.get("ka_id"))
     # Reading the documents takes minutes; tag and share the endpoint when it exists.
@@ -685,6 +701,241 @@ def knowledge_delete(ka_id: str, x_forwarded_access_token: str = Header(None)):
     _, tok = _require_admin(x_forwarded_access_token)
     events.note(action="deleted_assistant", target=ka_id, detail={"type": "Answers from documents"})
     return knowledge.delete_assistant(ka_id, tok)
+
+
+@app.get("/api/admin/designer/status")
+def designer_status(x_forwarded_access_token: str = Header(None)):
+    """Is the designer on, and which AI models can this admin choose from (read under their own token)."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    return designer.status(tok)
+
+
+@app.post("/api/admin/designer/turn")
+def designer_turn(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """One exchange of the interview. The browser holds the conversation and the
+    draft and sends both each time; nothing is kept here, and what was typed is
+    never logged."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    return designer.turn(payload.get("messages") or [], payload.get("draft") or {}, tok, payload.get("models"))
+
+
+@app.post("/api/admin/designer/build")
+def designer_build(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    """Approve: build the draft with the same code the wizards use. The draft came
+    through the browser, so it is checked again here, whatever the model said."""
+    who, tok = _require_admin(x_forwarded_access_token)
+    if not designer.enabled():
+        raise HTTPException(404, "The assistant designer is switched off.")
+    draft = designer.clean_draft(payload.get("draft"))
+    # Tools the designer proposed must already have been created (see tools/create).
+    problems = designer.check(draft) or designer.verify(draft, tok, created=True)
+    if problems:
+        raise HTTPException(400, "It is not ready to build yet: " + " ".join(problems[:3]))
+    kind = draft["kind"]
+    if kind == "genie":
+        out = _create_genie(genie.clean(designer.genie_payload(draft)), who, tok, background, via="designer")
+    elif kind == "knowledge":
+        out = _create_knowledge(knowledge.clean(designer.knowledge_payload(draft)), who, tok, background, via="designer")
+    else:
+        out = _create_supervisor(builder.clean_spec(designer.supervisor_payload(draft)), who, tok, background, via="designer")
+    return {**out, "kind": kind, "name": draft["display_name"]}
+
+
+@app.post("/api/admin/designer/tools/create")
+def designer_tools_create(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    """Create the new tools a draft proposes, after the admin has read them.
+
+    `approved` must be the fingerprints of exactly the tools being created, as the
+    admin saw them. The draft came through the browser, so everything is checked
+    again here; functions are created now (as the admin), apps are installed in
+    the background and watched through tools/status.
+    """
+    who, tok = _require_admin(x_forwarded_access_token)
+    if not designer.enabled():
+        raise HTTPException(404, "The assistant designer is switched off.")
+    draft = designer.clean_draft(payload.get("draft"))
+    news = draft.get("new_tools") or []
+    if not news:
+        raise HTTPException(400, "There are no new tools to create.")
+    problems = designer.check(draft) or designer.verify(draft, tok)
+    if problems:
+        raise HTTPException(400, "A new tool is not ready: " + " ".join(problems[:3]))
+    if {str(x) for x in payload.get("approved") or []} != {n["fingerprint"] for n in news}:
+        raise HTTPException(400, "Read and approve every new tool as it is shown now. It changed since you approved it.")
+    events.note(action="created_tool", label=", ".join(forge.key_of(n) for n in news),
+                detail={"via": "designer", "tools": [{"kind": n["kind"], "key": forge.key_of(n), "fingerprint": n["fingerprint"][:12]} for n in news]})
+    results: list = []
+    for n in news:  # functions first and in the request, so a refusal stops everything before an app is started
+        if n["kind"] != "uc_function":
+            continue
+        try:
+            results.append({"key": n["name"], "kind": "uc_function", **forge.create_function(n, draft.get("warehouse_id", ""), tok)})
+        except DbxError as exc:
+            made = [r["key"] for r in results]
+            results.append({"key": n["name"], "kind": "uc_function", "created": False, "error": str(exc)[:300]})
+            return JSONResponse({"results": results, "error": str(exc)[:300] + (
+                " Already created: %s." % ", ".join(made) if made else "")}, status_code=400)
+    today = time.strftime("%Y-%m-%d")
+    for n in news:
+        if n["kind"] == "mcp":
+            mcps._progress[forge.app_name(n["slug"])] = {"phase": "copying", "message": "Getting it ready.", "at": time.time()}
+            background.add_task(forge.install_app, n, who, tok, today)
+            results.append({"key": n["slug"], "kind": "mcp", "app_name": forge.app_name(n["slug"]), "started": True})
+    return {"results": results}
+
+
+@app.get("/api/admin/designer/tools/status")
+def designer_tools_status(apps: str = "", x_forwarded_access_token: str = Header(None)):
+    """Where each new tool's app is up to: not started, getting ready, running or failed."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    names = [a for a in apps.split(",") if re.match(r"^mcp-[a-z0-9][a-z0-9-]{0,60}$", a)][:5]
+    return {"apps": forge.app_states(names, tok) if names else {}}
+
+
+def _tool_slug(payload: dict) -> str:
+    slug = str(payload.get("slug") or "").strip()
+    if not re.match(r"^[a-z0-9][a-z0-9-]{0,60}$", slug):
+        raise HTTPException(400, "That is not a tool id.")
+    return slug
+
+
+@app.post("/api/admin/designer/tool-test/plan")
+def designer_tooltest_plan(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Write the calls to try a new tool with, from its real input shapes and the files that are
+    really in its folders. Reads only; nothing is called yet."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    if not designer.enabled():
+        raise HTTPException(404, "The assistant designer is switched off.")
+    slug = _tool_slug(payload)
+    item = forge.item_from_workspace(slug, tok)
+    tools = tooltest.connect(slug, tok).tools()
+    return tooltest.plan(item, tools, tooltest.facts_for(item, tok), tok, payload.get("models"))
+
+
+@app.post("/api/admin/designer/tool-test/run")
+def designer_tooltest_run(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Call one ability of a new tool, as an assistant would, and say what came back. Only a read-only
+    ability can be run: the tool's own declaration is checked here, not taken from the request."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    slug = _tool_slug(payload)
+    forge.item_from_workspace(slug, tok)  # a tool the designer made, and nobody else's
+    test = payload.get("test") if isinstance(payload.get("test"), dict) else {}
+    client = tooltest.connect(slug, tok)
+    tool = next((t for t in client.tools() if t.get("name") == test.get("ability")), None)
+    if not tool:
+        raise HTTPException(400, "That tool has no such ability.")
+    if not tooltest._readonly(tool):
+        raise HTTPException(400, "That ability saves or changes something, so it is not run automatically.")
+    args = test.get("arguments") if isinstance(test.get("arguments"), dict) else {}
+    if len(json.dumps(args)) > 2000:
+        raise HTTPException(400, "That input is too large.")
+    return tooltest.run_one(client, {"ability": tool["name"], "arguments": args, "expect": str(test.get("expect") or "")[:300],
+                                     "expect_error": bool(test.get("expect_error"))}, tok, payload.get("models"))
+
+
+@app.post("/api/admin/designer/tool-test/fix")
+def designer_tooltest_fix(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Have the code model repair a new tool after a failed test. Proposes only: the result (the new code,
+    a diff, what changed, a fingerprint) is shown to the admin and nothing is deployed."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    slug = _tool_slug(payload)
+    item = forge.item_from_workspace(slug, tok)
+    failures = [f for f in payload.get("failures") or [] if isinstance(f, dict)][:6]
+    if not failures:
+        raise HTTPException(400, "Say what failed.")
+    out = tooltest.propose_fix(item, failures, tok, payload.get("models"))
+    return {**out, "slug": slug, "name": item["name"]}
+
+
+@app.post("/api/admin/designer/tool-test/apply")
+def designer_tooltest_apply(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    """Deploy a repair the admin has read. The code comes back from the browser, so it is checked again
+    as if it were new, and `approved` must be the fingerprint of exactly this code on this tool."""
+    who, tok = _require_admin(x_forwarded_access_token)
+    slug = _tool_slug(payload)
+    current = forge.item_from_workspace(slug, tok)
+    code = str(payload.get("code") or "")
+    new = forge.clean_item({**current, "code": code}) or current
+    if new["problems"]:
+        raise HTTPException(400, "The repaired code did not pass the checks: " + " ".join(new["problems"][:2]))
+    if code.strip() == current["code"].strip():
+        raise HTTPException(400, "There is nothing to change.")
+    if str(payload.get("approved") or "") != new["fingerprint"]:
+        raise HTTPException(400, "Read and approve the repair as it is shown now. It changed since you approved it.")
+    events.note(action="fixed_tool", label=slug, target=forge.app_name(slug),
+                detail={"via": "designer", "fingerprint": new["fingerprint"][:12], "what": str(payload.get("what") or "")[:200]})
+    # Stamped a few seconds early, because the deployment's own clock is Databricks' and this one is ours.
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
+    mcps._progress[forge.app_name(slug)] = {"phase": "copying", "message": "Applying the repair.", "at": time.time()}
+    background.add_task(forge.install_app, new, who, tok, time.strftime("%Y-%m-%d"))
+    return {"started": True, "app_name": forge.app_name(slug), "since": since}
+
+
+@app.get("/api/admin/designer/tool-test/ready")
+def designer_tooltest_ready(slug: str, since: str, x_forwarded_access_token: str = Header(None)):
+    """Has a repair gone live yet? The old version keeps answering until the new one is in."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    slug = _tool_slug({"slug": slug})
+    if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", since or ""):
+        raise HTTPException(400, "since must be a time like 2026-10-08T12:00:00Z")
+    return tooltest.deployed_since(slug, since, tok)
+
+
+@app.post("/api/admin/designer/test-plan")
+def designer_test_plan(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    _, tok = _require_admin(x_forwarded_access_token)
+    return {"tests": designer.plan_tests(payload.get("draft") or {}, tok, payload.get("models"))}
+
+
+@app.get("/api/admin/designer/assistant-state")
+def designer_assistant_state(endpoint: str, x_forwarded_access_token: str = Header(None)):
+    """Is the new assistant up yet? It takes a few minutes, and only appears here
+    once it has been shared with the admin."""
+    who, tok = _require_admin(x_forwarded_access_token)
+    for a in access.visible_agents(who, app_token(), tok):
+        if a["name"] == endpoint:
+            return {"state": "ready" if a["ready"] else "starting"}
+    return {"state": "waiting"}
+
+
+@app.post("/api/admin/designer/test-run")
+def designer_test_run(payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Ask the new assistant one test question as the admin and have a second model
+    mark the answer. A failure to answer is a result, not an error."""
+    who, tok = _require_admin(x_forwarded_access_token)
+    endpoint = (payload.get("endpoint") or "").strip()
+    question = (payload.get("question") or "").strip()[:500]
+    expect = (payload.get("expect") or "").strip()[:500]
+    if not endpoint or not question:
+        raise HTTPException(400, "an endpoint and a question are required")
+    agent = _allowed_agent(who, endpoint, tok)
+    if not agent["ready"]:
+        raise HTTPException(409, "The assistant is still starting.")
+    out_dir = filestore.output_dir_path(agent["output_volume"]) if agent.get("output_volume") else ""
+    try:
+        out = chat.ask(endpoint, agent["task"], [{"role": "user", "content": question}], tok, output_dir=out_dir)
+    except DbxError as exc:
+        return {"verdict": "fail", "reason": "It did not answer: " + str(exc)[:200], "answer": ""}
+    broken = events.tool_failure(out.get("reply") or "")
+    if broken:
+        return {"verdict": "fail", "reason": "A tool it used failed: " + str(broken)[:200], "answer": (out.get("reply") or "")[:1500]}
+    try:
+        graded = designer.grade(question, expect, out.get("reply") or "", out.get("tools") or [], tok, payload.get("models"))
+    except DbxError as exc:
+        graded = {"verdict": "ungraded", "reason": "The checker could not run: " + str(exc)[:160]}
+    return {**graded, "answer": (out.get("reply") or "")[:1500], "tools": (out.get("tools") or [])[:10]}
 
 
 @app.get("/api/admin/cost")

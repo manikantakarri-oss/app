@@ -107,15 +107,33 @@ def build_approval_replay(history_input: list, prior_output: list, approvals: li
     (`previous_response_id` is silently ignored), so the follow-up must replay
     the full prior turn - the original input, every item from the prior
     response's `output` (the assistant's message and the approval request
-    itself), then one `mcp_approval_response` per pending request. Sending only
-    the approval response, or only the approval response plus the original
+    itself), then an `mcp_approval_response` for each pending request. Sending
+    only the approval response, or only the approval response plus the original
     user turn, both fail with "Invalid message sequence."
+
+    **Each response goes straight after its own request.** An assistant may ask
+    for several tools in one reply (seen live, 2026-10-08: `get_rate_card` and
+    `find_inventory` together). Listing all the requests and then all the
+    responses is answered, with HTTP 200, by a message saying "Invalid approval
+    response. The approval response ID does not match the request." Interleaving
+    (request A, response A, request B, response B) runs both tools. With a single
+    request the two orders are the same, which is why this only showed up with
+    parallel tool calls.
     """
-    replay = list(history_input) + list(prior_output)
-    for req in approvals:
-        rid = req.get("id")
-        if rid:
+    wanted = {a.get("id") for a in approvals if a.get("id")}
+    replay = list(history_input)
+    placed: set = set()
+    for item in prior_output:
+        replay.append(item)
+        rid = item.get("id") if isinstance(item, dict) and item.get("type") == "mcp_approval_request" else None
+        if rid in wanted and rid not in placed:
             replay.append({"type": "mcp_approval_response", "approval_request_id": rid, "approve": True})
+            placed.add(rid)
+    for a in approvals:  # a request that was not in the output (should not happen) still gets answered
+        rid = a.get("id")
+        if rid and rid not in placed:
+            replay.append({"type": "mcp_approval_response", "approval_request_id": rid, "approve": True})
+            placed.add(rid)
     return replay
 
 

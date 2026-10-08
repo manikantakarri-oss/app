@@ -338,6 +338,10 @@ function sentence(e: PortalEvent): ReactNode {
       return <>{name} updated the {(d.fields || []).map((f: string) => FIELD[f] || f.replace(/_/g, " ")).join(", ") || "settings"} of {b(label)}</>;
     case "created_assistant":
       return <>{name} created {b(label)}{(d.deploying || []).length ? <>, setting up {(d.deploying as string[]).join(", ")}</> : null}</>;
+    case "fixed_tool":
+      return <>{name} repaired the tool {b(label)}{d.what ? <>: {String(d.what)}</> : null}</>;
+    case "created_tool":
+      return <>{name} created the new {(d.tools || []).length === 1 ? "tool" : "tools"} {b(label)}</>;
     case "edited_assistant":
       return <>{name} updated {b(label)}{(d.deploying || []).length ? <>, setting up {(d.deploying as string[]).join(", ")}</> : null}</>;
     case "deleted_assistant":

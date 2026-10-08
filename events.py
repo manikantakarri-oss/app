@@ -76,6 +76,8 @@ CATEGORY = {
     "changed_team": "access",
     "changed_settings": "access",
     "created_assistant": "build",
+    "created_tool": "build",
+    "fixed_tool": "build",
     "edited_assistant": "build",
     "deleted_assistant": "build",
 }
