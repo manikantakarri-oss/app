@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { DesignerNewTool } from "@/lib/api";
 import { Tag } from "../bits";
-import { CopyIcon } from "../icons";
+import { CopyIcon, ShieldIcon, WandIcon } from "../icons";
 import { reach } from "./parts";
 
 /** The one moment in the whole flow where something written by a model is about to be
@@ -33,15 +33,23 @@ function Tool({ t, ok, onTick }: { t: DesignerNewTool; ok: boolean; onTick: (v: 
   }
 
   return (
-    <section className="card p-5" aria-label={t.name}>
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-[16px] font-semibold">{t.name}</h3>
-        <Tag>{t.kind === "uc_function" ? "SQL function" : "Small tool"}</Tag>
-        <span className="text-xs faint" title="A short code for exactly what you are approving">
-          #{t.fingerprint.slice(0, 8)}
+    <section className="card overflow-hidden p-0" aria-label={t.name} style={ok ? { borderColor: "color-mix(in srgb, var(--ok) 45%, var(--line))" } : undefined}>
+      <div className="px-6 pt-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="dz-tile" aria-hidden>
+          <WandIcon size={18} />
         </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-[16px] font-semibold">{t.name}</h3>
+            <Tag>{t.kind === "uc_function" ? "SQL function" : "Small tool"}</Tag>
+          </div>
+          <span className="font-mono text-[11.5px] faint" title="A short code for exactly what you are approving">
+            #{t.fingerprint.slice(0, 8)}
+          </span>
+        </div>
       </div>
-      <p className="mt-1 text-[15px] muted">{t.description}</p>
+      <p className="mt-3 text-[15px] muted">{t.description}</p>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <div>
@@ -86,9 +94,13 @@ function Tool({ t, ok, onTick }: { t: DesignerNewTool; ok: boolean; onTick: (v: 
         </div>
       </details>
 
-      <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-[15px]">
-        <input type="checkbox" className="mt-1 h-4 w-4" checked={ok} onChange={(e) => onTick(e.target.checked)} />
-        <span>I have read what it can reach and I am happy for it to be created.</span>
+      </div>
+      <label
+        className="mt-5 flex cursor-pointer items-start gap-3 border-t px-6 py-4 text-[15px]"
+        style={{ borderColor: "var(--line)", background: ok ? "color-mix(in srgb, var(--ok) 8%, transparent)" : "var(--canvas)" }}
+      >
+        <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={ok} onChange={(e) => onTick(e.target.checked)} />
+        <span className={ok ? "font-medium" : ""}>I have read what it can reach and I am happy for it to be created.</span>
       </label>
     </section>
   );
@@ -108,28 +120,39 @@ export function ReviewTools({
   const plural = tools.length === 1 ? "tool" : "tools";
 
   return (
-    <div className="max-w-4xl">
-      <button type="button" className="btn btn-quiet mb-3" onClick={onBack}>
+    <div className="mx-auto max-w-4xl">
+      <button type="button" className="btn btn-quiet mb-4" onClick={onBack}>
         ← Back to the conversation
       </button>
-      <h2 className="text-xl font-semibold">Read the new {plural} before {tools.length === 1 ? "it is" : "they are"} created</h2>
-      <p className="mt-1 max-w-3xl text-[15px] muted">
+      <p className="dz-eyebrow">Your approval</p>
+      <h2 className="mt-1 text-2xl font-semibold tracking-tight">Read the new {plural} before {tools.length === 1 ? "it is" : "they are"} created</h2>
+      <p className="mt-1.5 max-w-3xl text-[15px] muted">
         {tools.length === 1 ? "This tool was" : "These tools were"} written by an AI model for this assistant. Nothing is installed until you approve.
       </p>
 
-      <div className="mt-4 grid gap-3 rounded-xl p-4 sm:grid-cols-2" style={{ background: "var(--bubble)" }}>
-        <div>
-          <h3 className="text-sm font-semibold">What the automatic checks did</h3>
-          <p className="mt-1 text-sm muted">
-            Looked for things a tool like this has no reason to do: running commands, reading other files, or contacting websites that
-            are not listed.
-          </p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="card flex gap-3 p-4">
+          <span className="dz-tile" aria-hidden>
+            <ShieldIcon size={18} />
+          </span>
+          <div>
+            <h3 className="text-[14px] font-semibold">What the automatic checks did</h3>
+            <p className="mt-1 text-[13.5px] muted">
+              Looked for things a tool like this has no reason to do: running commands, reading other files, or contacting websites that
+              are not listed.
+            </p>
+          </div>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold">What they cannot do</h3>
-          <p className="mt-1 text-sm muted">
-            Prove the code is right or harmless. That is why you read this, and why it only ever gets the access listed on each card.
-          </p>
+        <div className="card flex gap-3 p-4">
+          <span className="dz-tile" aria-hidden style={{ background: "var(--warn-bg)", color: "var(--warn-line)" }}>
+            !
+          </span>
+          <div>
+            <h3 className="text-[14px] font-semibold">What they cannot do</h3>
+            <p className="mt-1 text-[13.5px] muted">
+              Prove the code is right or harmless. That is why you read this, and why it only ever gets the access listed on each card.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -148,7 +171,7 @@ export function ReviewTools({
           <button type="button" className="btn btn-quiet" onClick={onBack}>
             Not yet
           </button>
-          <button type="button" className="btn btn-primary btn-lg" disabled={left > 0} onClick={() => onCreate(tools.map((t) => t.fingerprint))}>
+          <button type="button" className={left > 0 ? "btn btn-primary btn-lg dz-cta-off" : "btn btn-primary btn-lg"} disabled={left > 0} onClick={() => onCreate(tools.map((t) => t.fingerprint))}>
             Create the {plural} and build
           </button>
         </div>

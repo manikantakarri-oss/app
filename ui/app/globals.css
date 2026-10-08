@@ -893,3 +893,140 @@ h1, h2, h3, h4,
 .model-adv { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-dim); }
 .model-adv:hover { color: var(--ink); }
 .model-dot { height: 7px; width: 7px; border-radius: 999px; background: var(--brand); }
+
+/* ===== Assistant designer (beta): Designer.tsx and components/designer/ =====
+   One visual language for the whole flow: a gradient mark for the AI, a soft
+   brand tint for what is yours, a live blueprint of the assistant, and
+   timelines for anything that takes a while. Tokens only, so every theme and
+   client brand applies. */
+.dz-mark {
+  display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
+  height: 32px; width: 32px; border-radius: 10px; color: #fff;
+  background: linear-gradient(135deg, var(--mark-from), var(--mark-to));
+  box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--brand) 70%, transparent);
+}
+.dz-mark-lg { height: 56px; width: 56px; border-radius: 18px; box-shadow: 0 14px 34px -14px color-mix(in srgb, var(--brand) 85%, transparent); }
+.dz-eyebrow { font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); }
+.dz-hero-title { font-size: clamp(22px, 2.4vw, 28px); font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+
+/* the box you type in */
+.dz-composer {
+  position: relative; border: 1px solid var(--line); border-radius: 18px; background: var(--surface);
+  transition: border-color .15s, box-shadow .15s;
+}
+.dz-composer:focus-within { border-color: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
+.dz-composer[data-disabled="true"] { opacity: .7; }
+.dz-composer textarea {
+  display: block; width: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink);
+  padding: 14px 64px 14px 16px; font-size: 15px; line-height: 1.6; min-height: 54px; max-height: 220px;
+}
+.dz-composer textarea::placeholder { color: var(--ink-faint); }
+.dz-composer-lg textarea { min-height: 112px; padding-bottom: 52px; padding-right: 16px; font-size: 16px; }
+.dz-send {
+  position: absolute; right: 10px; bottom: 9px; display: inline-flex; align-items: center; justify-content: center;
+  height: 36px; width: 36px; border-radius: 12px; color: var(--btn-ink);
+  background: linear-gradient(135deg, var(--btn-from), var(--btn-to)); transition: transform .12s, opacity .12s;
+}
+.dz-send:hover:not(:disabled) { transform: translateY(-1px); }
+.dz-send:disabled { background: var(--bubble); color: var(--ink-faint); cursor: not-allowed; }
+.dz-kbd {
+  display: inline-flex; align-items: center; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px;
+  padding: 0 5px; font-size: 11px; line-height: 16px; color: var(--ink-dim); background: var(--canvas);
+}
+
+/* starting points on the first screen */
+.dz-starter {
+  display: flex; height: 100%; width: 100%; flex-direction: column; gap: 10px; text-align: left;
+  border: 1px solid var(--line); border-radius: 16px; background: var(--surface); padding: 16px;
+  transition: border-color .15s, transform .15s, box-shadow .15s;
+}
+.dz-starter:hover:not(:disabled) { border-color: color-mix(in srgb, var(--brand) 60%, var(--line)); transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.dz-starter:disabled { opacity: .6; cursor: not-allowed; }
+.dz-tile {
+  display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; height: 36px; width: 36px;
+  border-radius: 11px; background: var(--brand-soft); color: var(--brand-deep);
+}
+
+/* the conversation */
+.dz-user {
+  max-width: min(85%, 640px); white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 16px;
+  border-radius: 18px 18px 6px 18px; font-size: 15px; line-height: 1.6;
+  background: var(--brand-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.dz-activity {
+  display: inline-flex; max-width: 100%; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px;
+  font-size: 12px; color: var(--ink-dim); background: var(--bubble);
+}
+.dz-chip {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 14px; font-size: 14px; font-weight: 500; background: var(--surface); color: var(--ink); transition: all .12s;
+}
+.dz-chip:hover { border-color: var(--brand); background: var(--brand-soft); }
+.dz-chip[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-deep); }
+.dz-shimmer {
+  background: linear-gradient(90deg, var(--ink-faint) 0%, var(--ink) 45%, var(--ink-faint) 90%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: dz-shimmer 1.8s linear infinite;
+}
+@keyframes dz-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+.dz-ready {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; border-radius: 14px; padding: 12px 14px;
+  background: color-mix(in srgb, var(--ok) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+}
+
+/* the live blueprint beside the chat */
+.dz-seg { display: flex; gap: 4px; }
+.dz-seg > span { height: 6px; flex: 1; border-radius: 999px; background: var(--bubble); transition: background .3s; }
+.dz-seg > span[data-on="true"] { background: linear-gradient(90deg, var(--mark-from), var(--mark-to)); }
+.dz-sec-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+.dz-flash { animation: dz-flash 1.4s ease-out; border-radius: 10px; }
+@keyframes dz-flash { 0% { background: var(--brand-soft); box-shadow: 0 0 0 6px var(--brand-soft); } 100% { background: transparent; box-shadow: 0 0 0 6px transparent; } }
+.dz-pill { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; font-weight: 500; background: var(--bubble); color: var(--ink); }
+.dz-cta-off { background: var(--bubble) !important; color: var(--ink-faint) !important; box-shadow: none !important; border-color: transparent !important; opacity: 1 !important; }
+.dz-placeholder { height: 10px; border-radius: 999px; background: var(--bubble); }
+
+/* where you are */
+.dz-steps { display: flex; align-items: center; }
+.dz-step { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-faint); white-space: nowrap; }
+.dz-step-dot {
+  display: inline-flex; height: 24px; width: 24px; align-items: center; justify-content: center; border-radius: 999px;
+  font-size: 12px; font-weight: 700; border: 1.5px solid var(--line); background: var(--surface);
+}
+.dz-step[data-state="now"] { color: var(--ink); font-weight: 600; }
+.dz-step[data-state="now"] .dz-step-dot { border-color: var(--brand); color: var(--brand-deep); box-shadow: 0 0 0 4px var(--brand-soft); }
+.dz-step[data-state="done"] { color: var(--ink-dim); }
+.dz-step[data-state="done"] .dz-step-dot { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--mark-from), var(--mark-to)); }
+.dz-step-line { height: 2px; width: 20px; margin: 0 8px; border-radius: 2px; background: var(--line); }
+.dz-step-line[data-done="true"] { background: linear-gradient(90deg, var(--mark-from), var(--mark-to)); }
+@media (min-width: 640px) { .dz-step-line { width: 44px; margin: 0 12px; } }
+
+/* anything that takes a while */
+.dz-tl-item { position: relative; display: flex; gap: 14px; padding-bottom: 20px; }
+.dz-tl-item:last-child { padding-bottom: 0; }
+.dz-tl-item:not(:last-child)::before {
+  content: ""; position: absolute; left: 13px; top: 32px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--line);
+}
+.dz-tl-item[data-state="done"]:not(:last-child)::before { background: linear-gradient(var(--mark-from), var(--mark-to)); }
+.dz-tl-dot {
+  position: relative; z-index: 1; display: inline-flex; height: 28px; width: 28px; flex-shrink: 0; align-items: center; justify-content: center;
+  border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink-faint);
+}
+.dz-tl-item[data-state="done"] .dz-tl-dot { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--mark-from), var(--mark-to)); }
+.dz-tl-item[data-state="work"] .dz-tl-dot { border-color: var(--brand); color: var(--brand-deep); box-shadow: 0 0 0 4px var(--brand-soft); }
+.dz-tl-item[data-state="fail"] .dz-tl-dot { border-color: transparent; background: var(--err-bg); color: var(--err); }
+.dz-spin { height: 13px; width: 13px; border-radius: 999px; border: 2px solid currentColor; border-top-color: transparent; animation: dz-rot .8s linear infinite; }
+@keyframes dz-rot { to { transform: rotate(360deg); } }
+.dz-ring { position: relative; display: inline-flex; height: 60px; width: 60px; flex-shrink: 0; align-items: center; justify-content: center; color: var(--brand-deep); }
+.dz-ring::before {
+  content: ""; position: absolute; inset: 0; border-radius: 999px; padding: 3px;
+  background: conic-gradient(from 0deg, var(--mark-from), var(--mark-to), transparent 72%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: dz-rot 1.2s linear infinite;
+}
+.dz-ring[data-still="true"]::before { animation: none; background: var(--line); }
+.dz-score { display: flex; height: 8px; overflow: hidden; border-radius: 999px; background: var(--bubble); }
+.dz-score > span { height: 100%; transition: width .4s; }
+@media (prefers-reduced-motion: reduce) {
+  .dz-shimmer, .dz-ring::before, .dz-spin, .dz-flash { animation: none; }
+  .dz-shimmer { color: var(--ink-dim); background: none; }
+}

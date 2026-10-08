@@ -13,7 +13,7 @@ import {
 import { chosen, loadChoice, NO_CHOICE, saveChoice } from "@/lib/designerModels";
 import { ErrorBox, Spinner, Tag } from "./bits";
 import { Finished } from "./BuilderParts";
-import { RefreshIcon } from "./icons";
+import { ChevronLeftIcon, RefreshIcon } from "./icons";
 import { Built } from "./designer/Built";
 import { Conversation } from "./designer/Conversation";
 import { CreateStep, Creating } from "./designer/Creating";
@@ -347,12 +347,6 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
     }
     return (
       <>
-        {!hasUser ? (
-          <p className="mb-5 hidden max-w-3xl text-[15px] muted sm:block">
-            Tell us what you want in your own words. We ask a few short questions and show what we understood on the right. Nothing is
-            created until you press the button that says so.
-          </p>
-        ) : null}
         {resumed ? (
           <div className="notice mb-3 flex flex-wrap items-center justify-between gap-3" role="status">
             <span>We picked up the conversation you started earlier.</span>
@@ -387,7 +381,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
             </button>
           </div>
         ) : null}
-        {msgs.length ? <ProgressStrip progress={progress} /> : null}
+        {hasUser ? <ProgressStrip progress={progress} /> : null}
         <div ref={work} className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]" style={fill ? { height: fill } : undefined}>
           <Conversation
             msgs={msgs}
@@ -410,28 +404,32 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
   return (
     <div className="w-full">
       <header className="mb-5">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           {phase === "describe" ? (
-            <button type="button" className="btn btn-quiet" onClick={onCancel}>
-              ← Cancel
+            <button type="button" className="btn btn-quiet !px-3" onClick={onCancel} aria-label="Cancel and go back">
+              <ChevronLeftIcon size={16} />
+              <span className="hidden sm:inline">Cancel</span>
             </button>
           ) : null}
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold sm:text-xl">Describe your assistant</h2>
-            <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-xl font-semibold tracking-tight sm:text-[22px]">New assistant</h2>
+              <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
+            </div>
+            <p className="mt-0.5 hidden text-[13.5px] muted sm:block">Built from a short conversation. Nothing is created until you approve it.</p>
           </div>
           {phase === "describe" && info?.ready ? (
             <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
               <ModelMenu info={info} choice={choice} used={used} onChange={changeChoice} open={panel} setOpen={setPanel} />
               {hasUser ? (
-                <button type="button" className="btn btn-quiet" onClick={startOver} disabled={busy || building}>
-                  <RefreshIcon size={15} /> Start over
+                <button type="button" className="btn btn-quiet" onClick={startOver} disabled={busy || building} title="Clear the conversation and start again">
+                  <RefreshIcon size={15} /> <span className="hidden sm:inline">Start over</span>
                 </button>
               ) : null}
             </div>
           ) : null}
         </div>
-        <div className="mt-3">
+        <div className="mt-5 overflow-x-auto">
           <StageBar phase={phase} />
         </div>
       </header>

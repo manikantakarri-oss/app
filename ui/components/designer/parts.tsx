@@ -2,7 +2,7 @@
 
 import { ReactNode } from "react";
 import type { DesignerDraft, DesignerMessage, DesignerNewTool, DesignerStep } from "@/lib/api";
-import { CheckIcon, SparkleIcon } from "../icons";
+import { CheckIcon, SearchIcon, SparkleIcon } from "../icons";
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -22,34 +22,32 @@ const PHASES: { key: Phase; label: string }[] = [
 export function StageBar({ phase }: { phase: Phase }) {
   const at = PHASES.findIndex((p) => p.key === phase);
   return (
-    <ol className="flex items-center gap-1.5 sm:gap-2" aria-label="Where you are">
-      {PHASES.map((p, i) => (
-        <li key={p.key} className="flex items-center gap-2">
-          <span className="step-pill !min-h-[32px] !text-[13px]" aria-current={i === at ? "step" : undefined} data-done={i < at ? "true" : "false"}>
-            <span className="step-num !h-5 !w-5">{i < at ? <CheckIcon size={12} /> : i + 1}</span>
-            <span className={i === at ? "" : "hidden sm:inline"}>{p.label}</span>
-            {i < at ? <span className="sr-only"> (done)</span> : null}
-          </span>
-          {i < PHASES.length - 1 ? (
-            <span aria-hidden className="hidden h-px w-8 sm:block" style={{ background: "var(--line)" }} />
-          ) : null}
-        </li>
-      ))}
+    <ol className="dz-steps" aria-label="Where you are">
+      {PHASES.map((p, i) => {
+        const state = i < at ? "done" : i === at ? "now" : "next";
+        return (
+          <li key={p.key} className="flex items-center">
+            <span className="dz-step" data-state={state} aria-current={state === "now" ? "step" : undefined}>
+              <span className="dz-step-dot">{state === "done" ? <CheckIcon size={13} /> : i + 1}</span>
+              <span className={state === "now" ? "" : "hidden sm:inline"}>{p.label}</span>
+              {state === "done" ? <span className="sr-only"> (done)</span> : null}
+            </span>
+            {i < PHASES.length - 1 ? <span aria-hidden className="dz-step-line" data-done={i < at ? "true" : "false"} /> : null}
+          </li>
+        );
+      })}
     </ol>
   );
 }
 
 // --- the conversation ----------------------------------------------------------
 
-export function Mark() {
+/** The designer's mark: a gradient tile with a sparkle, in place of a face. */
+export function Mark({ large }: { large?: boolean }) {
   return (
-    <div
-      aria-hidden
-      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-      style={{ border: "1px solid var(--line)", color: "var(--brand-deep)" }}
-    >
-      <SparkleIcon size={16} />
-    </div>
+    <span aria-hidden className={large ? "dz-mark dz-mark-lg" : "dz-mark"}>
+      <SparkleIcon size={large ? 26 : 16} />
+    </span>
   );
 }
 
@@ -63,18 +61,21 @@ export function Bubble({ m }: { m: DesignerMessage }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-3xl px-4 py-2.5 text-base" style={{ background: "var(--bubble)" }}>
-          {m.content}
-        </div>
+        <div className="dz-user">{m.content}</div>
       </div>
     );
   }
   return (
     <div className="flex gap-3">
       <Mark />
-      <div className="min-w-0 flex-1">
-        <div className="whitespace-pre-wrap break-words text-base leading-relaxed">{m.content}</div>
-        {m.looked?.length ? <p className="mt-1.5 text-[13px] faint">Looked at {listWords(m.looked)}.</p> : null}
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="whitespace-pre-wrap break-words text-[15.5px] leading-relaxed">{m.content}</div>
+        {m.looked?.length ? (
+          <span className="dz-activity mt-2" title="What it checked in your workspace before answering">
+            <SearchIcon size={12} />
+            <span className="truncate">Checked {listWords(m.looked)}</span>
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -113,11 +114,17 @@ export function reach(n: DesignerNewTool): string[] {
   return out;
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, icon, children, flash }: { title: string; icon?: ReactNode; children: ReactNode; flash?: string }) {
   return (
-    <div className="mt-4 first:mt-0">
-      <h4 className="text-[13px] font-semibold uppercase tracking-[0.06em] faint">{title}</h4>
-      <div className="mt-1 text-[15px]">{children}</div>
+    <div className="mt-5 first:mt-0">
+      <h4 className="dz-sec-title">
+        {icon ? <span aria-hidden>{icon}</span> : null}
+        {title}
+      </h4>
+      {/* `flash` changes when the content does, which replays a brief highlight: you see what just changed. */}
+      <div key={flash} className={flash ? "dz-flash mt-2 text-[14.5px]" : "mt-2 text-[14.5px]"}>
+        {children}
+      </div>
     </div>
   );
 }

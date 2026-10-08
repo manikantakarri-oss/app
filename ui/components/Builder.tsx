@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, BuilderTool, DesignerInfo, FileSettings, McpEntry, SourceItem, ToolType } from "@/lib/api";
 import { CardList, Empty, ErrorBox, Select, Spinner, Tag, useLoad } from "./bits";
 import { middleShort } from "@/lib/people";
-import { PlusIcon } from "./icons";
+import { ArrowRightIcon, CheckIcon, PlusIcon, SparkleIcon } from "./icons";
 import { Access, AccessStep, Done, Finished, Section, VolumeField, WizardFrame } from "./BuilderParts";
 import { KnowledgeWizard } from "./KnowledgeBuilder";
 import { GenieWizard } from "./GenieBuilder";
@@ -193,23 +193,54 @@ export function Builder({ onGoto }: { onGoto?: (tab: string) => void }) {
         {designer?.enabled ? (
           <>
             <section
-              className="mb-6 rounded-2xl p-6"
-              style={{ background: "var(--brand-soft)", border: "1px solid var(--brand)" }}
+              className="mb-6 overflow-hidden rounded-2xl"
+              style={{
+                background: "radial-gradient(120% 160% at 0% 0%, var(--brand-soft) 0%, var(--surface) 60%)",
+                border: "1px solid color-mix(in srgb, var(--brand) 45%, var(--line))",
+                boxShadow: "var(--shadow-lg)",
+              }}
               aria-label="Describe it in your own words"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-lg font-semibold">Not sure which to choose? Just describe it.</h3>
-                <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
-              </div>
-              <p className="mt-1 max-w-3xl text-[15px] muted">
-                Tell us what you want in your own words. We ask a few short questions, pick the right kind of assistant, and show you
-                everything before anything is created.
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button type="button" className="btn btn-primary btn-lg" disabled={!designer.ready} onClick={() => setView({ v: "designer" })}>
-                  Describe your assistant →
-                </button>
-                {!designer.ready ? <p className="max-w-xl text-sm muted">{designer.reason}</p> : null}
+              <div className="flex flex-wrap items-center gap-6 p-6 sm:p-7">
+                <span aria-hidden className="dz-mark dz-mark-lg">
+                  <SparkleIcon size={26} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-[19px] font-semibold tracking-tight">Not sure which to choose? Just describe it.</h3>
+                    <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
+                  </div>
+                  <p className="mt-1 max-w-3xl text-[15px] muted">
+                    Say what you want in your own words. A short conversation works out the right kind of assistant, checks what your
+                    workspace already has, and shows you everything before anything is created.
+                  </p>
+                  <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[13px] muted">
+                    <li className="flex items-center gap-1.5">
+                      <span style={{ color: "var(--ok)" }} aria-hidden>
+                        <CheckIcon size={14} />
+                      </span>
+                      Picks the right kind for you
+                    </li>
+                    <li className="flex items-center gap-1.5">
+                      <span style={{ color: "var(--ok)" }} aria-hidden>
+                        <CheckIcon size={14} />
+                      </span>
+                      Reuses the tools and data you have
+                    </li>
+                    <li className="flex items-center gap-1.5">
+                      <span style={{ color: "var(--ok)" }} aria-hidden>
+                        <CheckIcon size={14} />
+                      </span>
+                      Tests it before you share it
+                    </li>
+                  </ul>
+                </div>
+                <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
+                  <button type="button" className="btn btn-primary btn-lg" disabled={!designer.ready} onClick={() => setView({ v: "designer" })}>
+                    Describe your assistant <ArrowRightIcon size={16} />
+                  </button>
+                  {!designer.ready ? <p className="max-w-xs text-sm muted">{designer.reason}</p> : null}
+                </div>
               </div>
             </section>
             <div className="mb-4 flex items-center gap-3 text-sm muted">
