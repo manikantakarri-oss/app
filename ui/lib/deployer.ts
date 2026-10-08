@@ -8,6 +8,8 @@ export type DeploySession = {
   mode: "apps" | "local" | "actions";
   repo: string;
   actions_url: string;
+  /** The UI build the server ships; differs from this page's after an update. */
+  build?: string;
 };
 
 export type DeployStatus = "requested" | "running" | "succeeded" | "failed" | "rolled_back";
@@ -172,7 +174,8 @@ export const dapi = {
   test: (f: ClientForm) => send<TestResult>("POST", "/api/clients/test", f),
   add: (f: ClientForm) => send<{ id: string }>("POST", "/api/clients", f),
   edit: (id: string, f: ClientForm) => send<{ id: string }>("PATCH", `/api/clients/${enc(id)}`, f),
-  remove: (id: string) => send<{ ok: boolean }>("DELETE", `/api/clients/${enc(id)}`),
+  remove: (id: string) => send<{ ok: boolean }>("DELETE", `/api/clients/${enc(id)}?only_here=true`),
+  version: () => send<{ build: string }>("GET", "/api/version"),
   uninstall: (id: string, history: boolean) => send<{ deploy_id: string }>("POST", `/api/clients/${enc(id)}/uninstall`, { history }),
   deploy: (id: string, version: string) => send<{ deploy_id: string; version: string }>("POST", `/api/clients/${enc(id)}/deploy`, { version }),
   rollback: (id: string, version = "") =>

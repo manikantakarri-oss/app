@@ -34,6 +34,24 @@ const POLL_MS = 15000;
 
 export default function DeployerPage() {
   const [session, setSession] = useState<DeploySession | null>(null);
+  // The deployer was updated while this page was open: offer a reload.
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    const mine = session?.build;
+    if (!mine) return;
+    const check = () =>
+      dapi
+        .version()
+        .then((v) => setStale(!!v.build && v.build !== mine))
+        .catch(() => {});
+    const t = setInterval(check, 60000);
+    const onFocus = () => check();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [session?.build]);
   const [fatal, setFatal] = useState("");
   const [view, setView] = useState<View>({ page: "clients" });
   const [drawer, setDrawer] = useState(false);
@@ -229,6 +247,18 @@ export default function DeployerPage() {
           </div>
         </header>
 
+        {stale ? (
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-[13.5px] lg:px-8"
+            style={{ background: "var(--brand-soft)", color: "var(--brand-deep)", borderBottom: "1px solid var(--line)" }}
+          >
+            <span className="min-w-0 font-medium">The deployer was updated. Reload to use the latest version before you change anything.</span>
+            <button type="button" className="btn btn-primary !min-h-0 !py-1.5" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
+        ) : null}
         <main className="mx-auto w-full max-w-[1440px] px-4 pb-20 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           {view.page === "clients" ? (
             <ClientsPage

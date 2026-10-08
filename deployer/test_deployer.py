@@ -635,42 +635,22 @@ def _():
     raises(gamconn.parse_key, '{"type": "service_account", "client_email": "a"}', contains="missing private_key")
 
 
-@case("uninstall: removes the portal app, only the tool apps it installed, the tool secrets and its folders; history only if asked")
+@case("uninstall: removes only the portal app and its files; assistants, tools and tool keys stay; history only if asked")
 def _():
     import uninstall
 
     api = FakeApi()
-    orig = api.call
-    apps = [{"name": "agent-portal"},
-            {"name": "mcp-gam", "active_deployment": {"source_code_path": "/Workspace/Shared/agent-portal-mcps/gam"}},
-            {"name": "their-own-app", "active_deployment": {"source_code_path": "/Workspace/Users/x/app"}}]
-
-    def call(method, path, **kw):
-        if path == "/api/2.0/apps" and method == "GET":
-            api.calls.append((method, path, None))
-            return {"apps": apps}
-        if path == "/api/2.0/secrets/scopes/delete":
-            api.calls.append((method, path, kw.get("json")))
-            raise DeployError("Scope agent-portal does not exist!", 404)  # already gone: fine
-        return orig(method, path, **kw)
-    api.call = call
     c = {"app": "agent-portal", "client_id": "cid", "log_table": "cat.sch.portal_logs", "warehouse": ""}
     done, problems = uninstall.run(api, c, lambda s: None)
-    deleted = [x[1] for x in api.calls if x[0] == "DELETE"]
-    assert deleted == ["/api/2.0/apps/agent-portal", "/api/2.0/apps/mcp-gam"], deleted  # never their own app
-    paths = [x[2]["path"] for x in api.calls if x[1] == "/api/2.0/workspace/delete"]
-    assert paths == ["/Workspace/Users/cid/agent-portal/agent-portal", "/Workspace/Shared/agent-portal-mcps"], paths
+    assert [x[1] for x in api.calls if x[0] == "DELETE"] == ["/api/2.0/apps/agent-portal"], api.calls
+    assert [x[2]["path"] for x in api.calls if x[1] == "/api/2.0/workspace/delete"] == ["/Workspace/Users/cid/agent-portal/agent-portal"]
+    touched = " ".join(x[1] for x in api.calls)
+    assert "secrets" not in touched and "agent-portal-mcps" not in str(api.calls) and "serving-endpoints" not in touched
     assert not problems and not api.made("POST", "/sql/statements")  # history kept unless asked
     api.calls.clear()
     uninstall.run(api, c, lambda s: None, history=True)
     drops = [x[2]["statement"] for x in api.calls if x[1] == "/api/2.0/sql/statements"]
     assert drops == ["DROP TABLE IF EXISTS `cat`.`sch`.`%s`" % t for t in ("portal_logs", "portal_chats", "portal_events")], drops
-    # another portal in the same workspace: the shared tools and keys stay
-    apps.append({"name": "portal-two", "active_deployment": {"source_code_path": "/Workspace/Users/y/agent-portal/portal-two/v1.0.0"}})
-    api.calls.clear()
-    done, problems = uninstall.run(api, c, lambda s: None)
-    assert [x[1] for x in api.calls if x[0] == "DELETE"] == ["/api/2.0/apps/agent-portal"], api.calls
-    assert not any(x[1] == "/api/2.0/secrets/scopes/delete" for x in api.calls) and "portal-two" in done[-2], done
 
 
 @case("uninstall: a refusal fails the job, so the deployer keeps the client to retry")
@@ -937,6 +917,18 @@ def _():
         r = c.post("/api/clients/client-acme/deploy", json={"version": "v1.0.0", "actor": "spoof@x.io"},
                    headers={"X-Forwarded-Access-Token": "ADMIN"})
         assert r.status_code == 200 and seen == ["real@x.io"]
+        # a plain DELETE (a page from before "Remove everywhere") is refused; only an explicit "only here" forgets
+        gone = []
+        saved_remove = clients.remove
+        clients.remove = lambda env: gone.append(env)
+        try:
+            r = c.delete("/api/clients/client-acme", headers={"X-Forwarded-Access-Token": "ADMIN"})
+            assert r.status_code == 409 and "out of date" in r.json()["detail"] and not gone
+            r = c.delete("/api/clients/client-acme?only_here=true", headers={"X-Forwarded-Access-Token": "ADMIN"})
+            assert r.status_code == 200 and gone == ["client-acme"]
+        finally:
+            clients.remove = saved_remove
+        assert c.get("/api/version").json()["build"] == deployer_app.BUILD
     finally:
         deployer_app.me = saved
         clients.start = saved_start

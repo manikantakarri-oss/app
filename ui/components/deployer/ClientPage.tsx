@@ -1012,7 +1012,7 @@ function Settings({
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState(false);
   const [typed, setTyped] = useState("");
-  const [dropHistory, setDropHistory] = useState(false);
+  const [dropHistory, setDropHistory] = useState(true); // everything goes except the assistants
   // The removal job being followed; picks up one already running (c.removing).
   const [removalId, setRemovalId] = useState(c.removing || "");
   const [removalErr, setRemovalErr] = useState("");
@@ -1216,7 +1216,7 @@ function Settings({
       <section className="rounded-2xl p-5" style={{ border: "1px solid color-mix(in srgb, var(--err) 35%, var(--line))" }}>
         <h3 className="text-[15px] font-semibold">Remove this client</h3>
         <p className="mt-1 text-[13px] muted">
-          Takes the portal out of their workspace, then removes them here. If anything cannot be removed, nothing is removed here, so you can fix
+          Takes the portal out of their workspace (their assistants and the tools they use stay), then removes them here. If anything cannot be removed, nothing is removed here, so you can fix
           it and try again.
         </p>
         {removalId ? (
@@ -1236,8 +1236,6 @@ function Settings({
                 </p>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px]">
                   <li>The portal app ({c.app_name || "agent-portal"}) and everyone&apos;s access to it</li>
-                  <li>Tools the portal installed, such as the media planner</li>
-                  <li>Stored tool keys, such as their Google Ad Manager key</li>
                   <li>The portal&apos;s files</li>
                   {dropHistory ? <li>Chat history and activity logs</li> : null}
                 </ul>
@@ -1246,6 +1244,7 @@ function Settings({
                 <p className="text-[13px] font-semibold">Kept</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] muted">
                   <li>Their assistants: they belong to their workspace and work without the portal</li>
+                  <li>The tools (MCPs) their assistants use, such as the media planner, with their keys (e.g. Google Ad Manager)</li>
                   {!dropHistory ? <li>Chat history and activity logs{c.log_table ? ` (${c.log_table.split(".").slice(0, 2).join(".")})` : ""}</li> : null}
                   <li>The installer login (agent-portal-deployer): their admin deletes it</li>
                   <li>The deploy history here</li>
@@ -1254,10 +1253,10 @@ function Settings({
             </div>
             {c.log_table ? (
               <label className="flex cursor-pointer items-start gap-3">
-                <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={dropHistory} onChange={(e) => setDropHistory(e.target.checked)} />
+                <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={!dropHistory} onChange={(e) => setDropHistory(!e.target.checked)} />
                 <span className="min-w-0">
-                  <span className="block text-[14px] font-medium">Also delete their chat history and activity logs</span>
-                  <span className="block text-[13px] faint">Everyone&apos;s saved conversations are gone for good. This cannot be undone.</span>
+                  <span className="block text-[14px] font-medium">Keep their chat history and activity logs</span>
+                  <span className="block text-[13px] faint">Unticked, everyone&apos;s saved conversations are deleted for good with the rest.</span>
                 </span>
               </label>
             ) : null}
@@ -1280,7 +1279,7 @@ function Settings({
                 onClick={() => {
                   setRemoving(false);
                   setTyped("");
-                  setDropHistory(false);
+                  setDropHistory(true);
                   setRemovalErr("");
                 }}
               >

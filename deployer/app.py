@@ -36,6 +36,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
 GROUP = os.environ.get("DEPLOYER_GROUP") or "admins"
 
+
+def _build() -> str:
+    """Which UI build this server ships (it changes with every UI build). An
+    open page compares it with its own and asks for a reload when they differ:
+    a page left open across an update ran old buttons (seen live: an old Remove
+    forgot two clients without cleaning their workspaces)."""
+    import hashlib
+
+    try:
+        with open(os.path.join(WEB, "index.html"), "rb") as fh:
+            return hashlib.sha1(fh.read()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+BUILD = _build()
+
 app = FastAPI(title="Portal Deployer", docs_url="/api/docs", openapi_url="/api/openapi.json")
 _who: dict = {}
 
@@ -83,7 +100,13 @@ def allowed(forwarded: str | None) -> dict:
 @app.get("/api/session")
 def session(x_forwarded_access_token: str = Header(None)):
     who = me(x_forwarded_access_token)
-    return {**who, "mode": home.mode(), "repo": ghub.repo(), "actions_url": ghub.actions_url()}
+    return {**who, "mode": home.mode(), "repo": ghub.repo(), "actions_url": ghub.actions_url(), "build": BUILD}
+
+
+@app.get("/api/version")
+def version():
+    """The UI build this server ships; open pages poll it to offer a reload."""
+    return {"build": BUILD}
 
 
 @app.get("/api/setup")
@@ -128,9 +151,13 @@ def edit_client(env: str, payload: dict = Body(...), x_forwarded_access_token: s
 
 
 @app.delete("/api/clients/{env}")
-def delete_client(env: str, x_forwarded_access_token: str = Header(None)):
-    """Forget the client here only; their workspace is left as it is."""
+def delete_client(env: str, only_here: bool = False, x_forwarded_access_token: str = Header(None)):
+    """Forget the client here only; their workspace is left as it is. Must be
+    asked for by name (`only_here=true`): a page from before "Remove
+    everywhere" sent a plain DELETE and silently skipped the clean-up."""
     who = allowed(x_forwarded_access_token)
+    if not only_here:
+        raise DeployError("This page is out of date. Reload it (Ctrl+Shift+R), then remove the client again.", 409)
     clients.remove(env)
     log.info("client %s removed (deployer only) by %s", env, who["user_name"])
     return {"ok": True}
