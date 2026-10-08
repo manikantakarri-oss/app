@@ -5,7 +5,7 @@ import { Client, Release, Setup } from "@/lib/deployer";
 import { Card, Chips, Find, Quiet } from "@/components/Ops";
 import { ErrorBox, Notice, Pager, usePage } from "@/components/bits";
 import { BuildingIcon, PlusIcon, PulseIcon, RocketIcon, SparkleIcon, TagIcon } from "@/components/icons";
-import { ago, ClientMark, compareVersions, DeployTag, HealthTag, hostLabel, latestStable, NextStep, PageHead, person, verb, Version } from "./parts";
+import { ago, ClientMark, compareVersions, DeployTag, HealthTag, hostLabel, latestStable, NextStep, PageHead, person, ver, verb, Version } from "./parts";
 
 type Filter = "" | "attention" | "updates" | "deploying" | "never";
 
@@ -206,7 +206,7 @@ export function ClientsPage({
                         {c.in_progress
                           ? `${c.in_progress.version} · ${c.in_progress.step}`
                           : c.last_deploy
-                            ? `${verb(c.last_deploy)} ${c.last_deploy.version} · ${ago(c.last_deploy.started || c.last_deploy.at)}`
+                            ? `${verb(c.last_deploy)} ${ver(c.last_deploy)} · ${ago(c.last_deploy.started || c.last_deploy.at)}`
                             : c.ready
                               ? "Never deployed"
                               : "Settings incomplete"}
@@ -271,7 +271,7 @@ export function ClientsPage({
                             <span className="flex flex-col items-start gap-1">
                               <DeployTag row={c.last_deploy} />
                               <span className="block max-w-full truncate text-xs faint">
-                                {verb(c.last_deploy)} {c.last_deploy.version} · {person(c.last_deploy.actor)} · {ago(c.last_deploy.started || c.last_deploy.at)}
+                                {verb(c.last_deploy)} {ver(c.last_deploy)} · {person(c.last_deploy.actor)} · {ago(c.last_deploy.started || c.last_deploy.at)}
                               </span>
                             </span>
                           ) : (

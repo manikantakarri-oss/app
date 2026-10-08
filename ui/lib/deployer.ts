@@ -16,7 +16,7 @@ export type HealthStatus = "healthy" | "degraded" | "down" | "unverified";
 export type DeployRow = {
   deploy_id: string;
   client: string;
-  action: "deploy" | "rollback" | "auto_rollback";
+  action: "deploy" | "rollback" | "auto_rollback" | "uninstall";
   version: string;
   from_version: string;
   status: DeployStatus;
@@ -86,6 +86,8 @@ export type Client = {
   brand_name: string;
   brand_color: string;
   /** Google Ad Manager connection (for the media planner tool): network code, signed-in account. */
+  /** Id of the removal job while the client is being taken out of its workspace. */
+  removing?: string;
   gam_network: string;
   gam_account: string;
   /** PNG data URL, or "". */
@@ -171,6 +173,7 @@ export const dapi = {
   add: (f: ClientForm) => send<{ id: string }>("POST", "/api/clients", f),
   edit: (id: string, f: ClientForm) => send<{ id: string }>("PATCH", `/api/clients/${enc(id)}`, f),
   remove: (id: string) => send<{ ok: boolean }>("DELETE", `/api/clients/${enc(id)}`),
+  uninstall: (id: string, history: boolean) => send<{ deploy_id: string }>("POST", `/api/clients/${enc(id)}/uninstall`, { history }),
   deploy: (id: string, version: string) => send<{ deploy_id: string; version: string }>("POST", `/api/clients/${enc(id)}/deploy`, { version }),
   rollback: (id: string, version = "") =>
     send<{ deploy_id: string; version: string }>("POST", `/api/clients/${enc(id)}/rollback`, { version }),

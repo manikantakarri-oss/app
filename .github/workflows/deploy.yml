@@ -16,10 +16,10 @@ on:
         required: true
         type: string
       action:
-        description: "deploy or rollback"
+        description: "deploy, rollback, or uninstall (take the portal out of the client's workspace)"
         required: true
         type: choice
-        options: [deploy, rollback]
+        options: [deploy, rollback, uninstall]
         default: deploy
       deploy_id:
         description: "Id for the deployment record (the deployer fills it in; any UUID by hand)"
@@ -27,6 +27,11 @@ on:
         type: string
       actor:
         description: "Who asked (the deployer fills it in)"
+        required: false
+        type: string
+        default: ""
+      purge:
+        description: "uninstall only: 'history' also deletes the chat history and logs"
         required: false
         type: string
         default: ""
@@ -43,4 +48,5 @@ jobs:
       action: ${{ inputs.action }}
       deploy_id: ${{ inputs.deploy_id }}
       actor: ${{ inputs.actor }}
+      purge: ${{ inputs.purge }}
     secrets: inherit

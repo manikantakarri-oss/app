@@ -29,6 +29,7 @@ import {
   NextStep,
   OpenRow,
   person,
+  ver,
   verb,
   Version,
   when,
@@ -432,7 +433,7 @@ function Overview({
               ) : null}
               {last && last !== live && last.status !== "succeeded" ? (
                 <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                  Last attempt: {verb(last)} {last.version} <DeployTag row={last} /> {ago(last.started || last.at)}
+                  Last attempt: {verb(last)} {ver(last)} <DeployTag row={last} /> {ago(last.started || last.at)}
                 </span>
               ) : null}
             </>
@@ -568,7 +569,7 @@ function merged(deploys: DeployRow[], checks: HealthRow[]): Item[] {
       icon: d.action === "deploy" ? <RocketIcon size={14} /> : <UndoIcon size={14} />,
       title: (
         <>
-          {verb(d)} <b>{d.version}</b>
+          {verb(d)} <b>{ver(d)}</b>
           {d.from_version && d.from_version !== d.version ? <span className="faint"> from {d.from_version}</span> : null}
         </>
       ),
@@ -754,7 +755,7 @@ function Progress({ deployId, onDone }: { deployId: string; onDone: () => void }
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3.5" style={{ borderColor: "var(--line)" }}>
         <div className="flex min-w-0 items-center gap-3">
           {!ended ? <Spinner /> : null}
-          <h2 className="truncate text-[15px] font-semibold">{cur ? `${verb(cur)} ${cur.version}` : "Starting"}</h2>
+          <h2 className="truncate text-[15px] font-semibold">{cur ? `${verb(cur)} ${ver(cur)}`.trim() : "Starting"}</h2>
           {cur ? <DeployTag row={cur} /> : null}
         </div>
         <span className="flex items-center gap-3 text-[13px] faint">
@@ -1011,6 +1012,10 @@ function Settings({
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState(false);
   const [typed, setTyped] = useState("");
+  const [dropHistory, setDropHistory] = useState(false);
+  // The removal job being followed; picks up one already running (c.removing).
+  const [removalId, setRemovalId] = useState(c.removing || "");
+  const [removalErr, setRemovalErr] = useState("");
   const [pending, setPending] = useState(false);
   const [applying, setApplying] = useState(false);
   const slug = c.id.replace(/^client-/, "");
@@ -1041,13 +1046,44 @@ function Settings({
     }
   }
 
-  async function remove() {
+  async function removeEverywhere() {
+    setSaving(true);
+    setRemovalErr("");
+    try {
+      const r = await dapi.uninstall(c.id, dropHistory);
+      setRemovalId(r.deploy_id);
+    } catch (e: any) {
+      setRemovalErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removalDone() {
+    try {
+      const s = await dapi.status(removalId);
+      if (s.current.status === "succeeded") {
+        onRemoved();
+        return;
+      }
+      setRemovalErr(
+        (s.current.message || "The removal did not finish.") +
+          " Nothing was removed from the deployer. Fix it and try again, or use \"Only remove it here\"."
+      );
+    } catch (e: any) {
+      setRemovalErr(e.message);
+    }
+    setRemovalId("");
+    setTyped("");
+  }
+
+  async function removeHereOnly() {
     setSaving(true);
     try {
       await dapi.remove(c.id);
       onRemoved();
     } catch (e: any) {
-      setErr(e.message);
+      setRemovalErr(e.message);
       setSaving(false);
     }
   }
@@ -1180,38 +1216,91 @@ function Settings({
       <section className="rounded-2xl p-5" style={{ border: "1px solid color-mix(in srgb, var(--err) 35%, var(--line))" }}>
         <h3 className="text-[15px] font-semibold">Remove this client</h3>
         <p className="mt-1 text-[13px] muted">
-          Stops deploying to them and deletes their secret from GitHub. The portal keeps running in their workspace, and the history stays on record.
+          Takes the portal out of their workspace, then removes them here. If anything cannot be removed, nothing is removed here, so you can fix
+          it and try again.
         </p>
-        {!removing ? (
+        {removalId ? (
+          <div className="mt-4">
+            <Progress deployId={removalId} onDone={removalDone} />
+          </div>
+        ) : !removing ? (
           <button type="button" className="btn btn-quiet mt-3" onClick={() => setRemoving(true)}>
             Remove client…
           </button>
         ) : (
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <Field label={`Type ${slug} to confirm`}>
-              <input className="field w-60" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
-            </Field>
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ ["--btn-from" as any]: "var(--err)", ["--btn-to" as any]: "var(--err)" }}
-              disabled={typed !== slug || saving}
-              onClick={remove}
-            >
-              Remove
-            </button>
-            <button
-              type="button"
-              className="btn btn-quiet"
-              onClick={() => {
-                setRemoving(false);
-                setTyped("");
-              }}
-            >
-              Cancel
-            </button>
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl p-4" style={{ background: "var(--err-bg)" }}>
+                <p className="text-[13px] font-semibold" style={{ color: "var(--err)" }}>
+                  Removed from their workspace
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px]">
+                  <li>The portal app ({c.app_name || "agent-portal"}) and everyone&apos;s access to it</li>
+                  <li>Tools the portal installed, such as the media planner</li>
+                  <li>Stored tool keys, such as their Google Ad Manager key</li>
+                  <li>The portal&apos;s files</li>
+                  {dropHistory ? <li>Chat history and activity logs</li> : null}
+                </ul>
+              </div>
+              <div className="rounded-xl p-4" style={{ background: "var(--bubble)" }}>
+                <p className="text-[13px] font-semibold">Kept</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] muted">
+                  <li>Their assistants: they belong to their workspace and work without the portal</li>
+                  {!dropHistory ? <li>Chat history and activity logs{c.log_table ? ` (${c.log_table.split(".").slice(0, 2).join(".")})` : ""}</li> : null}
+                  <li>The installer login (agent-portal-deployer): their admin deletes it</li>
+                  <li>The deploy history here</li>
+                </ul>
+              </div>
+            </div>
+            {c.log_table ? (
+              <label className="flex cursor-pointer items-start gap-3">
+                <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--brand)]" checked={dropHistory} onChange={(e) => setDropHistory(e.target.checked)} />
+                <span className="min-w-0">
+                  <span className="block text-[14px] font-medium">Also delete their chat history and activity logs</span>
+                  <span className="block text-[13px] faint">Everyone&apos;s saved conversations are gone for good. This cannot be undone.</span>
+                </span>
+              </label>
+            ) : null}
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label={`Type ${slug} to confirm`}>
+                <input className="field w-60" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
+              </Field>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ ["--btn-from" as any]: "var(--err)", ["--btn-to" as any]: "var(--err)" }}
+                disabled={typed !== slug || saving}
+                onClick={removeEverywhere}
+              >
+                {saving ? "Starting…" : "Remove everywhere"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-quiet"
+                onClick={() => {
+                  setRemoving(false);
+                  setTyped("");
+                  setDropHistory(false);
+                  setRemovalErr("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            <p className="text-[13px] faint">
+              Their workspace no longer exists, or no longer lets the installer in?{" "}
+              <button type="button" className="underline" disabled={typed !== slug || saving} onClick={removeHereOnly}>
+                Only remove it here
+              </button>{" "}
+              (their workspace is left as it is; type the name above first).
+            </p>
           </div>
         )}
+        {removalErr ? (
+          <div className="mt-3">
+            <ErrorBox>{removalErr}</ErrorBox>
+          </div>
+        ) : null}
       </section>
     </div>
   );

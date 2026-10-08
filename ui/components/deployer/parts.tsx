@@ -49,7 +49,7 @@ export const DEPLOY: Record<DeployStatus, { label: string; tone: "ok" | "warn" |
 
 export function DeployTag({ row }: { row: DeployRow }) {
   const d = DEPLOY[row.status] || { label: row.status, tone: "muted" as const };
-  const label = row.status === "succeeded" && row.action !== "deploy" ? "Restored" : d.label;
+  const label = row.status === "succeeded" && row.action === "uninstall" ? "Removed" : row.status === "succeeded" && row.action !== "deploy" ? "Restored" : d.label;
   return <Tag tone={d.tone}>{label}</Tag>;
 }
 
@@ -66,9 +66,15 @@ export function Version({ v, dim }: { v: string; dim?: boolean }) {
 }
 
 export function verb(r: DeployRow) {
+  if (r.action === "uninstall") return "Removal from their workspace";
   if (r.action === "auto_rollback") return "Automatic rollback to";
   if (r.action === "rollback") return "Rollback to";
   return "Deploy";
+}
+
+/** The version shown after verb(); a removal has none. */
+export function ver(r: DeployRow) {
+  return r.action === "uninstall" ? "" : r.version;
 }
 
 export function ago(iso?: string) {

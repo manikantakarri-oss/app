@@ -16,6 +16,7 @@ on:
       action: {required: false, type: string, default: deploy}
       deploy_id: {required: true, type: string}
       actor: {required: false, type: string, default: ""}
+      purge: {required: false, type: string, default: ""}
 
 permissions:
   contents: read
@@ -52,6 +53,7 @@ jobs:
           ACTION: ${{ inputs.action }}
           DEPLOY_ID: ${{ inputs.deploy_id }}
           ACTOR: ${{ inputs.actor || github.actor }}
+          PURGE: ${{ inputs.purge }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}

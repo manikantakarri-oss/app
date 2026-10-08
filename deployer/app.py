@@ -129,10 +129,20 @@ def edit_client(env: str, payload: dict = Body(...), x_forwarded_access_token: s
 
 @app.delete("/api/clients/{env}")
 def delete_client(env: str, x_forwarded_access_token: str = Header(None)):
+    """Forget the client here only; their workspace is left as it is."""
     who = allowed(x_forwarded_access_token)
     clients.remove(env)
-    log.info("client %s removed by %s", env, who["user_name"])
+    log.info("client %s removed (deployer only) by %s", env, who["user_name"])
     return {"ok": True}
+
+
+@app.post("/api/clients/{env}/uninstall")
+def uninstall_client(env: str, payload: dict = Body(default={}), x_forwarded_access_token: str = Header(None)):
+    """Take the portal out of their workspace, then forget the client (follow it with /api/deploys/{id})."""
+    who = allowed(x_forwarded_access_token)
+    out = clients.uninstall(env, who["user_name"], bool(payload.get("history")))
+    log.info("client %s: removal started by %s%s", env, who["user_name"], " (with history)" if payload.get("history") else "")
+    return out
 
 
 @app.post("/api/clients/{env}/deploy")

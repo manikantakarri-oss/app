@@ -141,6 +141,13 @@ def clean_brand(payload: dict) -> dict:
 
 # --- reading ----------------------------------------------------------------
 
+def _removal_finished(deploy_id: str) -> bool:
+    try:
+        return status(deploy_id)["current"].get("status") == "succeeded"
+    except DeployError:
+        return False
+
+
 def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: str) -> dict:
     live = [d for d in deploys if d["status"] not in registry.FINAL]
     last = deploys[0] if deploys else None
@@ -154,6 +161,7 @@ def _view(env: str, v: dict, deploys: list[dict], health: dict | None, current: 
         "warehouse_id": v.get("WAREHOUSE_ID", ""),
         "users_group": v.get("USERS_GROUP", ""),
         "share_agents": (v.get("SHARE_AGENTS") or "").lower() != "none",
+        "removing": v.get("REMOVING", ""),
         "gam_network": v.get("GAM_NETWORK_CODE", ""),
         "gam_account": v.get("GAM_ACCOUNT", ""),
         # "" = newest catalog version; tools None = all, [] = none.
@@ -191,9 +199,14 @@ def list_all() -> dict:
     by_client: dict = {}
     for d in deploys:
         by_client.setdefault(d["client"], []).append(d)
-        if d["status"] == "succeeded" and d["client"] not in current:
+        if d["status"] == "succeeded" and d.get("action") != "uninstall" and d["client"] not in current:
             current[d["client"]] = d["version"]
-    out = [_view(env, f_vars[env].result(), by_client.get(env, []), healths.get(env), current.get(env, "")) for env in envs]
+    out = []
+    for env in envs:
+        v = f_vars[env].result()
+        if v.get("REMOVING") and _removal_finished(v["REMOVING"]):
+            continue  # its uninstall just succeeded, so the client is gone
+        out.append(_view(env, v, by_client.get(env, []), healths.get(env), current.get(env, "")))
     return {"clients": out, "note": note, "repo": ghub.repo(), "actions_url": ghub.actions_url()}
 
 
@@ -205,7 +218,7 @@ def detail(env: str) -> dict:
     f_g = _pool.submit(ghub.secret_set, env, GAM_SECRET)
     v = ghub.variables(env)
     deploys, health = f_d.result(), f_h.result()
-    current = next((d["version"] for d in deploys if d["status"] == "succeeded"), "")
+    current = next((d["version"] for d in deploys if d["status"] == "succeeded" and d.get("action") != "uninstall"), "")
     view = _view(env, v, deploys, health[0] if health else None, current)
     view["secret_set_at"] = f_s.result()
     view["gam_key_set_at"] = f_g.result()
@@ -317,9 +330,54 @@ def update(env: str, payload: dict) -> dict:
 
 
 def remove(env: str) -> None:
+    """Forget the client here only (its workspace is left as it is): for a
+    workspace that no longer exists or no longer lets the installer in."""
     if env not in ghub.clients():
         raise DeployError("There is no client %s." % env, 404)
     ghub.remove(env)
+
+
+def uninstall(env: str, actor: str, history: bool = False) -> dict:
+    """Remove the client everywhere: a job takes the portal out of their
+    workspace (deploy.py, action `uninstall`), and only when that succeeds is
+    the client forgotten here (`status` does it), so a failure leaves
+    everything in place to retry. While it runs, deploys are refused."""
+    if not CLIENT_RE.match(env) or env not in ghub.clients():
+        raise DeployError("There is no client %s." % env, 404)
+    v = ghub.variables(env)
+    if not (v.get("DATABRICKS_HOST") and v.get("DATABRICKS_CLIENT_ID")) or not ghub.secret_set(env, SECRET):
+        raise DeployError("The deployer cannot sign in to this client's workspace (its settings are incomplete), so it "
+                          "cannot clean it up. Use \"Only remove it here\" instead.", 409)
+    busy = _in_flight(env)
+    if busy:
+        raise DeployError("Something is already running for this client. Wait for it to finish.", 409)
+    deploy_id = str(uuid.uuid4())
+    registry.record(deploy_id, env, action="uninstall", version="-", status="requested",
+                    step="Waiting for GitHub to start the job", actor=actor, detail={"history": history})
+    ghub.set_vars(env, {"REMOVING": deploy_id})
+    try:
+        ghub.dispatch("deploy.yml", {"client": env, "version": "-", "action": "uninstall", "deploy_id": deploy_id,
+                                     "actor": actor, "purge": "history" if history else ""})
+    except DeployError as exc:
+        ghub.set_vars(env, {"REMOVING": ""})
+        registry.safe(registry.record, deploy_id, env, action="uninstall", version="-", status="failed",
+                      step="GitHub did not start the job", message=str(exc), actor=actor)
+        raise
+    return {"deploy_id": deploy_id}
+
+
+def _finish_removal(env: str, deploy_id: str, ok: bool) -> None:
+    """After an uninstall: forget the client when it worked; otherwise allow
+    deploys again (and another try)."""
+    try:
+        if env not in ghub.clients() or ghub.variables(env).get("REMOVING") != deploy_id:
+            return
+        if ok:
+            ghub.remove(env)
+        else:
+            ghub.set_vars(env, {"REMOVING": ""})
+    except DeployError:
+        pass  # tried again on the next look at the client list
 
 
 def _in_flight(env: str) -> dict | None:
@@ -339,9 +397,12 @@ def start(env: str, version: str, action: str, actor: str) -> dict:
     if action not in ("deploy", "rollback"):
         raise DeployError("Unknown action.")
     v = ghub.variables(env)
+    if v.get("REMOVING"):
+        raise DeployError("This client is being removed.", 409)
     if not (v.get("DATABRICKS_HOST") and v.get("DATABRICKS_CLIENT_ID")) or not ghub.secret_set(env, SECRET):
         raise DeployError("This client's settings are incomplete. Add its workspace address, application id and secret.", 409)
-    current = next((d["version"] for d in registry.latest_deploys(env, 200) if d["status"] == "succeeded"), "")
+    current = next((d["version"] for d in registry.latest_deploys(env, 200)
+                    if d["status"] == "succeeded" and d.get("action") != "uninstall"), "")
     if action == "rollback" and not version:
         version = registry.last_good(env, other_than=current)
         if not version:
@@ -395,7 +456,10 @@ def status(deploy_id: str) -> dict:
                           from_version=last.get("from_version") or "", status="failed", step="Stopped", message=why,
                           actor=last.get("actor") or "", run_url=(run or {}).get("url") or last.get("run_url") or "")
             steps = registry.steps(deploy_id) or steps
-    return {"steps": steps, "current": steps[-1], "run": run}
+    last = steps[-1]
+    if last.get("action") == "uninstall" and last["status"] in registry.FINAL:
+        _finish_removal(last["client"], deploy_id, last["status"] == "succeeded")
+    return {"steps": steps, "current": last, "run": run}
 
 
 PARALLEL = (1, 3, 5, 10)
@@ -419,7 +483,7 @@ def rollout(version: str, envs: list, canary: str, parallel: int, actor: str) ->
     deploys = registry.latest_deploys(limit=2000)
     current, busy = {}, set()
     for d in deploys:  # newest first
-        if d["status"] == "succeeded" and d["client"] not in current:
+        if d["status"] == "succeeded" and d.get("action") != "uninstall" and d["client"] not in current:
             current[d["client"]] = d["version"]
         started = _ts(d.get("started") or d.get("at"))
         if d["status"] not in registry.FINAL and started and _now() - started < dt.timedelta(hours=1):

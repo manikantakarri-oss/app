@@ -83,9 +83,12 @@ def config(env: dict) -> dict:
     # workflow's shell, and are checked before use.
     if not CLIENT_RE.match(c["client"]):
         raise DeployError("Unknown client %r." % c["client"])
-    if not VERSION_RE.match(c["version"]):
+    if c["action"] == "uninstall":
+        c["version"] = "-"
+        c["purge_history"] = (env.get("PURGE") or "").strip().lower() == "history"
+    elif not VERSION_RE.match(c["version"]):
         raise DeployError("Not a release version: %r" % c["version"])
-    if c["action"] not in ("deploy", "rollback"):
+    if c["action"] not in ("deploy", "rollback", "uninstall"):
         raise DeployError("Unknown action %r." % c["action"])
     if not ID_RE.match(c["deploy_id"]):
         raise DeployError("Bad deploy id.")
@@ -247,6 +250,26 @@ def run(c: dict, rec: Recorder, api: Api, scopes: list[str], workdir: str, **kw)
     return 0
 
 
+def remove_everything(api: Api, c: dict, rec: Recorder) -> int:
+    """The client is being removed: take the portal out of their workspace.
+    Succeeds only when nothing was refused, since the deployer then forgets
+    the client (and its secret) for good."""
+    import uninstall
+
+    try:
+        done, problems = uninstall.run(api, c, rec.say, history=c.get("purge_history", False))
+    except DeployError as exc:
+        rec("failed", "Could not remove the portal", str(exc))
+        return 1
+    rec.warnings += problems
+    if problems:
+        rec("failed", "Not everything could be removed", "; ".join(problems)[:900], removed=done)
+        return 1
+    rec("succeeded", "Removed from their workspace", "Removed " + (", ".join(done) if done else "nothing (it was already gone)") + ".",
+        removed=done)
+    return 0
+
+
 def main() -> int:
     try:
         c = config(dict(os.environ))
@@ -261,6 +284,8 @@ def main() -> int:
     except DeployError as exc:
         rec("failed", "Could not sign in", str(exc))
         return 1
+    if c["action"] == "uninstall":
+        return remove_everything(api, c, rec)
     with tempfile.TemporaryDirectory() as workdir:
         code = run(c, rec, api, scopes, workdir)
     if code:
