@@ -25,12 +25,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import access
+import attachments
 import audit
 import builder
 import chat
 import genie
 import knowledge
 import chats
+import connections
 import dashboard
 import designer
 import events
@@ -708,6 +710,49 @@ def designer_status(x_forwarded_access_token: str = Header(None)):
     """Is the designer on, and which AI models can this admin choose from (read under their own token)."""
     _, tok = _require_admin(x_forwarded_access_token)
     return designer.status(tok)
+
+
+@app.post("/api/admin/designer/files")
+async def designer_attach(
+    file: UploadFile = File(...),
+    folder: str = Form(...),
+    on_conflict: str = Form("ask"),
+    x_forwarded_access_token: str = Header(None),
+):
+    """Attach a file while designing: saved to the folder the admin chose, as the admin
+    (so Databricks decides where they may save). Key files are refused (use Connect)."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    blob = await file.read()
+    name = file.filename or "file"
+    out = attachments.upload(folder, name, blob, tok, on_conflict if on_conflict in ("ask", "replace", "keep_both") else "ask")
+    events.note(action="attached_file", label=out["name"], detail={"bytes": out["bytes"], "kind": out["kind"]})
+    return out
+
+
+@app.delete("/api/admin/designer/files")
+def designer_detach(path: str, x_forwarded_access_token: str = Header(None)):
+    """Remove a file attached a moment ago (before it was sent), as the admin."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    attachments.remove(path, tok)
+    return {"ok": True}
+
+
+@app.get("/api/admin/designer/connections")
+def designer_connections(names: str = "", x_forwarded_access_token: str = Header(None)):
+    """Which of these connections are set. Names only; a value is never returned."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    return {"connections": connections.status([n.strip() for n in names.split(",") if n.strip()][:20], tok)}
+
+
+@app.put("/api/admin/designer/connections/{name}")
+def designer_connect(name: str, payload: dict = Body(...), x_forwarded_access_token: str = Header(None)):
+    """Save a credential a tool needs into the workspace's secret store. The value goes
+    from this request to Databricks and nowhere else: never logged, never returned,
+    never shown to an AI model."""
+    _, tok = _require_admin(x_forwarded_access_token)
+    out = connections.save(name, payload.get("value") or "", str(payload.get("kind") or ""), tok, bool(payload.get("replace")))
+    events.note(action="saved_connection", label=out["name"], detail={"replaced": bool(payload.get("replace"))})
+    return out
 
 
 @app.post("/api/admin/designer/turn")

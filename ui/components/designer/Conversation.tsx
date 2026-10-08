@@ -1,9 +1,10 @@
 "use client";
 
-import { ReactNode, useEffect, useRef, useState } from "react";
-import type { DesignerMessage } from "@/lib/api";
+import { DragEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { designerAttach, designerDetach, DesignerConnection, DesignerFile, DesignerMessage } from "@/lib/api";
 import { ErrorBox } from "../bits";
-import { ArrowUpIcon, BookIcon, ChartIcon, CheckIcon, RefreshIcon, WandIcon } from "../icons";
+import { ArrowUpIcon, BookIcon, ChartIcon, CheckIcon, PaperclipIcon, RefreshIcon, ShieldIcon, WandIcon } from "../icons";
+import { ACCEPT, AttachChips, describeFiles, FolderDialog, loadFolder, MAX_BYTES, MAX_FILES, Pending, saveFolder } from "./Files";
 import { Bubble, Mark } from "./parts";
 
 /** Starting points for someone who does not know what to type. They only nudge the
@@ -16,12 +17,16 @@ const STARTERS: { text: string; example: string; icon: ReactNode }[] = [
   { text: "Do a task using our tools and files", example: "“Turn this brief into a media plan and export it.”", icon: <WandIcon size={18} /> },
 ];
 
+const TYPES = new Set(ACCEPT.split(",").map((x) => x.slice(1)));
+
 /** What it says while it works: honest about time, so a slow turn is not mistaken for a stuck one. */
 function working(seconds: number): string {
   if (seconds < 6) return "Thinking…";
   if (seconds < 25) return "Looking things up in your workspace…";
   return "Still looking. Checking your workspace can take a little while…";
 }
+
+let seq = 0;
 
 export function Conversation({
   msgs,
@@ -31,9 +36,12 @@ export function Conversation({
   ready,
   actionLabel,
   building,
+  connections,
+  connStatus,
   onSend,
   onRetry,
   onApprove,
+  onConnect,
 }: {
   msgs: DesignerMessage[];
   busy: boolean;
@@ -42,24 +50,37 @@ export function Conversation({
   ready: boolean;
   actionLabel: string;
   building: boolean;
-  onSend: (text: string) => void;
+  connections: DesignerConnection[];
+  connStatus: Record<string, boolean>;
+  onSend: (text: string, files?: DesignerFile[]) => void;
   onRetry: () => void;
   onApprove: () => void;
+  onConnect: (c: DesignerConnection) => void;
 }) {
   const [input, setInput] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [changing, setChanging] = useState(false);
   const [seconds, setSeconds] = useState(0);
   // Typed on the welcome screen before the opening question arrived: sent the moment it does.
-  const [queued, setQueued] = useState("");
+  const [queued, setQueued] = useState<{ text: string; files: DesignerFile[] } | null>(null);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [folder, setFolder] = useState("");
+  const [askFolder, setAskFolder] = useState<File[] | null>(null);
+  const [dragging, setDragging] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+
+  useEffect(() => setFolder(loadFolder()), []);
 
   const last = msgs[msgs.length - 1];
   const options = !busy && last?.role === "assistant" ? last.options || [] : [];
-  // Nothing typed yet: the welcome screen, with the opening question as its heading.
+  // Nothing typed yet: the welcome screen.
   const fresh = !msgs.some((m) => m.role === "user");
   const showReady = ready && !busy && last?.role === "assistant";
+  const unconnected = connections.filter((c) => !connStatus[c.name]);
+  const uploading = pending.some((p) => p.state === "uploading");
+  const ready_files = pending.filter((p) => p.state === "done" && p.done).map((p) => p.done as DesignerFile);
 
   useEffect(() => {
     if (!busy) return;
@@ -84,27 +105,83 @@ export function Conversation({
   useEffect(() => {
     if (busy || !queued) return;
     const q = queued;
-    setQueued("");
-    onSend(q);
+    setQueued(null);
+    onSend(q.text, q.files);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, queued]);
 
+  // --- attaching ---------------------------------------------------------------
+
+  async function upload(p: Pending, to: string, how: "ask" | "replace" | "keep_both" = "ask") {
+    setPending((all) => all.map((x) => (x.id === p.id ? { ...x, state: "uploading", error: undefined } : x)));
+    const r = await designerAttach(p.file, to, how);
+    setPending((all) =>
+      all.map((x) =>
+        x.id !== p.id
+          ? x
+          : r.ok
+            ? { ...x, state: "done", done: r.file }
+            : { ...x, state: r.conflict ? "conflict" : "error", error: r.error }
+      )
+    );
+  }
+
+  function attach(list: File[], to = folder) {
+    if (!list.length) return;
+    if (!to) {
+      setAskFolder(list);
+      return;
+    }
+    const room = Math.max(0, MAX_FILES - pending.length);
+    const items: Pending[] = list.map((file) => {
+      const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "";
+      const id = `f${++seq}`;
+      if (!TYPES.has(ext)) return { id, file, state: "error", error: "Only documents and data files can be attached (Excel, CSV, PDF, Word, PowerPoint, text)." };
+      if (file.size > MAX_BYTES) return { id, file, state: "error", error: "Larger than the 100 MB limit." };
+      if (!file.size) return { id, file, state: "error", error: "This file is empty." };
+      return { id, file, state: "uploading" };
+    });
+    const keep = items.slice(0, room);
+    const over = items.slice(room).map((p): Pending => ({ ...p, state: "error", error: `Up to ${MAX_FILES} files per message.` }));
+    setPending((all) => [...all, ...keep, ...over]);
+    keep.filter((p) => p.state === "uploading").forEach((p) => upload(p, to));
+  }
+
+  function remove(p: Pending) {
+    setPending((all) => all.filter((x) => x.id !== p.id));
+    if (p.done) designerDetach(p.done.path).catch(() => {});
+  }
+
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (locked) return;
+    attach(Array.from(e.dataTransfer.files || []));
+  }
+
+  // --- sending -----------------------------------------------------------------
+
   function send(text: string) {
     const t = text.trim();
-    if (!t || building) return;
+    const files = ready_files;
+    if ((!t && !files.length) || building || uploading) return;
+    const words = t || (files.length === 1 ? "Here is the file." : "Here are the files.");
+    const content = files.length ? `${words}\n\n${describeFiles(files)}` : words;
     if (busy) {
       if (!fresh || queued) return;
-      setQueued(t); // the opening question is still loading: hold it, never lose it
+      setQueued({ text: content, files }); // the opening question is still loading: hold it, never lose it
     } else {
-      onSend(t);
+      onSend(content, files);
     }
     setInput("");
+    setPending((all) => all.filter((p) => p.state !== "done"));
     if (box.current) box.current.style.height = "";
     setChanging(false);
   }
 
   // On the welcome screen you can type while it gets ready; in the conversation you wait for the reply.
   const locked = building || (busy && !fresh) || !!queued;
+  const canSend = !locked && !uploading && (!!input.trim() || ready_files.length > 0);
 
   const composer = (large: boolean) => (
     <form
@@ -113,7 +190,8 @@ export function Conversation({
         send(input);
       }}
     >
-      <div className={large ? "dz-composer dz-composer-lg" : "dz-composer"} data-disabled={locked ? "true" : "false"}>
+      <AttachChips items={pending} onRemove={remove} onResolve={(p, how) => upload(p, folder, how)} />
+      <div className={large ? "dz-composer dz-composer-lg dz-has-attach" : "dz-composer dz-has-attach"} data-disabled={locked ? "true" : "false"}>
         <textarea
           ref={box}
           rows={1}
@@ -144,28 +222,102 @@ export function Conversation({
               send(input);
             }
           }}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData?.files || []);
+            if (files.length) {
+              e.preventDefault();
+              attach(files);
+            }
+          }}
         />
-        <button type="submit" className="dz-send" disabled={locked || !input.trim()} aria-label="Send">
+        <button
+          type="button"
+          className="dz-attach"
+          onClick={() => picker.current?.click()}
+          disabled={locked || pending.length >= MAX_FILES}
+          aria-label="Attach a file"
+          title="Attach a file (Excel, CSV, PDF, Word, PowerPoint, text)"
+        >
+          <PaperclipIcon size={17} />
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          accept={ACCEPT}
+          className="hidden"
+          onChange={(e) => {
+            attach(Array.from(e.target.files || []));
+            e.target.value = "";
+          }}
+        />
+        <button type="submit" className="dz-send" disabled={!canSend} aria-label="Send">
           <ArrowUpIcon size={17} />
         </button>
       </div>
-      <p className="mt-2 hidden items-center gap-1.5 text-[12px] faint sm:flex">
-        <span className="dz-kbd">Enter</span> to send <span className="mx-1">·</span> <span className="dz-kbd">Shift</span>+
-        <span className="dz-kbd">Enter</span> for a new line
-      </p>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px] faint">
+        <p className="hidden items-center gap-1.5 sm:flex">
+          <span className="dz-kbd">Enter</span> to send <span className="mx-1">·</span> <span className="dz-kbd">Shift</span>+
+          <span className="dz-kbd">Enter</span> for a new line
+        </p>
+        {folder ? (
+          <p className="min-w-0 truncate">
+            Files go to <span className="font-mono">{folder}</span> ·{" "}
+            <button type="button" className="underline" onClick={() => setAskFolder([])}>
+              change
+            </button>
+          </p>
+        ) : (
+          <p>Attach an ad book, rate card or policy to design around it.</p>
+        )}
+      </div>
     </form>
   );
 
+  const dropZone = {
+    onDragOver: (e: DragEvent) => {
+      if (Array.from(e.dataTransfer.types || []).includes("Files")) {
+        e.preventDefault();
+        setDragging(true);
+      }
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
+    },
+    onDrop,
+  };
+  const dropOverlay = dragging ? (
+    <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl text-[15px] font-semibold"
+      style={{ border: "2px dashed var(--brand)", background: "color-mix(in srgb, var(--brand-soft) 85%, transparent)", color: "var(--brand-deep)" }}>
+      Drop files to attach them
+    </div>
+  ) : null;
+  const folderDialog = askFolder ? (
+    <FolderDialog
+      initial={folder}
+      onClose={() => setAskFolder(null)}
+      onSave={(f) => {
+        saveFolder(f);
+        setFolder(f);
+        const waiting = askFolder;
+        setAskFolder(null);
+        attach(waiting, f);
+      }}
+    />
+  ) : null;
+
   if (fresh) {
     return (
-      <section className="card flex min-h-[420px] flex-col overflow-y-auto p-0 lg:min-h-0" aria-label="Conversation">
+      <section className="card relative flex min-h-[420px] flex-col overflow-y-auto p-0 lg:min-h-0" aria-label="Conversation" {...dropZone}>
+        {dropOverlay}
+        {folderDialog}
         <div className="m-auto w-full max-w-[720px] px-5 py-8 sm:px-8">
           <div className="flex flex-col items-center text-center">
             <Mark large />
             <h3 className="dz-hero-title mt-5">What should your new assistant do?</h3>
             <p className="mt-2 max-w-[560px] text-[15px] muted">
-              Describe it in your own words: what it should help with and who will use it. We ask a few short questions, show you what we
-              understood, and create nothing until you say so.
+              Describe it in your own words: what it should help with and who will use it. Attach any file it should work from. We ask a
+              few short questions, show you what we understood, and create nothing until you say so.
             </p>
           </div>
           <div className="mt-7">{composer(true)}</div>
@@ -178,7 +330,7 @@ export function Conversation({
           <p className="dz-eyebrow mt-7">Or start from one of these</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             {STARTERS.map((s) => (
-              <button key={s.text} type="button" className="dz-starter" disabled={locked} onClick={() => send(s.text)}>
+              <button key={s.text} type="button" className="dz-starter" disabled={locked || uploading} onClick={() => send(s.text)}>
                 <span className="dz-tile">{s.icon}</span>
                 <span className="text-[14.5px] font-semibold leading-snug">{s.text}</span>
                 <span className="text-[13px] leading-snug faint">{s.example}</span>
@@ -199,7 +351,9 @@ export function Conversation({
   }
 
   return (
-    <section className="card flex min-h-[420px] flex-col p-0 lg:min-h-0" aria-label="Conversation">
+    <section className="card relative flex min-h-[420px] flex-col p-0 lg:min-h-0" aria-label="Conversation" {...dropZone}>
+      {dropOverlay}
+      {folderDialog}
       <div
         ref={scroller}
         className="max-h-[calc(100dvh-var(--header-h,56px)-300px)] min-h-[300px] flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-7 lg:max-h-none lg:min-h-0"
@@ -230,6 +384,26 @@ export function Conversation({
       </div>
 
       <div className="border-t px-4 pb-4 pt-3 sm:px-6" style={{ borderColor: "var(--line)" }}>
+        {unconnected.length && !busy ? (
+          <div className="mb-3 space-y-2">
+            {unconnected.map((c) => (
+              <div key={c.name} className="flex flex-wrap items-center gap-3 rounded-[14px] px-3.5 py-2.5"
+                style={{ background: "var(--warn-bg)", border: "1px solid var(--warn-line)" }}>
+                <span aria-hidden style={{ color: "var(--warn-line)" }}>
+                  <ShieldIcon size={17} />
+                </span>
+                <span className="min-w-0 flex-1 text-[14px]">
+                  <b>Connect {c.label}</b>
+                  {c.what_for ? <span className="muted"> · {c.what_for}</span> : null}
+                </span>
+                <button type="button" className="btn btn-primary !min-h-0 !py-1.5" onClick={() => onConnect(c)}>
+                  Connect
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {showReady && !changing ? (
           <div className="dz-ready mb-3">
             <span className="flex min-w-0 flex-1 items-center gap-2 text-[14.5px] font-medium">

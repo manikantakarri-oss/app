@@ -1030,3 +1030,11 @@ h1, h2, h3, h4,
   .dz-shimmer, .dz-ring::before, .dz-spin, .dz-flash { animation: none; }
   .dz-shimmer { color: var(--ink-dim); background: none; }
 }
+.dz-has-attach textarea { padding-left: 52px; }
+.dz-composer-lg.dz-has-attach textarea { padding-left: 16px; }
+.dz-attach {
+  position: absolute; left: 10px; bottom: 9px; display: inline-flex; align-items: center; justify-content: center;
+  height: 36px; width: 36px; border-radius: 12px; color: var(--ink-dim); transition: background .12s, color .12s;
+}
+.dz-attach:hover:not(:disabled) { background: var(--bubble); color: var(--ink); }
+.dz-attach:disabled { opacity: .45; cursor: not-allowed; }

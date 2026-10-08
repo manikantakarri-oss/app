@@ -1,6 +1,7 @@
 "use client";
 
-import type { DesignerDraft, DesignerStep } from "@/lib/api";
+import type { DesignerConnection, DesignerDraft, DesignerStep } from "@/lib/api";
+import { ConnectionRows } from "./Connect";
 import { ErrorBox, Spinner } from "../bits";
 import {
   BookIcon,
@@ -73,6 +74,8 @@ export function Summary({
   busy,
   error,
   onApprove,
+  connStatus = {},
+  onConnect = () => {},
 }: {
   draft: DesignerDraft;
   progress: DesignerStep[];
@@ -81,6 +84,8 @@ export function Summary({
   busy: boolean;
   error?: string;
   onApprove: () => void;
+  connStatus?: Record<string, boolean>;
+  onConnect?: (c: DesignerConnection) => void;
 }) {
   const total = progress.length;
   const done = progress.filter((p) => p.done).length;
@@ -230,6 +235,12 @@ export function Summary({
                   ))}
                 </ul>
                 <p className="mt-2 text-[12.5px] faint">You read each one before anything is created.</p>
+              </Section>
+            ) : null}
+            {draft.connections?.length ? (
+              <Section title="Connections" icon={<ShieldIcon size={13} />} flash={draft.connections.map((c) => c.name + (connStatus[c.name] ? "1" : "0")).join("|")}>
+                <ConnectionRows list={draft.connections} status={connStatus} onConnect={onConnect} />
+                <p className="mt-2 text-[12.5px] faint">Saved in your workspace&apos;s secret store. The AI model never sees them.</p>
               </Section>
             ) : null}
             {draft.access_decided ? (

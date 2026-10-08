@@ -691,7 +691,7 @@ def code_diff(old: str, new: str, context: int = 3, limit: int = 220) -> list[st
 
 # --- before creating ----------------------------------------------------------
 
-def name_problems(item: dict, tok: str) -> list[str]:
+def name_problems(item: dict, tok: str, secrets: bool = True) -> list[str]:
     """Is the name free, and does everything the tool needs exist? Refuses to
     overwrite anything that is not this designer's own earlier attempt."""
     out: list[str] = []
@@ -715,9 +715,11 @@ def name_problems(item: dict, tok: str) -> list[str]:
     except DbxError as exc:
         if exc.status != 404:
             out.append("Could not check whether the app exists (%s)." % str(exc)[:80])
-    missing = mcps.missing_secrets(entry_for(item), tok)
+    # While designing, a credential that is not connected yet is the draft's to track (the admin connects it
+    # on screen); a tool is only ever installed once it exists (designer.check, mcps.start).
+    missing = mcps.missing_secrets(entry_for(item), tok) if secrets else []
     if missing:
-        out.append("These connection settings do not exist yet: %s. Your platform team sets them up first." % ", ".join(missing))
+        out.append("These connection settings do not exist yet: %s. Connect them first." % ", ".join(missing))
     return out
 
 

@@ -683,10 +683,10 @@ def _():
 def _():
     d = designer.clean_draft({**designed(), "new_tools": [FN, {**BRIEF, "code": READER}]})
     seen = {}
-    forge.name_problems = lambda n, tok: seen.setdefault(forge.key_of(n), []) or []
+    forge.name_problems = lambda n, tok, **kw: seen.setdefault(forge.key_of(n), []) or []
     install(Model(), exists=lambda path, tok: "")
     assert designer.verify(d, "T") == [] and set(seen) == {"main.tools.fx", "rate-reader"}
-    forge.name_problems = lambda n, tok: ["%s is taken." % forge.key_of(n)]
+    forge.name_problems = lambda n, tok, **kw: ["%s is taken." % forge.key_of(n)]
     assert designer.verify(d, "T")[:1] == ["main.tools.fx is taken."]
     paths = []
     install(Model(), exists=lambda path, tok: paths.append(path) or "")
@@ -706,7 +706,7 @@ def _():
     made, started = [], []
     forge.create_function = lambda item, wh, tok: made.append((item["name"], wh, tok)) or {"name": item["name"], "created": True}
     forge.install_app = lambda item, who, tok, date: started.append(item["slug"])
-    forge.name_problems = lambda n, tok: []
+    forge.name_problems = lambda n, tok, **kw: []
     install(Model(), exists=lambda path, tok: "")
     draft = designer.clean_draft({**designed(), "new_tools": [FN, {**BRIEF, "code": READER}]})
     fps = [n["fingerprint"] for n in draft["new_tools"]]
@@ -737,7 +737,7 @@ def _():
 
     forge.create_function = create
     forge.install_app = lambda item, who, tok, date: started.append(item["slug"])
-    forge.name_problems = lambda n, tok: []
+    forge.name_problems = lambda n, tok, **kw: []
     install(Model(), exists=lambda path, tok: "")
     two = {**FN, "name": "main.tools.two", "sql": SQL.replace("main.tools.fx", "main.tools.two"), "example": "SELECT main.tools.two(1, 2)"}
     draft = designer.clean_draft({**designed(), "new_tools": [FN, two, {**BRIEF, "code": READER}]})
@@ -757,7 +757,7 @@ def _():
     assert c.get("/api/admin/designer/tools/status", headers=H).json() == {"apps": {}}
     built = []
     portal._create_supervisor = lambda spec, who, tok, bg, via="": built.append(spec) or {"agent_id": "a1", "endpoint_name": "mas-1"}
-    forge.name_problems = lambda n, tok: []
+    forge.name_problems = lambda n, tok, **kw: []
     draft = designer.clean_draft({**designed(), "new_tools": [FN]})
     install(Model(), exists=lambda path, tok: "not found")
     r = c.post("/api/admin/designer/build", headers=H, json={"draft": draft})
@@ -1177,7 +1177,7 @@ def _():
 @case("an assistant built around an installed tool needs that tool to exist and be running")
 def _():
     fake_workspace()
-    forge.name_problems = lambda n, tok: []
+    forge.name_problems = lambda n, tok, **kw: []
     install(Model(), exists=lambda path, tok: "")
 
     def draft(ref):

@@ -80,6 +80,8 @@ CATEGORY = {
     "fixed_tool": "build",
     "edited_assistant": "build",
     "deleted_assistant": "build",
+    "attached_file": "build",
+    "saved_connection": "access",
 }
 
 COLUMNS = ("at", "actor", "action", "category", "target", "label", "status", "http_status", "ms", "error_kind", "error", "detail")

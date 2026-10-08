@@ -3,6 +3,7 @@
 import { ReactNode } from "react";
 import type { DesignerDraft, DesignerMessage, DesignerNewTool, DesignerStep } from "@/lib/api";
 import { CheckIcon, SearchIcon, SparkleIcon } from "../icons";
+import { FileChips, withoutFileLines } from "./Files";
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,9 +60,11 @@ export function listWords(items: string[]): string {
 
 export function Bubble({ m }: { m: DesignerMessage }) {
   if (m.role === "user") {
+    const words = m.files?.length ? withoutFileLines(m.content) : m.content;
     return (
-      <div className="flex justify-end">
-        <div className="dz-user">{m.content}</div>
+      <div className="flex flex-col items-end">
+        {words ? <div className="dz-user">{words}</div> : null}
+        {m.files?.length ? <FileChips files={m.files} mine /> : null}
       </div>
     );
   }

@@ -136,9 +136,15 @@ export type DesignerDraft = {
   coverage?: { need: string; status: "covered" | "partly" | "missing"; by?: string; note?: string }[];
   /** Tools to create before the assistant is built; the admin reads them first. */
   new_tools?: DesignerNewTool[];
+  /** Credentials the designer asked the admin to connect (names and words only). */
+  connections?: DesignerConnection[];
 };
 /** What was shown for a message; `looked` is only for display and is never sent back. */
-export type DesignerMessage = { role: "user" | "assistant"; content: string; options?: string[]; looked?: string[] };
+/** A file attached while designing (display only; the message text names its path for the model). */
+export type DesignerFile = { name: string; path: string; bytes: number; kind: string };
+export type DesignerMessage = { role: "user" | "assistant"; content: string; options?: string[]; looked?: string[]; files?: DesignerFile[] };
+/** A credential a new tool needs, asked for by the designer by name. The value is entered on screen and never sent to a model. */
+export type DesignerConnection = { name: string; label: string; what_for: string; how_to_get: string; kind: "key_file" | "secret_text" };
 /** A chat model this admin can use. `fit` says honestly how well it is known to suit the designer. */
 export type DesignerModel = {
   name: string;
@@ -182,6 +188,8 @@ export type DesignerTurn = {
   looked: string[];
   /** The models actually used, after defaults. */
   models: DesignerModels;
+  /** Each needed connection: set in the secret store or not. */
+  connections?: Record<string, boolean>;
   /** Said when a model had to be swapped (for example one Databricks has retired). */
   notice: string;
   /** Said when the model answered without looking at anything (so it may miss what you already have). */
@@ -622,6 +630,47 @@ export const api = {
       lines: { sku: string; raw: string; dbus: number; usd: number | null }[];
     }>(`/api/admin/cost?days=${days}`),
 };
+
+async function parsed(res: Response) {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { error: text.slice(0, 300) };
+  }
+}
+
+/** Attach a file while designing. `conflict` is true when a file of that name is already there (nothing was changed). */
+export async function designerAttach(
+  file: File,
+  folder: string,
+  onConflict: "ask" | "replace" | "keep_both" = "ask"
+): Promise<{ ok: true; file: DesignerFile } | { ok: false; conflict: boolean; error: string }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("folder", folder);
+  fd.append("on_conflict", onConflict);
+  const res = await fetch("/api/admin/designer/files", { method: "POST", body: fd });
+  const data: any = await parsed(res);
+  if (res.ok) return { ok: true, file: { name: data.name, path: data.path, bytes: data.bytes, kind: data.kind } };
+  return { ok: false, conflict: res.status === 409, error: data.error || data.detail || `Upload failed (${res.status})` };
+}
+
+export async function designerDetach(path: string) {
+  await fetch(`/api/admin/designer/files?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+}
+
+/** Save a credential. The value goes to the portal and on to the workspace's secret store, nowhere else. */
+export async function designerConnect(name: string, value: string, kind: string, replace = false) {
+  const res = await fetch(`/api/admin/designer/connections/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value, kind, replace }),
+  });
+  const data: any = await parsed(res);
+  if (!res.ok) throw Object.assign(new Error(data.error || data.detail || `Could not save (${res.status})`), { status: res.status });
+  return data as { name: string; set: boolean };
+}
 
 export async function upload(endpoint: string, file: File) {
   const fd = new FormData();

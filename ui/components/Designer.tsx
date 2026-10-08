@@ -4,7 +4,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   api,
   DesignerBuilt,
+  DesignerConnection,
   DesignerDraft,
+  DesignerFile,
   DesignerInfo,
   DesignerMessage,
   DesignerModels,
@@ -15,6 +17,7 @@ import { ErrorBox, Spinner, Tag } from "./bits";
 import { Finished } from "./BuilderParts";
 import { ChevronLeftIcon, RefreshIcon } from "./icons";
 import { Built } from "./designer/Built";
+import { ConnectDialog } from "./designer/Connect";
 import { Conversation } from "./designer/Conversation";
 import { CreateStep, Creating } from "./designer/Creating";
 import { ModelMenu } from "./designer/ModelPicker";
@@ -80,6 +83,9 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
   const [ready, setReady] = useState(false);
   const [progress, setProgress] = useState<DesignerStep[]>(START);
   const [multiple, setMultiple] = useState(false);
+  // Which credentials the design needs are set (names only; values never come to this page).
+  const [connStatus, setConnStatus] = useState<Record<string, boolean>>({});
+  const [connecting, setConnecting] = useState<DesignerConnection | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -149,6 +155,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
       setMultiple(t.multiple);
       setProgress(t.progress);
       setUsed(t.models);
+      setConnStatus(t.connections || {});
       setNotice(t.notice || "");
       if (t.warning && warned.current !== t.models.chat) {
         warned.current = t.models.chat; // once per model, not after every answer
@@ -174,8 +181,8 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
     }
   }
 
-  function send(text: string) {
-    const next: DesignerMessage[] = [...msgs, { role: "user", content: text }];
+  function send(text: string, files?: DesignerFile[]) {
+    const next: DesignerMessage[] = [...msgs, { role: "user", content: text, ...(files?.length ? { files } : {}) }];
     setMsgs(next);
     setReady(false);
     run(next);
@@ -187,6 +194,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
     setDraft({});
     setReady(false);
     setProgress(START);
+    setConnStatus({});
     setNotice("");
     setWarning("");
     warned.current = "";
@@ -391,11 +399,37 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
             ready={ready}
             actionLabel={ctaLabel(draft)}
             building={building}
+            connections={draft.connections || []}
+            connStatus={connStatus}
             onSend={send}
             onRetry={() => run(msgs)}
             onApprove={approve}
+            onConnect={setConnecting}
           />
-          <Summary draft={draft} progress={progress} ready={ready} building={building} busy={busy} error={buildErr} onApprove={approve} />
+          <Summary
+            draft={draft}
+            progress={progress}
+            ready={ready}
+            building={building}
+            busy={busy}
+            error={buildErr}
+            onApprove={approve}
+            connStatus={connStatus}
+            onConnect={setConnecting}
+          />
+          {connecting ? (
+            <ConnectDialog
+              c={connecting}
+              connected={!!connStatus[connecting.name]}
+              onClose={() => setConnecting(null)}
+              onSaved={(c) => {
+                setConnecting(null);
+                setConnStatus((s) => ({ ...s, [c.name]: true }));
+                // Say so in the conversation (names only), so the designer carries on without being told.
+                if (!busy) send(`I have connected ${c.label}.`);
+              }}
+            />
+          ) : null}
         </div>
       </>
     );

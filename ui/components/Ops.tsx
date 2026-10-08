@@ -346,6 +346,10 @@ function sentence(e: PortalEvent): ReactNode {
       return <>{name} updated {b(label)}{(d.deploying || []).length ? <>, setting up {(d.deploying as string[]).join(", ")}</> : null}</>;
     case "deleted_assistant":
       return <>{name} deleted an assistant</>;
+    case "attached_file":
+      return <>{name} attached {b(label)} while designing an assistant</>;
+    case "saved_connection":
+      return <>{name} {d.replaced ? "replaced" : "saved"} the connection {b(label)}</>;
     default:
       return <>{name} {e.action.replace(/_/g, " ")} {label}</>;
   }
