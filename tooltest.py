@@ -36,13 +36,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 
+import builder
 import designer
 import designer_models as dm
 import forge
 import mcps
-from dbx import DbxError, call, http
+from dbx import DbxError, app_token, call, http, in_apps
 
 log = logging.getLogger("portal.tooltest")
 
@@ -129,13 +131,52 @@ class Client:
 
 
 def connect(slug: str, tok: str) -> Client:
-    app = call("GET", "/api/2.0/apps/" + forge.app_name(slug), tok, quiet=True)
-    state, note = mcps._state(app, mcps._progress.get(forge.app_name(slug)))
+    """A session with the tool. Its app is read with `mcps.act`: seen live (2026-10-09), a deployed portal's
+    user token "does not have required scopes: apps", so this step stopped before trying anything; every other
+    apps call already falls back to the portal's identity on exactly that refusal."""
+    name = forge.app_name(slug)
+    app = _app(name, tok)
+    state, note = mcps._state(app, mcps._progress.get(name))
     if state != "running":
         raise DbxError("The tool is not running yet (%s)." % (note or state.replace("_", " ")), 409)
     if not app.get("url"):
         raise DbxError("The tool has no address yet.", 409)
-    return Client(app["url"], tok).open()
+    try:
+        return Client(app["url"], tok).open()
+    except DbxError as exc:
+        if exc.status != 403 or not in_apps():
+            raise
+    # The tool's app did not accept the person's token (an Apps token for one app is not always taken by
+    # another). Only read-only abilities are called here, so the portal's own identity may make these calls:
+    # it is given Can use on this tool's app first (as the admin), then calls it.
+    _let_portal_use(name, tok)
+    return Client(app["url"], app_token()).open()
+
+
+def _app(name: str, tok: str) -> dict:
+    """The tool's app, as the admin; as the portal only when the admin's token lacks the apps scope."""
+    try:
+        return call("GET", "/api/2.0/apps/" + name, tok, quiet=True)
+    except DbxError as exc:
+        if not (in_apps() and builder._scope_refused(exc)):
+            raise
+    return call("GET", "/api/2.0/apps/" + name, app_token(), quiet=True)
+
+
+def _let_portal_use(app_name: str, tok: str) -> None:
+    sp = os.environ.get("DATABRICKS_CLIENT_ID") or ""
+    if not sp:
+        return
+    body = {"access_control_list": [{"service_principal_name": sp, "permission_level": "CAN_USE"}]}
+    try:
+        try:
+            call("PATCH", "/api/2.0/permissions/apps/" + app_name, tok, quiet=True, json=body)
+        except DbxError as exc:
+            if not builder._scope_refused(exc):
+                raise
+            call("PATCH", "/api/2.0/permissions/apps/" + app_name, app_token(), quiet=True, json=body)
+    except DbxError as exc:
+        log.info("could not give the portal Can use on %s (%s); trying anyway", app_name, str(exc)[:120])
 
 
 def deployed_since(slug: str, since: str, tok: str) -> dict:
@@ -150,7 +191,7 @@ def deployed_since(slug: str, since: str, tok: str) -> dict:
     prog = mcps._progress.get(name) or {}
     if prog.get("phase") == "failed":
         return {"ready": False, "failed": True, "note": str(prog.get("message") or "The repair could not be installed.")[:240]}
-    app = call("GET", "/api/2.0/apps/" + name, tok, quiet=True)
+    app = _app(name, tok)
     pend = app.get("pending_deployment") or {}
     if (pend.get("status") or {}).get("state") in ("FAILED", "CANCELLED"):
         return {"ready": False, "failed": True, "note": str((pend.get("status") or {}).get("message") or "The deployment did not finish.")[:240]}

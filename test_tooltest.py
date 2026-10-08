@@ -529,6 +529,50 @@ def _():
     assert [r["verdict"] for r in again] == ["pass", "pass", "pass"], again
 
 
+@case("on a deployed portal the tool is checked even though the user token has no apps scope, and called as the portal if it refuses the user")
+def _():
+    import os as _os
+    calls, posts = [], []
+
+    def call(method, path, tok, **kw):
+        calls.append((method, path, tok))
+        if path == "/api/2.0/apps/mcp-sheet-reader" and tok == "USER":
+            raise DbxError("Provided OAuth token does not have required scopes: apps", 403)
+        if path == "/api/2.0/apps/mcp-sheet-reader":
+            return {"name": "mcp-sheet-reader", "url": "https://tool.apps", "compute_status": {"state": "ACTIVE"},
+                    "app_status": {"state": "RUNNING"}, "active_deployment": {"status": {"state": "SUCCEEDED"}}}
+        if path.startswith("/api/2.0/permissions/apps/"):
+            return {}
+        raise AssertionError(path)
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code, self.headers, self.text = code, {"mcp-session-id": "s1"}, "{}"
+
+        def json(self):
+            return {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+    class Http:
+        def post(self, url, headers=None, json=None, timeout=None):
+            posts.append(headers.get("Authorization"))
+            return Resp(403 if headers.get("Authorization") == "Bearer USER" else 200)
+
+    saved = (tooltest.call, tooltest.http, tooltest.in_apps, tooltest.app_token, _os.environ.get("DATABRICKS_CLIENT_ID"))
+    tooltest.call, tooltest.http, tooltest.in_apps, tooltest.app_token = call, lambda: Http(), lambda: True, lambda: "APP"
+    _os.environ["DATABRICKS_CLIENT_ID"] = "portal-sp"
+    try:
+        client = tooltest.connect("sheet-reader", "USER")
+    finally:
+        tooltest.call, tooltest.http, tooltest.in_apps, tooltest.app_token = saved[:4]
+        if saved[4] is None:
+            _os.environ.pop("DATABRICKS_CLIENT_ID", None)
+        else:
+            _os.environ["DATABRICKS_CLIENT_ID"] = saved[4]
+    assert ("GET", "/api/2.0/apps/mcp-sheet-reader", "APP") in calls          # read as the portal after the scope refusal
+    assert ("PATCH", "/api/2.0/permissions/apps/mcp-sheet-reader", "USER") in calls  # the portal is given Can use, as the admin
+    assert posts[0] == "Bearer USER" and posts[-1] == "Bearer APP" and client.tok == "APP"
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:
