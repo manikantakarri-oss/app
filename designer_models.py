@@ -122,7 +122,7 @@ def _tier(name: str) -> str:
     if "sonnet" in low:
         return "Balanced: a good default"
     if any(k in low for k in ("haiku", "mini", "nano", "flash", "-8b", "-12b", "-20b")):
-        return "Fast and light; may struggle with harder requests"
+        return "Fastest; best for simple requests"
     return ""
 
 
@@ -166,6 +166,8 @@ def _entry(name: str, kind: str, maker: str = "", pinned: bool = False, tools: b
         "tools": tools,
         "price_in": price_in, "price_out": price_out, "cost": _cost(price_out),
         "detail": " · ".join(b for b in bits if b),
+        # What it is good at, on its own line in the picker (the detail above keeps everything for search).
+        "tier": "Set up by your administrator" if pinned else _tier(name),
         "fit": "Cannot use tools" if tools is False else "Recommended" if recommended else "Not tested for this",
     }
 

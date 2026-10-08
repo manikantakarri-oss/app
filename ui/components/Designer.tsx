@@ -17,7 +17,7 @@ import { RefreshIcon } from "./icons";
 import { Built } from "./designer/Built";
 import { Conversation } from "./designer/Conversation";
 import { CreateStep, Creating } from "./designer/Creating";
-import { ModelChip, ModelPanel } from "./designer/ModelPicker";
+import { ModelMenu } from "./designer/ModelPicker";
 import { keepSaved, loadSaved, Phase, sleep, StageBar } from "./designer/parts";
 import { ReviewTools } from "./designer/ReviewTools";
 import { ToolCheck } from "./designer/ToolCheck";
@@ -326,7 +326,6 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
     }
     return (
       <>
-        {panel ? <ModelPanel info={info} choice={choice} used={used} onChange={changeChoice} onClose={() => setPanel(false)} /> : null}
         {!hasUser ? (
           <p className="mb-5 hidden max-w-3xl text-[15px] muted sm:block">
             Tell us what you want in your own words. We ask a few short questions and show what we understood on the right. Nothing is
@@ -402,7 +401,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
           </div>
           {phase === "describe" && info?.ready ? (
             <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
-              <ModelChip info={info} choice={choice} open={panel} onToggle={() => setPanel((o) => !o)} />
+              <ModelMenu info={info} choice={choice} used={used} onChange={changeChoice} open={panel} setOpen={setPanel} />
               {hasUser ? (
                 <button type="button" className="btn btn-quiet" onClick={startOver} disabled={busy || building}>
                   <RefreshIcon size={15} /> Start over

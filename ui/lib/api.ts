@@ -155,6 +155,8 @@ export type DesignerModel = {
   cost: string;
   detail: string;
   fit: string;
+  /** What it is good at, e.g. "Balanced: a good default" ("" when unknown). */
+  tier?: string;
 };
 /** The three jobs a model can do. Empty = let the portal choose. */
 export type DesignerModels = { chat: string; code: string; judge: string };
