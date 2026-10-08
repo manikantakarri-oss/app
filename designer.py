@@ -122,7 +122,7 @@ def _complete(endpoint: str, messages: list, tools: list | None, user_tok: str, 
                 host() + "/serving-endpoints/" + endpoint + "/invocations",
                 headers={"Authorization": "Bearer " + user_tok, "Content-Type": "application/json"},
                 json=body,
-                timeout=180,
+                timeout=180 if max_tokens <= 6000 else 300,  # a long code reply takes minutes
             )
         except httpx.RequestError as exc:
             raise DbxError("Could not reach the model: " + str(exc)[:120], 504)
@@ -932,6 +932,13 @@ def _python_block(text: str) -> str:
     return (m.group(1) if m else text or "").strip()
 
 
+# Room for the code model's whole reply. Claude Sonnet reasons first and that counts against the
+# limit: at 6000 tokens a real media-plan brief used all of it thinking (no code at all, or code cut
+# off mid-function), and the checks then said "no code yet". Claude Opus wrote the same tool in about
+# 6000 tokens, right at that edge.
+CODE_TOKENS = 16000
+
+
 def generate_code(brief: dict, tok: str, use: dict, notes: list) -> tuple[dict, list[str]]:
     """Have the code model write a tool from the brief, and check what it wrote the
     same way the admin's approval will be checked. Up to three tries; each retry is
@@ -943,7 +950,7 @@ def generate_code(brief: dict, tok: str, use: dict, notes: list) -> tuple[dict, 
         msg = _ask("code", use, notes, [
             {"role": "system", "content": _code_prompt()},
             {"role": "user", "content": json.dumps({"tool": public, "fix_these_first": fix})},
-        ], None, tok, max_tokens=6000)
+        ], None, tok, max_tokens=CODE_TOKENS)
         item = forge.clean_item({**brief, "kind": "mcp", "code": _python_block(_text(msg))}) or {}
         fix = item.get("problems") or ["The code could not be read."]
         if not item.get("problems"):
