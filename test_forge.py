@@ -282,26 +282,30 @@ def _():
             return {}
         return {}
 
-    forge.call = call
-    forge.mcps.act = lambda method, path, tok, **kw: (call(method, path, tok, **kw), "you")
-    forge.mcps.catalog = lambda refresh=False: ([{"slug": "gam-media-planner"}], "")
-    forge.mcps.missing_secrets = lambda entry, tok="": []
-    t = tool()
-    calls["app"] = "somebody else's app"
-    assert "was not made by this designer" in forge.name_problems(t, "T")[0]
-    calls["app"] = forge.GEN_MARK + " Reads rate cards."
-    assert forge.name_problems(t, "T") == []  # a retry of our own
-    calls["app"] = "missing"
-    assert forge.name_problems(t, "T") == []
-    assert "already a ready-made tool" in forge.name_problems(tool(slug="gam-media-planner"), "T")[0]
-    forge.mcps.missing_secrets = lambda entry, tok="": ["gam-key"]
-    assert "do not exist yet: gam-key" in forge.name_problems(tool(secrets=["gam-key"], code=GOOD), "T")[0]
-    forge.mcps.missing_secrets = lambda entry, tok="": []
-    fn = forge.clean_item({"kind": "uc_function", "name": "main.tools.fx", "description": "d", "sql": "CREATE FUNCTION main.tools.fx() RETURNS INT RETURN 1"})
-    calls["fn"] = "exists"
-    assert "already exists" in forge.name_problems(fn, "T")[0]
-    calls["fn"] = "missing"
-    assert forge.name_problems(fn, "T") == []
+    saved = (forge.call, forge.mcps.act, forge.mcps.catalog, forge.mcps.missing_secrets)
+    try:
+        forge.call = call
+        forge.mcps.act = lambda method, path, tok, **kw: (call(method, path, tok, **kw), "you")
+        forge.mcps.catalog = lambda refresh=False: ([{"slug": "gam-media-planner"}], "")
+        forge.mcps.missing_secrets = lambda entry, tok="": []
+        t = tool()
+        calls["app"] = "somebody else's app"
+        assert "was not made by this designer" in forge.name_problems(t, "T")[0]
+        calls["app"] = forge.GEN_MARK + " Reads rate cards."
+        assert forge.name_problems(t, "T") == []  # a retry of our own
+        calls["app"] = "missing"
+        assert forge.name_problems(t, "T") == []
+        assert "already a ready-made tool" in forge.name_problems(tool(slug="gam-media-planner"), "T")[0]
+        forge.mcps.missing_secrets = lambda entry, tok="": ["gam-key"]
+        assert "do not exist yet: gam-key" in forge.name_problems(tool(secrets=["gam-key"], code=GOOD), "T")[0]
+        forge.mcps.missing_secrets = lambda entry, tok="": []
+        fn = forge.clean_item({"kind": "uc_function", "name": "main.tools.fx", "description": "d", "sql": "CREATE FUNCTION main.tools.fx() RETURNS INT RETURN 1"})
+        calls["fn"] = "exists"
+        assert "already exists" in forge.name_problems(fn, "T")[0]
+        calls["fn"] = "missing"
+        assert forge.name_problems(fn, "T") == []
+    finally:
+        forge.call, forge.mcps.act, forge.mcps.catalog, forge.mcps.missing_secrets = saved
 
 
 @case("the assembled server loads in the real FastMCP, lists its tools, and refuses folders it was not given")
