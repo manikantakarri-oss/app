@@ -288,16 +288,37 @@ def clean_draft(raw) -> dict:
             items.append(item)
     if items:
         d["new_tools"] = items
+    rows("pending_tools", ("job", "slug", "name", "description"), forge.MAX_NEW_TOOLS)
+    if not d.get("pending_tools"):
+        d.pop("pending_tools", None)
     conns = connections.clean_requests(raw.get("connections"))
     if conns:
         d["connections"] = conns
     return d
 
 
+def _own_new_tool(t: dict, news: list) -> bool:
+    """A tools entry that is really one of the draft's own new tools, named another way.
+    Seen live (2026-10-09): the model also listed its new tool under `tools` as
+    {type: app, ref: <slug>} (no "mcp-"), so the approval check looked for an installed
+    app of that name, found none, and refused; the admin was stuck in a loop."""
+    ref = (t.get("ref") or "").strip().lower()
+    for n in news:
+        names = {forge.key_of(n).lower(), (n.get("name") or "").strip().lower()}
+        if n["kind"] == "mcp":
+            names.add(forge.app_name(n["slug"]).lower())
+        if ref and ref in names:
+            return True
+    return False
+
+
 def effective(d: dict) -> dict:
     """The draft as it will be built: its tools plus the new tools it proposes to
     create, listed the way the builder will attach them."""
-    tools = list(d.get("tools") or [])
+    news = d.get("new_tools") or []
+    pend = {(p.get("slug") or "").lower() for p in d.get("pending_tools") or []} | {
+        "mcp-" + (p.get("slug") or "").lower() for p in d.get("pending_tools") or []}
+    tools = [t for t in d.get("tools") or [] if not _own_new_tool(t, news) and (t.get("ref") or "").lower() not in pend]
     for n in d.get("new_tools") or []:
         typ, ref = ("uc_function", n["name"]) if n["kind"] == "uc_function" else ("app", forge.app_name(n["slug"]))
         if not any(t["type"] == typ and t["ref"] == ref for t in tools):
@@ -376,6 +397,8 @@ def check(d: dict) -> list[str]:
     if not d.get("access_decided"):
         problems.append("Ask who should be able to use it (nobody yet is a fine answer).")
     problems += _connection_problems(d)
+    for p in d.get("pending_tools") or []:
+        problems.append("The new tool %s is still being written. Wait until it is ready; do not propose yet." % p["name"])
     return problems
 
 
@@ -452,8 +475,8 @@ def progress(d: dict) -> list[dict]:
                   ("behave", "How it should behave", len(d.get("instructions") or "") >= 40)]
         if eff.get("tools"):
             items.append(("checked", "Checked against what you asked", bool(d.get("coverage"))))
-    if news:
-        items.append(("tools", "New tools written and checked", all(not n["problems"] for n in news)))
+    if news or d.get("pending_tools"):
+        items.append(("tools", "New tools written and checked", all(not n["problems"] for n in news) and not d.get("pending_tools")))
     if _needed_secrets(d):
         items.append(("connect", "Connections set up", not _connection_problems(d)))
     items.append(("access", "Who can use it", bool(d.get("access_decided"))))
@@ -968,14 +991,20 @@ CHAT_TOKENS = 12000
 CODE_TOKENS = 16000
 
 
-def generate_code(brief: dict, tok: str, use: dict, notes: list) -> tuple[dict, list[str]]:
+def generate_code(brief: dict, tok: str, use: dict, notes: list, step=lambda text: None) -> tuple[dict, list[str]]:
     """Have the code model write a tool from the brief, and check what it wrote the
     same way the admin's approval will be checked. Up to three tries; each retry is
-    told exactly what was wrong. Returns (item, problems): problems is empty on success."""
+    told exactly what was wrong. Returns (item, problems): problems is empty on success.
+    `step` hears where it is up to, for the screen."""
     public = {k: brief.get(k) for k in ("slug", "name", "description", "abilities", "hosts", "secrets", "volumes")}
+    if brief.get("file_notes"):
+        # What the designer read in the files this tool works on: the real layout. Seen live: without it the
+        # code was written blind and missed a two-row table header, so every value came back "missing".
+        public["the_files_as_read"] = brief["file_notes"]
     fix: list[str] = []
     item: dict = {}
-    for _ in range(3):
+    for attempt in range(3):
+        step("Writing the code" if attempt == 0 else "Fixing what the checks found (try %d of 3)" % (attempt + 1))
         msg = _ask("code", use, notes, [
             {"role": "system", "content": _code_prompt()},
             {"role": "user", "content": json.dumps({"tool": public, "fix_these_first": fix})},
@@ -987,7 +1016,73 @@ def generate_code(brief: dict, tok: str, use: dict, notes: list) -> tuple[dict, 
     return item, fix
 
 
-def _design_new_tool(args: dict, draft: dict, tok: str, models: dict, notes: list) -> tuple[dict, dict]:
+# --- writing a new tool in the background ------------------------------------------
+#
+# Writing a tool is one long model reply (2 to 4 minutes on Claude Sonnet, up to three tries
+# when the checks find problems). Seen live (2026-10-09): done inside the conversation's own
+# request it ran past ten minutes and the admin saw a spinner and then nothing; a deployed
+# app cuts such a request off sooner still. So the conversation answers at once and the
+# writing happens here; the page asks how it is going (`job`) and, when it is done, adds the
+# tool to the draft and tells the conversation. Held in memory only: a restart loses a job
+# in progress, and the page then says so and the tool is asked for again.
+
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+JOB_KEEP = 2 * 3600
+# False runs the writing inside the call (the tests do this, so a scripted model answers in order).
+BACKGROUND = True
+
+
+def _start_job(brief: dict, tok: str, use: dict, owner: str, notes: list | None = None) -> dict:
+    with _jobs_lock:
+        now = time.time()
+        for k in [k for k, j in _jobs.items() if now - j["started"] > JOB_KEEP]:
+            _jobs.pop(k, None)
+        for j in _jobs.values():  # the same tool already being written for this person: that one
+            if j["owner"] == owner and j["slug"] == brief["slug"] and j["state"] == "writing":
+                return j
+        job = {"id": hashlib.sha256(("%s|%s|%s" % (owner, brief["slug"], now)).encode()).hexdigest()[:20],
+               "owner": owner, "slug": brief["slug"], "name": brief.get("name") or brief["slug"],
+               "state": "writing", "step": "Starting", "started": now, "item": None, "problems": [], "notes": []}
+        _jobs[job["id"]] = job
+    # Inline, a model swap (a retired one) and its notice belong to this turn; in the background
+    # they belong to the job, whose notes the page shows.
+    job_use = use if not BACKGROUND else dict(use)
+    job_notes = notes if (not BACKGROUND and notes is not None) else job["notes"]
+
+    def run():
+        try:
+            item, problems = generate_code(brief, tok, job_use, job_notes, step=lambda text: job.update(step=text))
+            if problems:
+                job.update(state="failed", problems=problems[:6], step="Could not be made safe and correct after 3 tries")
+            else:
+                job.update(state="done", item=item, step="Written and checked")
+        except Exception as exc:  # noqa: BLE001 - reported on screen, never raised into a thread
+            job.update(state="failed", problems=[str(exc)[:300]], step="Stopped")
+        job["ended"] = time.time()
+        log.info("designer: tool %s %s in %.0fs", job["slug"], job["state"], job["ended"] - job["started"])
+
+    if BACKGROUND:
+        threading.Thread(target=run, name="designer-tool-" + job["slug"], daemon=True).start()
+    else:
+        run()
+    return job
+
+
+def job(job_id: str, owner: str) -> dict:
+    """How a tool being written is going. Only the person who asked for it may see it."""
+    j = _jobs.get(job_id or "")
+    if not j or j["owner"] != owner:
+        raise DbxError("That tool is no longer being written here (the portal may have restarted). Ask for it again.", 404)
+    out = {"id": j["id"], "slug": j["slug"], "name": j["name"], "state": j["state"], "step": j["step"],
+           "seconds": int((j.get("ended") or time.time()) - j["started"]), "problems": j["problems"],
+           "notice": " ".join(dict.fromkeys(j["notes"]))}
+    if j["state"] == "done":
+        out["item"] = j["item"]
+    return out
+
+
+def _design_new_tool(args: dict, draft: dict, tok: str, models: dict, notes: list, owner: str = "") -> tuple[dict, dict]:
     """Add a proposed tool to the draft. Returns (draft, what to tell the model)."""
     kind = args.get("kind")
     news = list(draft.get("new_tools") or [])
@@ -1010,16 +1105,43 @@ def _design_new_tool(args: dict, draft: dict, tok: str, models: dict, notes: lis
         slug = str(args.get("slug") or re.sub(r"[^a-z0-9]+", "-", str(args.get("name") or "").lower()).strip("-"))[:50]
         brief = {"slug": slug, "name": args.get("name"), "description": args.get("description"),
                  "abilities": [a for a in args.get("abilities") or [] if isinstance(a, dict)][: forge.MAX_ABILITIES],
-                 "hosts": args.get("hosts") or [], "secrets": secrets, "volumes": args.get("volumes") or []}
-        item, problems = generate_code(brief, tok, models, notes)
-        if problems:
-            return draft, {"error": "The code could not be made safe and correct after 3 tries.", "problems": problems}
+                 "hosts": args.get("hosts") or [], "secrets": secrets, "volumes": args.get("volumes") or [],
+                 "file_notes": draft.get("file_notes") or ""}
+        if not re.match(r"^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$", slug or ""):
+            return draft, {"error": "Give the tool a slug of lowercase letters, digits and dashes."}
+        started = _start_job(brief, tok, models, owner or "local", notes)
+        if started["state"] == "failed":
+            return draft, {"error": "The code could not be made safe and correct after 3 tries.", "problems": started["problems"]}
+        if started["state"] == "done":  # finished already (writing inline): add it now, as before
+            item = started["item"]
+            draft = clean_draft({**draft, "pending_tools": [p for p in draft.get("pending_tools") or [] if p["slug"] != slug]})
+        else:
+            return _pending(draft, started, slug, args)
     if not item:
         return draft, {"error": "That is not a tool I can create."}
+    return _add_tool(draft, item)
+
+
+def _pending(draft: dict, started: dict, slug: str, args: dict) -> tuple[dict, dict]:
+    """The tool is being written in the background: the draft remembers it (the page follows
+    the job), and the model is told to carry on without proposing."""
+    pending = [p for p in draft.get("pending_tools") or [] if p["slug"] != slug] + [
+        {"job": started["id"], "slug": slug, "name": str(args.get("name") or slug)[:120],
+         "description": str(args.get("description") or "")[:600]}]
+    draft = clean_draft({**draft, "pending_tools": pending})
+    return draft, {"writing": True, "tool": slug,
+                   "next": "The tool is being written in the background (a few minutes); the admin sees its progress and "
+                           "you are told when it is ready. Do not call design_new_tool for it again. Say so in one "
+                           "sentence, then carry on with anything else still needed (for example who can use it). "
+                           "Do not propose until it is ready."}
+
+
+def _add_tool(draft: dict, item: dict) -> tuple[dict, dict]:
+    """A written and checked tool joins the draft (also used when a background job finishes)."""
     if item["problems"]:
         return draft, {"error": "Fix these first.", "problems": item["problems"]}
     key = forge.key_of(item)
-    news = [n for n in news if forge.key_of(n) != key] + [item]
+    news = [n for n in draft.get("new_tools") or [] if forge.key_of(n) != key] + [item]
     draft = clean_draft({**draft, "new_tools": news})
     r = item["report"]
     shown = ({"it can reach": {"websites": r["hosts"], "folders": r["folders"], "connection settings": r["settings"],
@@ -1067,7 +1189,7 @@ def _run_lookup(name: str, args: dict, tok: str) -> str:
     return text
 
 
-def turn(messages: list, draft: dict, tok: str, models: dict | None = None) -> dict:
+def turn(messages: list, draft: dict, tok: str, models: dict | None = None, owner: str = "") -> dict:
     """One exchange. Returns {reply, options, multiple, draft, ready, progress, looked, ...}.
 
     `models` is what the admin chose on screen ({chat, code, judge}); anything left out
@@ -1129,7 +1251,7 @@ def turn(messages: list, draft: dict, tok: str, models: dict | None = None) -> d
                 result = {"saved": True, "still_missing": check(draft)}
             elif name == "design_new_tool":
                 try:
-                    draft, result = _design_new_tool(args, draft, tok, use, notes)
+                    draft, result = _design_new_tool(args, draft, tok, use, notes, owner)
                 except DbxError as exc:
                     result = {"error": "Could not make that tool: " + str(exc)[:160]}
             elif name == "request_connection":

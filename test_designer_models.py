@@ -119,11 +119,13 @@ def _():
     assert dm.catalog("T") == []
 
 
-@case("defaults: the best chat model, a different model to check its work, the code model left as 'same'")
+@case("defaults: the best chat model, a different model to check its work, the newest Opus to write code")
 def _():
     serve(LIST)
     d = dm.defaults(dm.catalog("T"))
-    assert d == {"chat": "databricks-claude-sonnet-5-5", "code": "", "judge": "databricks-gpt-oss-120b"}
+    assert d == {"chat": "databricks-claude-sonnet-5-5", "code": "databricks-claude-opus-4-8", "judge": "databricks-gpt-oss-120b"}
+    serve([e for e in LIST if "opus" not in e["name"]])
+    assert dm.defaults(dm.catalog("T"))["code"] == ""   # no Opus: the code model is the chat model
     # without the open model, the judge is still never the model that did the work
     serve([e for e in LIST if "gpt-oss" not in e["name"]])
     d = dm.defaults(dm.catalog("T"))
@@ -144,10 +146,10 @@ def _():
     serve(LIST)
 
 
-@case("a choice is used; anything not chosen takes the default; the code model follows the chat model")
+@case("a choice is used; anything not chosen takes the default; code goes to Opus unless chosen")
 def _():
     serve(LIST)
-    assert dm.resolve(None, "T") == {"chat": "databricks-claude-sonnet-5-5", "code": "databricks-claude-sonnet-5-5", "judge": "databricks-gpt-oss-120b"}
+    assert dm.resolve(None, "T") == {"chat": "databricks-claude-sonnet-5-5", "code": "databricks-claude-opus-4-8", "judge": "databricks-gpt-oss-120b"}
     got = dm.resolve({"chat": "databricks-claude-opus-4-8", "judge": ""}, "T")
     assert got == {"chat": "databricks-claude-opus-4-8", "code": "databricks-claude-opus-4-8", "judge": "databricks-gpt-oss-120b"}
     got = dm.resolve({"chat": "databricks-claude-haiku-4-5", "code": "databricks-claude-opus-4-8", "judge": "our-gpt"}, "T")

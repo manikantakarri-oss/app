@@ -136,6 +136,8 @@ export type DesignerDraft = {
   coverage?: { need: string; status: "covered" | "partly" | "missing"; by?: string; note?: string }[];
   /** Tools to create before the assistant is built; the admin reads them first. */
   new_tools?: DesignerNewTool[];
+  /** New tools still being written in the background (the page follows each job). */
+  pending_tools?: { job: string; slug: string; name: string; description: string }[];
   /** Credentials the designer asked the admin to connect (names and words only). */
   connections?: DesignerConnection[];
 };
@@ -673,6 +675,27 @@ export async function designerConnect(name: string, value: string, kind: string,
 }
 
 /** Which of these connections are set (names only). */
+export type DesignerJob = {
+  id: string;
+  slug: string;
+  name: string;
+  state: "writing" | "done" | "failed" | "lost";
+  step: string;
+  seconds: number;
+  problems: string[];
+  notice?: string;
+  item?: DesignerNewTool;
+};
+
+/** How a new tool being written in the background is going. "lost" when the portal no longer has it. */
+export async function designerJob(id: string): Promise<DesignerJob> {
+  const res = await fetch(`/api/admin/designer/jobs/${encodeURIComponent(id)}`);
+  const data: any = await parsed(res);
+  if (res.status === 404) return { id, slug: "", name: "", state: "lost", step: data.error || data.detail || "", seconds: 0, problems: [] };
+  if (!res.ok) throw new Error(data.error || data.detail || `Could not check the tool (${res.status})`);
+  return data as DesignerJob;
+}
+
 export async function designerConnectionStatus(names: string[]): Promise<Record<string, boolean>> {
   const res = await fetch(`/api/admin/designer/connections?names=${encodeURIComponent(names.join(","))}`);
   const data: any = await parsed(res);

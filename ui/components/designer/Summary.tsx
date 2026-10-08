@@ -80,6 +80,7 @@ export function Summary({
   onConnect = () => {},
   collapsed = false,
   onToggle,
+  writing = [],
 }: {
   draft: DesignerDraft;
   progress: DesignerStep[];
@@ -93,6 +94,7 @@ export function Summary({
   /** Folded into a slim rail beside the conversation (wide screens only). */
   collapsed?: boolean;
   onToggle?: () => void;
+  writing?: { name: string; step: string; seconds: number }[];
 }) {
   const total = progress.length;
   const done = progress.filter((p) => p.done).length;
@@ -291,6 +293,22 @@ export function Summary({
                   ))}
                   {uses.length > 8 ? <li className="text-sm muted">and {uses.length - 8} more</li> : null}
                 </ul>
+              </Section>
+            ) : null}
+            {writing.length ? (
+              <Section title="New tools being written" icon={<PlusIcon size={13} />}>
+                <ul className="space-y-2">
+                  {writing.map((w) => (
+                    <li key={w.name} className="flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2" style={{ background: "var(--bubble)" }}>
+                      <span className="dz-spin shrink-0" style={{ color: "var(--brand-deep)" }} aria-hidden />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[14px] font-medium">{w.name}</span>
+                        <span className="block truncate text-[12.5px] faint">{w.step}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-[12.5px] faint">Usually 2 to 5 minutes. You can keep answering meanwhile.</p>
               </Section>
             ) : null}
             {draft.new_tools?.length ? (

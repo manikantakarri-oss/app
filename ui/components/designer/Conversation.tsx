@@ -38,6 +38,7 @@ export function Conversation({
   building,
   connections,
   connStatus,
+  writing = [],
   onSend,
   onRetry,
   onApprove,
@@ -52,6 +53,8 @@ export function Conversation({
   building: boolean;
   connections: DesignerConnection[];
   connStatus: Record<string, boolean>;
+  /** New tools being written in the background, with where each is up to. */
+  writing?: { name: string; step: string; seconds: number }[];
   onSend: (text: string, files?: DesignerFile[]) => void;
   onRetry: () => void;
   onApprove: () => void;
@@ -391,6 +394,22 @@ export function Conversation({
 
       <div className="shrink-0 border-t px-4 pb-3 pt-3 sm:px-6" style={{ borderColor: "var(--line)" }}>
       <div className="mx-auto w-full max-w-[860px]">
+        {writing.map((w) => (
+          <div
+            key={w.name}
+            className="mb-2.5 flex items-center gap-3 rounded-[12px] px-3 py-2 text-[13.5px]"
+            style={{ background: "var(--brand-soft)", border: "1px solid color-mix(in srgb, var(--brand) 35%, transparent)" }}
+            role="status"
+          >
+            <span className="dz-spin shrink-0" style={{ color: "var(--brand-deep)" }} aria-hidden />
+            <span className="min-w-0 flex-1 truncate">
+              <b>Writing the new tool {w.name}</b> <span className="muted">· {w.step}</span>
+            </span>
+            <span className="shrink-0 tabular-nums faint" title="Usually 2 to 5 minutes. You can keep answering meanwhile.">
+              {Math.floor(w.seconds / 60)}:{String(w.seconds % 60).padStart(2, "0")}
+            </span>
+          </div>
+        ))}
         {unconnected.length && !busy ? (
           <div
             className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] px-3 py-2"

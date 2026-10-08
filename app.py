@@ -760,8 +760,16 @@ def designer_turn(payload: dict = Body(...), x_forwarded_access_token: str = Hea
     """One exchange of the interview. The browser holds the conversation and the
     draft and sends both each time; nothing is kept here, and what was typed is
     never logged."""
-    _, tok = _require_admin(x_forwarded_access_token)
-    return designer.turn(payload.get("messages") or [], payload.get("draft") or {}, tok, payload.get("models"))
+    who, tok = _require_admin(x_forwarded_access_token)
+    return designer.turn(payload.get("messages") or [], payload.get("draft") or {}, tok, payload.get("models"),
+                         owner=who.get("user_name") or "")
+
+
+@app.get("/api/admin/designer/jobs/{job_id}")
+def designer_job(job_id: str, x_forwarded_access_token: str = Header(None)):
+    """How a new tool being written in the background is going; when done, the tool itself."""
+    who, _ = _require_admin(x_forwarded_access_token)
+    return designer.job(job_id, who.get("user_name") or "")
 
 
 @app.post("/api/admin/designer/build")

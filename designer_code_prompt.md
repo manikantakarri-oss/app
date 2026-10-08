@@ -28,3 +28,6 @@ No `eval`, `exec`, `compile`, `open`, `getattr`, `setattr`, `globals`, `input`; 
 - Do exactly what the ability's `behaviour` says, no more. Validate inputs and, on a problem, return `{"ok": False, "error": "a short plain-English reason"}` instead of raising. On success include `"ok": True`.
 - Be deterministic and bounded: cap the rows or text you return (for example the first 200 rows) and say when you cut something off.
 - If the brief is impossible with these rules (it needs a website that is not listed, a setting that is not listed, a library that does not exist), do not pretend: return the simplest code that does the part that is possible, and have the ability return `{"ok": False, "error": "..."}` for the rest, naming what is missing.
+
+## The files it works on
+`the_files_as_read`, when given, is what was really found in the files this tool reads: exact paths, sheet names, where each column and value sits (cell positions), header rows that span two rows, total and summary rows, and error or blank cells. Write the code against exactly that layout. Find columns by their header text (looking at every header row named), skip total and summary rows, treat error and blank cells as missing (never as numbers), and keep values such as mapping text exactly as they are.

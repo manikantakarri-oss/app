@@ -219,6 +219,16 @@ def best_chat(avail: list[dict]) -> str:
     return ok[0]["name"] if ok else ""  # best-first already: Claude Sonnet, then Opus, ...
 
 
+def best_code(avail: list[dict]) -> str:
+    """The newest Claude Opus for writing a new tool's code, else "" (the same as chat).
+    Seen live (2026-10-09) on a real ad-book tool: Claude Sonnet as the code writer took
+    2 to 4 minutes a try, failed all three tries once (the last reply cut off mid-line),
+    and needed three rounds of corrections; Claude Opus wrote the same tool in about
+    6000 tokens. Writing code is the one job where the strongest model pays for itself."""
+    opus = [m["name"] for m in avail if "claude-opus" in m["name"].lower() and m.get("tools") is not False]
+    return max(opus, key=_version) if opus else ""
+
+
 def best_judge(avail: list[dict], chat: str) -> str:
     """A different model from the one that built the assistant; the open GPT-OSS
     model when there is one (verified to follow the "reply with JSON only" grading
@@ -236,7 +246,7 @@ def defaults(avail: list[dict], chat: str = "") -> dict:
     chat = chat or env_default("chat") or best_chat(avail)
     return {
         "chat": chat,
-        "code": env_default("code"),  # "" = the same as chat
+        "code": env_default("code") or best_code(avail),  # "" = the same as chat
         "judge": env_default("judge") or best_judge(avail, chat),
     }
 

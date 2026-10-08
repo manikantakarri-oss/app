@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   designerConnectionStatus,
+  designerJob,
+  DesignerJob,
   DesignerBuilt,
   DesignerConnection,
   DesignerDraft,
@@ -131,6 +133,67 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
   }, [connNames]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // New tools being written in the background: their progress, and what to tell the conversation
+  // when one finishes (said once the designer is free, so nothing is lost while it is answering).
+  const [jobs, setJobs] = useState<Record<string, DesignerJob>>({});
+  const [tell, setTell] = useState<string[]>([]);
+  // A turn in flight answers with the draft it was sent; a tool finished meanwhile would be lost
+  // under it. So a finished tool joins the draft only while no turn is in flight.
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  const pendingIds = (draft.pending_tools || []).map((p) => p.job).join(",");
+  useEffect(() => {
+    if (!pendingIds) return;
+    let stop = false;
+    const tick = async () => {
+      for (const id of pendingIds.split(",")) {
+        let j: DesignerJob;
+        try {
+          j = await designerJob(id);
+        } catch {
+          continue; // a passing network problem: try again next time
+        }
+        if (stop) return;
+        setJobs((all) => ({ ...all, [id]: j }));
+        if (j.state === "writing" || busyRef.current) continue;
+        const p = (draft.pending_tools || []).find((x) => x.job === id);
+        const name = p?.name || j.name || "the new tool";
+        setDraft((d) => {
+          const left = (d.pending_tools || []).filter((x) => x.job !== id);
+          const next: DesignerDraft = { ...d, pending_tools: left.length ? left : undefined };
+          if (j.state === "done" && j.item) {
+            next.new_tools = [...(d.new_tools || []).filter((n) => (n.slug || n.name) !== (j.item!.slug || j.item!.name)), j.item];
+          }
+          keepSaved({ msgs, draft: next, ready, multiple, progress });
+          return next;
+        });
+        if (j.notice) setNotice(j.notice);
+        setTell((t) => [
+          ...t,
+          j.state === "done"
+            ? `The new tool "${name}" has been written and passed the checks.`
+            : j.state === "lost"
+              ? `The new tool "${name}" was not finished (the portal restarted). Please write it again.`
+              : `Writing the new tool "${name}" failed: ${(j.problems || []).slice(0, 3).join("; ") || "no reason was given"}.`,
+        ]);
+      }
+    };
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingIds]);
+  useEffect(() => {
+    if (!tell.length || busy) return;
+    const [first, ...rest] = tell;
+    setTell(rest);
+    send(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tell, busy]);
+  const writing = (draft.pending_tools || []).map((p) => ({ name: p.name, step: jobs[p.job]?.step || "Starting", seconds: jobs[p.job]?.seconds || 0 }));
 
   const [phase, setPhase] = useState<Phase>("describe");
   const [building, setBuilding] = useState(false);
@@ -448,6 +511,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
             building={building}
             connections={draft.connections || []}
             connStatus={connStatus}
+            writing={writing}
             onSend={send}
             onRetry={() => run(msgs)}
             onApprove={approve}
@@ -463,6 +527,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
             onApprove={approve}
             connStatus={connStatus}
             onConnect={setConnecting}
+            writing={writing}
             collapsed={!previewOpen}
             onToggle={togglePreview}
           />

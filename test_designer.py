@@ -16,6 +16,7 @@ os.environ["PORTAL_BUILDER_MODEL"] = "test-model"
 os.environ.pop("PORTAL_BUILDER_JUDGE_MODEL", None)
 
 import designer  # noqa: E402
+designer.BACKGROUND = False  # tools are written inside the call, so a scripted model answers in order
 from dbx import DbxError  # noqa: E402
 
 REAL_COMPLETE = designer._complete
@@ -1306,6 +1307,69 @@ def _():
     assert run("databricks-claude-haiku-4-5", quiet)["warning"] == ""                 # Claude: trusted to look when it matters
     looked = [reply(call("find_warehouses", {}, "a")), reply(call("ask", {"question": "Which?"}))]
     assert run("databricks-llama-4-maverick", looked)["warning"] == ""                 # it did look
+
+
+@case("a new tool is written in the background: the turn answers at once, the job reports progress to its owner only")
+def _():
+    import threading
+    go = threading.Event()
+    real = designer.generate_code
+
+    def slow(brief, tok, use, notes, step=lambda t: None):
+        step("Writing the code")
+        go.wait(5)
+        return designer.forge.clean_item({**brief, "kind": "mcp", "code": READER}), []
+
+    designer.generate_code = slow
+    designer.BACKGROUND = True
+    try:
+        m = Model(reply(call("design_new_tool", BRIEF, "n1")), reply(call("ask", {"question": "Who can use it?"})))
+        install(m)
+        designer.mcps.secrets_present = lambda tok="": set()
+        out = designer.turn([{"role": "user", "content": "build it"}], designed(), "T", owner="a@x.io")
+        told = json.loads([x for x in m.sent[1][1] if x.get("tool_call_id") == "n1"][0]["content"])
+        assert told["writing"] and "Do not propose" in told["next"]
+        pend = out["draft"]["pending_tools"]
+        assert pend and pend[0]["slug"] == "rate-reader" and not out["draft"].get("new_tools")
+        assert any("still being written" in p for p in designer.check(out["draft"]))
+        assert {p["key"]: p["done"] for p in out["progress"]}["tools"] is False
+        j = designer.job(pend[0]["job"], "a@x.io")
+        assert j["state"] == "writing" and j["step"] == "Writing the code" and "item" not in j
+        try:
+            designer.job(pend[0]["job"], "someone@else.io")
+        except DbxError as exc:
+            assert exc.status == 404
+        else:
+            raise AssertionError("another person saw the job")
+        go.set()
+        for _ in range(50):
+            if designer.job(pend[0]["job"], "a@x.io")["state"] != "writing":
+                break
+            import time as _t
+            _t.sleep(0.05)
+        done = designer.job(pend[0]["job"], "a@x.io")
+        assert done["state"] == "done" and done["item"]["slug"] == "rate-reader" and done["item"]["fingerprint"]
+    finally:
+        designer.generate_code = real
+        designer.BACKGROUND = False
+
+
+@case("the draft's own new tool listed under tools by another name is not looked for as an installed app")
+def _():
+    install(Model())
+    designer.forge.name_problems = lambda n, tok, **kw: []
+    apps_seen = []
+    designer.mcps._apps = lambda tok: (apps_seen.append(1) or {}, None)
+    tool = designer.forge.clean_item({**BRIEF, "kind": "mcp", "code": READER})
+    for alias in ("rate-reader", "mcp-rate-reader", tool["name"]):
+        d = designer.clean_draft({**designed(), "new_tools": [tool], "tools": [{"type": "app", "ref": alias, "description": "x"}]})
+        assert not any("not found" in p for p in designer.verify(d, "T")), (alias, designer.verify(d, "T"))
+        refs = [t["ref"] for t in designer.effective(d)["tools"]]
+        assert refs == ["mcp-rate-reader"], refs  # once, under its real name
+    # a tool still being written is not looked for either
+    d = designer.clean_draft({**designed(), "pending_tools": [{"job": "j", "slug": "rate-reader", "name": "Rate reader", "description": ""}],
+                              "tools": [{"type": "app", "ref": "rate-reader", "description": "x"}]})
+    assert designer.effective(d)["tools"] == []
 
 
 def main() -> int:
