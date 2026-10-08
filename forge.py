@@ -709,7 +709,9 @@ def name_problems(item: dict, tok: str, secrets: bool = True) -> list[str]:
     except DbxError:
         pass
     try:
-        app = call("GET", "/api/2.0/apps/" + app_name(item["slug"]), tok, quiet=True)
+        # act, not call: a deployed portal's user token has no apps scope (a 403), so
+        # the app identity checks the name, as it does for every other apps call.
+        app, _ = mcps.act("GET", "/api/2.0/apps/" + app_name(item["slug"]), tok, quiet=True)
         if not (app.get("description") or "").startswith(GEN_MARK):
             out.append("An app called %s already exists and was not made by this designer. Pick another id." % app_name(item["slug"]))
     except DbxError as exc:

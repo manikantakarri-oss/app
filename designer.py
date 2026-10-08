@@ -63,7 +63,7 @@ import forge
 import genie
 import knowledge
 import mcps
-from dbx import DbxError, app_token, host, http
+from dbx import DbxError, app_token, call, host, http
 
 log = logging.getLogger("portal.designer")
 
@@ -454,6 +454,22 @@ def _exists(path: str, tok: str) -> str:
         return "not found" if exc.status == 404 else "could not be read (%s)" % str(exc)[:80]
 
 
+def _folder_exists(vol: str, tok: str) -> str:
+    """'' if the volume is there. A deployed portal's user token has no volumes scope,
+    so the UC call falls back to the app identity, which is often not allowed to see
+    the volume (a 403 for a folder the admin just read a file from). Then the folder
+    itself is listed with the admin's token (files scope): if they can open it, it exists."""
+    why = _exists("/api/2.1/unity-catalog/volumes/" + vol, tok)
+    if not why or why == "not found":
+        return why
+    try:
+        call("GET", "/api/2.0/fs/directories/Volumes/" + vol.replace(".", "/"), tok,
+             params={"page_size": 1}, quiet=True)
+        return ""
+    except DbxError as exc:
+        return "not found" if exc.status == 404 else why
+
+
 def verify(d: dict, tok: str, created: bool = False) -> list[str]:
     """Everything the draft names must exist. The model can mistype a name; this is
     what stops that reaching Databricks as a confusing half-built assistant.
@@ -480,11 +496,11 @@ def verify(d: dict, tok: str, created: bool = False) -> list[str]:
         checks.append(("The table " + t, uc + "tables/" + t))
     for s in d.get("sources") or []:
         if s.get("volume"):
-            checks.append(("The folder " + s["volume"], uc + "volumes/" + s["volume"]))
+            checks.append(("The folder " + s["volume"], "vol:" + s["volume"]))
     for k in ("upload_volume", "output_volume"):
         v = (d.get("files") or {}).get(k)
         if v:
-            checks.append(("The folder " + v, uc + "volumes/" + v))
+            checks.append(("The folder " + v, "vol:" + v))
     slugs = None
     installed_refs: list[str] = []
     for t in effective(d).get("tools") or []:
@@ -507,7 +523,7 @@ def verify(d: dict, tok: str, created: bool = False) -> list[str]:
         elif typ == "uc_function":
             checks.append(("The function " + ref, uc + "functions/" + ref))
         elif typ == "volume":
-            checks.append(("The folder " + ref, uc + "volumes/" + ref))
+            checks.append(("The folder " + ref, "vol:" + ref))
         elif typ == "genie_space":
             checks.append(("The data assistant " + ref, "/api/2.0/genie/spaces/" + ref))
         elif typ == "knowledge_assistant":
@@ -532,7 +548,8 @@ def verify(d: dict, tok: str, created: bool = False) -> list[str]:
         if (label, path) in seen:
             continue
         seen.add((label, path))
-        why = "is not in the tool list" if not path else _exists(path, tok)
+        why = ("is not in the tool list" if not path else
+               _folder_exists(path[4:], tok) if path.startswith("vol:") else _exists(path, tok))
         if why:
             problems.append("%s %s." % (label, why))
     if d.get("warehouse_id") and (d.get("kind") == "genie" or any(n["kind"] == "uc_function" for n in d.get("new_tools") or [])):

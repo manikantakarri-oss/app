@@ -123,6 +123,32 @@ def _():
     assert any(p.endswith("tables/main.sales.items") for p in seen)
 
 
+@case("a folder UC will not describe (no volumes scope) is checked by opening it as the admin")
+def _():
+    install(Model(), exists=lambda path, tok: "could not be read (403 PERMISSION_DENIED)" if "/volumes/" in path else "")
+    opened = []
+
+    def call(method, path, tok, **kw):
+        opened.append(path)
+        if "missing" in path:
+            raise DbxError("no such directory", 404)
+        if "locked" in path:
+            raise DbxError("denied", 403)
+        return {"contents": []}
+
+    real = designer.call
+    designer.call = call
+    try:
+        d = {**GENIE, "files": {"upload_volume": "c.s.files", "output_volume": "c.s.missing"}}
+        out = designer.verify(d, "T")
+        assert out == ["The folder c.s.missing not found."], out
+        assert "/api/2.0/fs/directories/Volumes/c/s/files" in opened
+        out = designer.verify({**GENIE, "files": {"upload_volume": "c.s.locked"}}, "T")
+        assert out == ["The folder c.s.locked could not be read (403 PERMISSION_DENIED)."], out
+    finally:
+        designer.call = real
+
+
 @case("verify says when a warehouse is not in the list")
 def _():
     install(Model(), sources=lambda kind, tok, catalog="", schema="": {"items": [{"value": "other"}], "note": ""})

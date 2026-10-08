@@ -283,6 +283,7 @@ def _():
         return {}
 
     forge.call = call
+    forge.mcps.act = lambda method, path, tok, **kw: (call(method, path, tok, **kw), "you")
     forge.mcps.catalog = lambda refresh=False: ([{"slug": "gam-media-planner"}], "")
     forge.mcps.missing_secrets = lambda entry, tok="": []
     t = tool()
