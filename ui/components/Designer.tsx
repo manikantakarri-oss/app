@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   api,
   DesignerBuilt,
@@ -50,6 +50,27 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
   const [notice, setNotice] = useState("");
   // A model that did not look at the workspace: shown once per model, until dismissed.
   const [warning, setWarning] = useState("");
+  // On a wide screen the chat and the summary fill the window to the same height and
+  // scroll inside themselves, so the box you type in and the Approve button stay in view.
+  const work = useRef<HTMLDivElement>(null);
+  const [fill, setFill] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = work.current;
+    if (!el) return;
+    const wide = window.matchMedia("(min-width: 1024px)");
+    const place = () => {
+      if (!wide.matches) return setFill(null);
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      setFill(Math.max(520, Math.round(window.innerHeight - top - 24)));
+    };
+    place();
+    window.addEventListener("resize", place);
+    wide.addEventListener("change", place);
+    return () => {
+      window.removeEventListener("resize", place);
+      wide.removeEventListener("change", place);
+    };
+  });
   const warned = useRef<string>("");
   // The interview was picked up from an earlier visit rather than started now.
   const [resumed, setResumed] = useState(false);
@@ -367,7 +388,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
           </div>
         ) : null}
         {msgs.length ? <ProgressStrip progress={progress} /> : null}
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div ref={work} className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]" style={fill ? { height: fill } : undefined}>
           <Conversation
             msgs={msgs}
             busy={busy}

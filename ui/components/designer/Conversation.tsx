@@ -74,13 +74,18 @@ export function Conversation({
     const t = text.trim();
     if (!t || busy) return;
     setInput("");
+    if (box.current) box.current.style.height = "";
     setChanging(false);
     onSend(t);
   }
 
   return (
-    <section className="card flex min-h-[420px] flex-col p-0" aria-label="Conversation">
-      <div ref={scroller} className="max-h-[calc(100dvh-var(--header-h,56px)-300px)] min-h-[300px] flex-1 space-y-4 overflow-y-auto p-5" aria-live="polite">
+    <section className="card flex min-h-[420px] flex-col p-0 lg:min-h-0" aria-label="Conversation">
+      <div
+        ref={scroller}
+        className="max-h-[calc(100dvh-var(--header-h,56px)-300px)] min-h-[300px] flex-1 space-y-4 overflow-y-auto p-5 lg:max-h-none lg:min-h-0"
+        aria-live="polite"
+      >
         {msgs.map((m, i) => (
           <Bubble key={i} m={m} />
         ))}
@@ -177,13 +182,20 @@ export function Conversation({
         >
           <textarea
             ref={box}
-            className="field min-h-[44px] flex-1 resize-none"
-            rows={2}
+            className="field min-h-[56px] flex-1 resize-none !py-[15px] !leading-relaxed"
+            rows={1}
+            style={{ maxHeight: 220 }}
             value={input}
             disabled={busy || building}
             placeholder={changing ? "What would you like to change?" : options.length ? "Or type your own answer…" : msgs.length <= 1 ? "Describe what you want it to do…" : "Type your answer…"}
             aria-label="Your answer"
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              // Grow with what is typed (up to about eight lines), then scroll.
+              const t = e.target;
+              t.style.height = "auto";
+              t.style.height = Math.min(t.scrollHeight + 2, 220) + "px";
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -191,7 +203,7 @@ export function Conversation({
               }
             }}
           />
-          <button type="submit" className="btn btn-primary h-11 w-11 !p-0" disabled={busy || building || !input.trim()} aria-label="Send">
+          <button type="submit" className="btn btn-primary h-[56px] w-[56px] shrink-0 !p-0" disabled={busy || building || !input.trim()} aria-label="Send">
             <ArrowUpIcon size={18} />
           </button>
         </form>
