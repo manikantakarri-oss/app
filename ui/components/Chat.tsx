@@ -467,7 +467,7 @@ export function Chat({
         ) : null}
 
         {empty ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-16">
+          <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-16">
             <div
               aria-hidden
               className="mb-4 flex h-12 w-12 items-center justify-center rounded-full"
@@ -505,7 +505,7 @@ export function Chat({
             <div
               ref={scrollRef}
               onScroll={onScroll}
-              className="min-h-0 flex-1 overflow-y-auto"
+              className="relative min-h-0 flex-1 overflow-y-auto"
               role="log"
               aria-live="polite"
               aria-label="Conversation"

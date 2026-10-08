@@ -672,6 +672,13 @@ export async function designerConnect(name: string, value: string, kind: string,
   return data as { name: string; set: boolean };
 }
 
+/** Which of these connections are set (names only). */
+export async function designerConnectionStatus(names: string[]): Promise<Record<string, boolean>> {
+  const res = await fetch(`/api/admin/designer/connections?names=${encodeURIComponent(names.join(","))}`);
+  const data: any = await parsed(res);
+  return res.ok ? data.connections || {} : {};
+}
+
 export async function upload(endpoint: string, file: File) {
   const fd = new FormData();
   fd.append("endpoint", endpoint);

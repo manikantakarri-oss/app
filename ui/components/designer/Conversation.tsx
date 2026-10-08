@@ -255,22 +255,26 @@ export function Conversation({
           <ArrowUpIcon size={17} />
         </button>
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px] faint">
-        <p className="hidden items-center gap-1.5 sm:flex">
-          <span className="dz-kbd">Enter</span> to send <span className="mx-1">·</span> <span className="dz-kbd">Shift</span>+
-          <span className="dz-kbd">Enter</span> for a new line
-        </p>
-        {folder ? (
-          <p className="min-w-0 truncate">
-            Files go to <span className="font-mono">{folder}</span> ·{" "}
-            <button type="button" className="underline" onClick={() => setAskFolder([])}>
-              change
-            </button>
-          </p>
-        ) : (
-          <p>Attach an ad book, rate card or policy to design around it.</p>
-        )}
-      </div>
+      {large || pending.length ? (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px] faint">
+          {large ? (
+            <p className="hidden items-center gap-1.5 sm:flex">
+              <span className="dz-kbd">Enter</span> to send <span className="mx-1">·</span> <span className="dz-kbd">Shift</span>+
+              <span className="dz-kbd">Enter</span> for a new line
+            </p>
+          ) : null}
+          {folder ? (
+            <p className="min-w-0 truncate">
+              Files go to <span className="font-mono">{folder}</span> ·{" "}
+              <button type="button" className="underline" onClick={() => setAskFolder([])}>
+                change
+              </button>
+            </p>
+          ) : (
+            <p>Attach an ad book, rate card or policy to design around it.</p>
+          )}
+        </div>
+      ) : null}
     </form>
   );
 
@@ -356,9 +360,10 @@ export function Conversation({
       {folderDialog}
       <div
         ref={scroller}
-        className="max-h-[calc(100dvh-var(--header-h,56px)-300px)] min-h-[300px] flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-7 lg:max-h-none lg:min-h-0"
+        className="relative max-h-[calc(100dvh-var(--header-h,56px)-300px)] min-h-[300px] flex-1 overflow-y-auto px-5 py-6 sm:px-7 lg:max-h-none lg:min-h-0"
         aria-live="polite"
       >
+        <div className="mx-auto w-full max-w-[860px] space-y-6">
         {msgs.map((m, i) => (
           <Bubble key={i} m={m} />
         ))}
@@ -381,31 +386,35 @@ export function Conversation({
             </button>
           </div>
         ) : null}
+        </div>
       </div>
 
-      <div className="border-t px-4 pb-4 pt-3 sm:px-6" style={{ borderColor: "var(--line)" }}>
+      <div className="shrink-0 border-t px-4 pb-3 pt-3 sm:px-6" style={{ borderColor: "var(--line)" }}>
+      <div className="mx-auto w-full max-w-[860px]">
         {unconnected.length && !busy ? (
-          <div className="mb-3 space-y-2">
-            {unconnected.map((c) => (
-              <div key={c.name} className="flex flex-wrap items-center gap-3 rounded-[14px] px-3.5 py-2.5"
-                style={{ background: "var(--warn-bg)", border: "1px solid var(--warn-line)" }}>
-                <span aria-hidden style={{ color: "var(--warn-line)" }}>
-                  <ShieldIcon size={17} />
-                </span>
-                <span className="min-w-0 flex-1 text-[14px]">
-                  <b>Connect {c.label}</b>
-                  {c.what_for ? <span className="muted"> · {c.what_for}</span> : null}
-                </span>
-                <button type="button" className="btn btn-primary !min-h-0 !py-1.5" onClick={() => onConnect(c)}>
-                  Connect
+          <div
+            className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] px-3 py-2"
+            style={{ background: "var(--warn-bg)", border: "1px solid color-mix(in srgb, var(--warn-line) 55%, transparent)" }}
+          >
+            <span aria-hidden style={{ color: "var(--warn-line)" }}>
+              <ShieldIcon size={16} />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[13.5px]" title={unconnected.map((c) => c.what_for).filter(Boolean).join(" ")}>
+              <b>{unconnected.length === 1 ? "One connection needed" : `${unconnected.length} connections needed`}</b>
+              <span className="muted"> · kept in your workspace&apos;s secret store, never shown to the AI</span>
+            </span>
+            <span className="flex flex-wrap gap-1.5">
+              {unconnected.map((c) => (
+                <button key={c.name} type="button" className="btn btn-primary !min-h-0 !px-3 !py-1 text-[13px]" onClick={() => onConnect(c)}>
+                  Connect {c.label}
                 </button>
-              </div>
-            ))}
+              ))}
+            </span>
           </div>
         ) : null}
 
         {showReady && !changing ? (
-          <div className="dz-ready mb-3">
+          <div className="dz-ready mb-2.5 !py-2.5">
             <span className="flex min-w-0 flex-1 items-center gap-2 text-[14.5px] font-medium">
               <span aria-hidden style={{ color: "var(--ok)" }}>
                 <CheckIcon size={18} />
@@ -431,7 +440,7 @@ export function Conversation({
         ) : null}
 
         {options.length ? (
-          <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Quick answers">
+          <div className="dz-answers mb-2.5 flex flex-wrap items-center gap-2" role="group" aria-label="Quick answers">
             {options.map((o) => {
               const on = picked.includes(o);
               return (
@@ -456,6 +465,7 @@ export function Conversation({
         ) : null}
 
         {composer(false)}
+      </div>
       </div>
     </section>
   );

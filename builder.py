@@ -567,6 +567,27 @@ def _row(value: str, label: str = "", detail: str = "") -> dict:
     return {"value": value, "label": label or value, "detail": (detail or "")[:160]}
 
 
+def listing_note(exc: DbxError, kind: str, catalog: str = "", schema: str = "") -> str:
+    """Why a picker list is empty, in words. Databricks' own reply is JSON; seen live
+    (2026-10-08): listing the folders of a schema the admin may not use answers 403
+    "User does not have USE CATALOG ...", which was shown to people raw and cut short."""
+    text = str(exc)
+    m = re.search(r'"message"\s*:\s*"([^"]+)"', text)
+    reason = (m.group(1) if m else text).strip()
+    inside = kind in ("volume", "table", "uc_function")
+    where = ".".join(x for x in (catalog, schema if inside else "") if x)
+    if exc.status in (401, 403) or "PERMISSION_DENIED" in text:
+        if inside and catalog and schema:
+            return ("You do not have access to look inside %s. Databricks needs USE CATALOG on %s and USE SCHEMA on %s. "
+                    "Choose another schema, or type the name if you know it." % (where, catalog, where))
+        if kind == "schemas" and catalog:
+            return "You do not have access to the catalog %s (Databricks needs USE CATALOG on it). Choose another catalog." % catalog
+        return "You do not have permission to list these (%s). You can still type the name if you know it." % reason[:120]
+    if exc.status == 404:
+        return "%s was not found. It may have been renamed or deleted." % (where or "That")
+    return "Could not list these automatically (%s). You can still type the name if you know it." % reason[:140]
+
+
 def sources(kind: str, user_tok: str, catalog: str = "", schema: str = "") -> dict:
     """Options for the picker. Never raises on a listing failure: the UI also
     accepts a typed reference, so a workspace where discovery is blocked still
@@ -627,8 +648,7 @@ def sources(kind: str, user_tok: str, catalog: str = "", schema: str = "") -> di
     except DbxError as exc:
         if exc.status == 400 and "unknown source" in str(exc):
             raise
-        note = ("Could not list these automatically (" + str(exc)[:110] + "). "
-                "You can still type the reference in by hand.")
+        note = listing_note(exc, kind, catalog, schema)
     items = [i for i in items if i["value"]]
     items.sort(key=lambda i: i["label"].lower())
     return {"items": items, "note": note, "acted_as": by}

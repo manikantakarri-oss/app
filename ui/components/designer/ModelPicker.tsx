@@ -137,7 +137,7 @@ export function ModelMenu({
         title="Choose which AI model does the thinking"
       >
         <SparkleIcon size={15} />
-        <span className="hidden text-[13px] muted sm:inline">AI model</span>
+        <span className="hidden text-[13px] muted 2xl:inline">AI model</span>
         <b className="max-w-[11rem] truncate text-[14px]">{chat ? modelName(info, chat) : "Choose a model"}</b>
         <ChevronDownIcon size={14} />
       </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useLayoutEffect, useRef, useState } from "react";
 import type { DesignerDraft, DesignerMessage, DesignerNewTool, DesignerStep } from "@/lib/api";
 import { CheckIcon, SearchIcon, SparkleIcon } from "../icons";
 import { FileChips, withoutFileLines } from "./Files";
@@ -20,17 +20,17 @@ const PHASES: { key: Phase; label: string }[] = [
 
 /** The four stages, always visible, so nobody wonders what comes next. Not clickable:
  *  moving around happens with the buttons on each screen, which say what they do. */
-export function StageBar({ phase }: { phase: Phase }) {
+export function StageBar({ phase, compact }: { phase: Phase; compact?: boolean }) {
   const at = PHASES.findIndex((p) => p.key === phase);
   return (
-    <ol className="dz-steps" aria-label="Where you are">
+    <ol className={compact ? "dz-steps dz-steps-sm" : "dz-steps"} aria-label="Where you are">
       {PHASES.map((p, i) => {
         const state = i < at ? "done" : i === at ? "now" : "next";
         return (
           <li key={p.key} className="flex items-center">
             <span className="dz-step" data-state={state} aria-current={state === "now" ? "step" : undefined}>
               <span className="dz-step-dot">{state === "done" ? <CheckIcon size={13} /> : i + 1}</span>
-              <span className={state === "now" ? "" : "hidden sm:inline"}>{p.label}</span>
+              <span className={state === "now" ? "" : compact ? "hidden 2xl:inline" : "hidden sm:inline"}>{p.label}</span>
               {state === "done" ? <span className="sr-only"> (done)</span> : null}
             </span>
             {i < PHASES.length - 1 ? <span aria-hidden className="dz-step-line" data-done={i < at ? "true" : "false"} /> : null}
@@ -58,16 +58,38 @@ export function listWords(items: string[]): string {
   return items.slice(0, -1).join(", ") + " and " + items[items.length - 1];
 }
 
+/** What you wrote. A long message (a pasted brief) is folded to a few lines, so the
+ *  conversation stays readable; "Show more" opens it. */
+function Mine({ m }: { m: DesignerMessage }) {
+  const words = m.files?.length ? withoutFileLines(m.content) : m.content;
+  const box = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && !open) setLong(el.scrollHeight > el.clientHeight + 4);
+  }, [words, open]);
+  return (
+    <div className="flex flex-col items-end">
+      {words ? (
+        <div className="dz-user">
+          <div ref={box} className={open ? "" : "dz-clamp"}>
+            {words}
+          </div>
+          {long || open ? (
+            <button type="button" className="mt-1.5 text-[13px] font-semibold" style={{ color: "var(--brand-deep)" }} onClick={() => setOpen(!open)}>
+              {open ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {m.files?.length ? <FileChips files={m.files} mine /> : null}
+    </div>
+  );
+}
+
 export function Bubble({ m }: { m: DesignerMessage }) {
-  if (m.role === "user") {
-    const words = m.files?.length ? withoutFileLines(m.content) : m.content;
-    return (
-      <div className="flex flex-col items-end">
-        {words ? <div className="dz-user">{words}</div> : null}
-        {m.files?.length ? <FileChips files={m.files} mine /> : null}
-      </div>
-    );
-  }
+  if (m.role === "user") return <Mine m={m} />;
   return (
     <div className="flex gap-3">
       <Mark />

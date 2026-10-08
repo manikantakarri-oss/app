@@ -226,7 +226,7 @@ def _():
     f = Fake()
     f.fail[("GET", "/functions")] = DbxError("403 no scope", 403)
     r = run(f, builder.sources, "uc_function", "USER", "c", "s")
-    assert r["items"] == [] and "type the reference" in r["note"]
+    assert r["items"] == [] and "type the name" in r["note"] and "USE SCHEMA on c.s" in r["note"]
 
 @case("files: volumes must be catalog.schema.volume; extensions are normalised")
 def _():

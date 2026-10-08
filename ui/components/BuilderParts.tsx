@@ -546,6 +546,12 @@ export function VolumeField({
         </label>
       </div>
 
+      {/* Why a list is empty (no permission, not found), in words, instead of a bare "No folders here". */}
+      {[catsL.data?.note, catalog ? schsL.data?.note : "", schema ? volsL.data?.note : ""].filter(Boolean).slice(-1).map((n) => (
+        <p key={n} className="mt-2 rounded-lg px-3 py-2 text-[13px]" style={{ background: "var(--warn-bg)" }} role="status">
+          {n}
+        </p>
+      ))}
       {value ? (
         <p className="mt-3 rounded-lg px-3 py-2 text-[14px]" style={{ background: "var(--brand-soft)" }}>
           <b>Chosen:</b> {value}

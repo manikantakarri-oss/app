@@ -176,7 +176,7 @@ export function FileChips({ files, mine }: { files: DesignerFile[]; mine?: boole
         <li key={f.path} className="dz-pill !bg-[var(--surface)]" title={f.path} style={{ border: "1px solid var(--line)" }}>
           <FileIcon size={12} />
           <span className="max-w-[240px] truncate">{f.name}</span>
-          <span className="faint">{fmtBytes(f.bytes)}</span>
+          <span className="whitespace-nowrap faint">{fmtBytes(f.bytes)}</span>
         </li>
       ))}
     </ul>

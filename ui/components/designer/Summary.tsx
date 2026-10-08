@@ -7,6 +7,8 @@ import {
   BookIcon,
   ChartIcon,
   CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CloseIcon,
   FileIcon,
   LayersIcon,
@@ -76,6 +78,8 @@ export function Summary({
   onApprove,
   connStatus = {},
   onConnect = () => {},
+  collapsed = false,
+  onToggle,
 }: {
   draft: DesignerDraft;
   progress: DesignerStep[];
@@ -86,6 +90,9 @@ export function Summary({
   onApprove: () => void;
   connStatus?: Record<string, boolean>;
   onConnect?: (c: DesignerConnection) => void;
+  /** Folded into a slim rail beside the conversation (wide screens only). */
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
   const total = progress.length;
   const done = progress.filter((p) => p.done).length;
@@ -111,44 +118,126 @@ export function Summary({
       </span>
     </li>
   );
-  const live = ready && !busy;
 
-  return (
-    <aside id="designer-summary" className="card flex h-fit flex-col p-0 lg:h-full lg:min-h-0" aria-label="Your assistant so far">
-      {/* Who it is, how far along and the button stay put; what was understood scrolls below them. */}
-      <div className="shrink-0 px-5 pb-4 pt-5">
+  const unconnected = (draft.connections || []).filter((c) => !connStatus[c.name]);
+  const live = ready && !busy;
+  const button = (
+    <button
+      type="button"
+      className={live ? "btn btn-primary btn-lg w-full" : "btn btn-primary btn-lg dz-cta-off w-full"}
+      disabled={!ready || busy || building}
+      onClick={onApprove}
+    >
+      {building ? <Spinner label="Working…" /> : ctaLabel(draft)}
+    </button>
+  );
+
+  // Folded: a slim rail with how far along it is, and the button when it is ready.
+  const rail = (
+    <aside className="card hidden h-full flex-col items-center gap-3 px-2 py-3 lg:flex" aria-label="Your assistant so far (folded)">
+      <button type="button" className="dz-rail-btn" onClick={onToggle} aria-label="Show the preview" title="Show the preview">
+        <ChevronLeftIcon size={18} />
+      </button>
+      <span className="dz-ring-sm" title={`${done} of ${total} settled`} aria-label={`${done} of ${total} settled`}>
+        <svg viewBox="0 0 44 44" aria-hidden>
+          <circle cx="22" cy="22" r="19" fill="none" stroke="var(--bubble)" strokeWidth="4" />
+          <circle
+            cx="22"
+            cy="22"
+            r="19"
+            fill="none"
+            stroke="var(--brand)"
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeDasharray={`${total ? (done / total) * 119.4 : 0} 119.4`}
+          />
+        </svg>
+        <span className="text-[11.5px] font-bold tabular-nums">
+          {done}/{total}
+        </span>
+      </span>
+      <span className="dz-tile !h-9 !w-9" title={draft.display_name || "Untitled assistant"} aria-hidden>
+        {(draft.kind && KIND_ICON[draft.kind]) || <SparkleIcon size={18} />}
+      </span>
+      {unconnected.length ? (
+        <button
+          type="button"
+          className="dz-rail-btn"
+          style={{ background: "var(--warn-bg)", color: "var(--warn-line)" }}
+          onClick={() => onConnect(unconnected[0])}
+          title={`Connect ${unconnected[0].label}`}
+          aria-label={`Connect ${unconnected[0].label}`}
+        >
+          <ShieldIcon size={17} />
+        </button>
+      ) : null}
+      <span className="flex-1" />
+      {live ? (
+        <button
+          type="button"
+          className="btn btn-primary !h-10 !w-10 !min-h-0 !rounded-xl !p-0"
+          onClick={onApprove}
+          disabled={building}
+          title={ctaLabel(draft)}
+          aria-label={ctaLabel(draft)}
+        >
+          <CheckIcon size={18} />
+        </button>
+      ) : null}
+    </aside>
+  );
+
+  const full = (
+    <aside
+      id="designer-summary"
+      className={`card relative flex h-fit flex-col overflow-hidden p-0 lg:h-full lg:min-h-0 ${collapsed ? "lg:hidden" : ""}`}
+      aria-label="Your assistant so far"
+    >
+      <div className="shrink-0 px-5 pb-3 pt-4">
         <div className="flex items-center justify-between gap-3">
           <span className="dz-eyebrow flex items-center gap-1.5">
             <span aria-hidden className={busy ? "h-1.5 w-1.5 animate-pulse rounded-full" : "h-1.5 w-1.5 rounded-full"} style={{ background: "var(--brand)" }} />
             Live preview
           </span>
-          <span className="text-[12.5px] tabular-nums muted" aria-live="polite">
-            {done} of {total} settled
+          <span className="flex items-center gap-2">
+            <span className="text-[12.5px] tabular-nums muted" aria-live="polite">
+              {done} of {total} settled
+            </span>
+            {onToggle ? (
+              <button type="button" className="icon-btn !hidden !h-8 !w-8 lg:!inline-flex" onClick={onToggle} aria-label="Hide the preview" title="Hide the preview">
+                <ChevronRightIcon size={16} />
+              </button>
+            ) : null}
           </span>
         </div>
 
         <div className="mt-3 flex items-center gap-3">
-          <span className="dz-tile !h-11 !w-11 !rounded-[14px]" aria-hidden>
+          <span className="dz-tile !h-10 !w-10 !rounded-[13px]" aria-hidden>
             {(draft.kind && KIND_ICON[draft.kind]) || <SparkleIcon size={20} />}
           </span>
           <div key={(draft.display_name || "") + (draft.kind || "")} className={empty ? "min-w-0 flex-1" : "dz-flash min-w-0 flex-1"}>
             {draft.display_name ? (
-              <p className="truncate text-[16px] font-semibold" title={draft.display_name}>
+              <p className="truncate text-[15.5px] font-semibold" title={draft.display_name}>
                 {draft.display_name}
               </p>
             ) : (
-              <p className="text-[16px] font-semibold faint">Untitled assistant</p>
+              <p className="text-[15.5px] font-semibold faint">Untitled assistant</p>
             )}
-            <p className="truncate text-[13px] muted">{draft.kind ? KIND_NAME[draft.kind] : "Its kind is worked out as you answer"}</p>
+            <p className="truncate text-[12.5px] muted">{draft.kind ? KIND_NAME[draft.kind] : "Its kind is worked out as you answer"}</p>
           </div>
         </div>
 
-        <div className="dz-seg mt-4" role="progressbar" aria-label="How much is settled" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
+        <div className="dz-seg mt-3" role="progressbar" aria-label="How much is settled" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
           {progress.map((p) => (
             <span key={p.key} data-on={p.done ? "true" : "false"} title={p.label} />
           ))}
         </div>
-        <ul className="mt-3 grid gap-1.5">
+      </div>
+
+      {/* relative: hidden screen-reader labels (position: absolute) stay inside this scrolling area instead of
+          stretching the page (seen live: a grey band under the app on a short window). */}
+      <div className="relative border-t px-5 pb-5 pt-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ borderColor: "var(--line)" }}>
+        <ul className="mb-5 grid gap-1.5">
           {progress.map((p) => (
             <li key={p.key} className="flex items-center gap-2 text-[13.5px]">
               {p.done ? (
@@ -167,26 +256,6 @@ export function Summary({
             </li>
           ))}
         </ul>
-
-        <div className="mt-4">
-          {error ? (
-            <div className="mb-3">
-              <ErrorBox>{error}</ErrorBox>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            className={live ? "btn btn-primary btn-lg w-full" : "btn btn-primary btn-lg dz-cta-off w-full"}
-            disabled={!ready || busy || building}
-            onClick={onApprove}
-          >
-            {building ? <Spinner label="Working…" /> : ctaLabel(draft)}
-          </button>
-          <p className="mt-2 text-center text-[12.5px] faint">{hint(ready, draft, todo)}</p>
-        </div>
-      </div>
-
-      <div className="border-t px-5 pb-6 pt-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ borderColor: "var(--line)" }}>
         {empty ? (
           <div>
             <p className="text-[13.5px] muted">As you answer, what it does, what it uses and who can use it appear here.</p>
@@ -299,7 +368,25 @@ export function Summary({
           </div>
         )}
       </div>
+
+      {/* The one button, always in view at the bottom, however long the details grow. */}
+      <div className="shrink-0 border-t px-5 pb-4 pt-3" style={{ borderColor: "var(--line)", background: "var(--surface)" }}>
+        {error ? (
+          <div className="mb-3">
+            <ErrorBox>{error}</ErrorBox>
+          </div>
+        ) : null}
+        {button}
+        <p className="mt-1.5 text-center text-[12px] faint">{hint(ready, draft, todo)}</p>
+      </div>
     </aside>
+  );
+
+  return (
+    <>
+      {collapsed ? rail : null}
+      {full}
+    </>
   );
 }
 

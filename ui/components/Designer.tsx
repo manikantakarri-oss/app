@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
+  designerConnectionStatus,
   DesignerBuilt,
   DesignerConnection,
   DesignerDraft,
@@ -53,27 +54,61 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
   const [notice, setNotice] = useState("");
   // A model that did not look at the workspace: shown once per model, until dismissed.
   const [warning, setWarning] = useState("");
-  // On a wide screen the chat and the summary fill the window to the same height and
-  // scroll inside themselves, so the box you type in and the Approve button stay in view.
-  const work = useRef<HTMLDivElement>(null);
+  // Fit the window. On a wide screen the conversation and the preview end at the bottom of the
+  // screen and scroll inside themselves; the page itself never scrolls. Learnt the hard way: a
+  // fixed minimum height (520px) plus the page's own bottom padding pushed the page past a short
+  // window (a laptop at 125% zoom), so the title scrolled away and a grey band showed under the
+  // app. So: no forced minimum beyond what stays usable, the page's bottom padding is taken back
+  // while the designer is open, and it is measured only when sizes change, never on every render.
+  const [workEl, setWorkEl] = useState<HTMLDivElement | null>(null);
   const [fill, setFill] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const el = work.current;
-    if (!el) return;
+  const [shortScreen, setShortScreen] = useState(false);
+  useEffect(() => {
+    if (!workEl) return;
+    const main = workEl.closest("main") as HTMLElement | null;
+    const kept = main ? [main.style.paddingBottom, main.style.paddingTop] : ["", ""];
+    if (main) {
+      main.style.paddingBottom = "16px";
+      main.style.paddingTop = "20px";
+    }
     const wide = window.matchMedia("(min-width: 1024px)");
     const place = () => {
+      setShortScreen(window.innerHeight < 780);
       if (!wide.matches) return setFill(null);
-      const top = el.getBoundingClientRect().top + window.scrollY;
-      setFill(Math.max(520, Math.round(window.innerHeight - top - 24)));
+      const top = workEl.getBoundingClientRect().top + window.scrollY;
+      setFill(Math.max(340, Math.floor(window.innerHeight - top - 16)));
     };
     place();
+    const ro = new ResizeObserver(place); // a notice or the header changing size moves the top
+    ro.observe(document.body);
     window.addEventListener("resize", place);
-    wide.addEventListener("change", place);
     return () => {
+      ro.disconnect();
       window.removeEventListener("resize", place);
-      wide.removeEventListener("change", place);
+      if (main) [main.style.paddingBottom, main.style.paddingTop] = kept;
     };
-  });
+  }, [workEl]);
+  // The preview beside the chat can be folded into a slim rail, to give the conversation the width.
+  // Remembered in this browser; folded by default on narrower screens.
+  const [previewOpen, setPreviewOpen] = useState(true);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("agent-portal-designer-preview");
+      setPreviewOpen(v ? v === "open" : window.innerWidth >= 1280);
+    } catch {
+      setPreviewOpen(window.innerWidth >= 1280);
+    }
+  }, []);
+  function togglePreview() {
+    setPreviewOpen((o) => {
+      try {
+        localStorage.setItem("agent-portal-designer-preview", o ? "closed" : "open");
+      } catch {
+        // storage refused: the choice lasts for this visit
+      }
+      return !o;
+    });
+  }
   const warned = useRef<string>("");
   // The interview was picked up from an earlier visit rather than started now.
   const [resumed, setResumed] = useState(false);
@@ -86,6 +121,14 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
   // Which credentials the design needs are set (names only; values never come to this page).
   const [connStatus, setConnStatus] = useState<Record<string, boolean>>({});
   const [connecting, setConnecting] = useState<DesignerConnection | null>(null);
+  // After a refresh (the conversation is picked up again) or a new request, ask which are set.
+  const connNames = (draft.connections || []).map((c) => c.name).join(",");
+  useEffect(() => {
+    if (!connNames) return;
+    designerConnectionStatus(connNames.split(","))
+      .then((r) => setConnStatus((s) => ({ ...s, ...r })))
+      .catch(() => {});
+  }, [connNames]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -356,7 +399,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
     return (
       <>
         {resumed ? (
-          <div className="notice mb-3 flex flex-wrap items-center justify-between gap-3" role="status">
+          <div className="notice mb-3 flex flex-wrap items-center justify-between gap-3 !py-2 text-[13.5px]" role="status">
             <span>We picked up the conversation you started earlier.</span>
             <span className="flex gap-3 text-sm font-medium">
               <button type="button" className="underline" onClick={startOver} disabled={busy || building}>
@@ -369,7 +412,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
           </div>
         ) : null}
         {warning ? (
-          <div className="notice mb-3 flex flex-wrap items-center justify-between gap-3" role="status">
+          <div className="notice mb-3 flex flex-wrap items-center justify-between gap-3 !py-2 text-[13.5px]" role="status">
             <span>{warning}</span>
             <span className="flex gap-3 text-sm font-medium">
               <button type="button" className="underline" onClick={() => { setPanel(true); setWarning(""); }}>
@@ -382,7 +425,7 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
           </div>
         ) : null}
         {notice ? (
-          <div className="notice mb-3 flex items-start justify-between gap-3" role="status">
+          <div className="notice mb-3 flex items-start justify-between gap-3 !py-2 text-[13.5px]" role="status">
             <span>{notice}</span>
             <button type="button" className="shrink-0 text-sm font-medium underline" onClick={() => setNotice("")}>
               Dismiss
@@ -390,7 +433,11 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
           </div>
         ) : null}
         {hasUser ? <ProgressStrip progress={progress} /> : null}
-        <div ref={work} className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]" style={fill ? { height: fill } : undefined}>
+        <div
+          ref={setWorkEl}
+          className={`grid gap-4 transition-[grid-template-columns] duration-200 lg:grid-rows-[minmax(0,1fr)] ${previewOpen ? "lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_390px]" : "lg:grid-cols-[minmax(0,1fr)_76px]"}`}
+          style={fill ? { height: fill } : undefined}
+        >
           <Conversation
             msgs={msgs}
             busy={busy}
@@ -416,6 +463,8 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
             onApprove={approve}
             connStatus={connStatus}
             onConnect={setConnecting}
+            collapsed={!previewOpen}
+            onToggle={togglePreview}
           />
           {connecting ? (
             <ConnectDialog
@@ -437,36 +486,55 @@ export function Designer({ onCancel, onFinished }: { onCancel: () => void; onFin
 
   return (
     <div className="w-full">
-      <header className="mb-5">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-          {phase === "describe" ? (
-            <button type="button" className="btn btn-quiet !px-3" onClick={onCancel} aria-label="Cancel and go back">
-              <ChevronLeftIcon size={16} />
-              <span className="hidden sm:inline">Cancel</span>
-            </button>
-          ) : null}
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-xl font-semibold tracking-tight sm:text-[22px]">New assistant</h2>
-              <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
-            </div>
-            <p className="mt-0.5 hidden text-[13.5px] muted sm:block">Built from a short conversation. Nothing is created until you approve it.</p>
+      {phase === "describe" && (hasUser || shortScreen) ? (
+        <header className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <button type="button" className="icon-btn" onClick={onCancel} aria-label="Cancel and go back" title="Cancel and go back">
+            <ChevronLeftIcon size={18} />
+          </button>
+          <h2 className="text-[17px] font-semibold tracking-tight">New assistant</h2>
+          <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
+          <span aria-hidden className="mx-1 hidden h-5 w-px md:block" style={{ background: "var(--line)" }} />
+          <div className="hidden min-w-0 md:block">
+            <StageBar phase={phase} compact />
           </div>
-          {phase === "describe" && info?.ready ? (
-            <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+          {info?.ready ? (
+            <div className="ml-auto flex items-center gap-2">
               <ModelMenu info={info} choice={choice} used={used} onChange={changeChoice} open={panel} setOpen={setPanel} />
               {hasUser ? (
-                <button type="button" className="btn btn-quiet" onClick={startOver} disabled={busy || building} title="Clear the conversation and start again">
-                  <RefreshIcon size={15} /> <span className="hidden sm:inline">Start over</span>
+                <button type="button" className="btn btn-quiet !px-3" onClick={startOver} disabled={busy || building} title="Clear the conversation and start again">
+                  <RefreshIcon size={15} /> <span className="hidden xl:inline">Start over</span>
                 </button>
               ) : null}
             </div>
           ) : null}
-        </div>
-        <div className="mt-5 overflow-x-auto">
-          <StageBar phase={phase} />
-        </div>
-      </header>
+        </header>
+      ) : (
+        <header className="mb-5">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+            {phase === "describe" ? (
+              <button type="button" className="btn btn-quiet !px-3" onClick={onCancel} aria-label="Cancel and go back">
+                <ChevronLeftIcon size={16} />
+                <span className="hidden sm:inline">Cancel</span>
+              </button>
+            ) : null}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-xl font-semibold tracking-tight sm:text-[22px]">New assistant</h2>
+                <Tag title="A new way to build that is still being tested. Everything is shown to you before it is created.">Beta</Tag>
+              </div>
+              <p className="mt-0.5 hidden text-[13.5px] muted sm:block">Built from a short conversation. Nothing is created until you approve it.</p>
+            </div>
+            {phase === "describe" && info?.ready ? (
+              <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
+                <ModelMenu info={info} choice={choice} used={used} onChange={changeChoice} open={panel} setOpen={setPanel} />
+              </div>
+            ) : null}
+          </div>
+          <div className="mt-5 overflow-x-auto">
+            <StageBar phase={phase} />
+          </div>
+        </header>
+      )}
       {body}
     </div>
   );
