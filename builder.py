@@ -563,6 +563,37 @@ def finish_provisioning(agent_id: str, endpoint_name: str, spec: dict, who: dict
 
 # --- finding things to attach ------------------------------------------------
 
+def _volumes_via_sql(catalog: str, schema: str, user_tok: str) -> list | None:
+    """The folders (volumes) in a schema, as the person, through SQL (`SHOW VOLUMES`).
+
+    Seen live (2026-10-09): a deployed portal's user token cannot list volumes. Databricks
+    Apps has no user scope for it (`catalog.volumes` and `unity-catalog.volumes` are both
+    refused as invalid scopes), the file store cannot list the volumes of a schema
+    ("Path is missing a volume name"), and the fallback identity (the portal's) has no
+    USE CATALOG, so nobody could pick a folder to attach a file to. The token does carry
+    the SQL scopes, and SHOW VOLUMES answers with exactly what this person may see.
+    None when no warehouse could run it."""
+    if not (re.match(r"^[\w-]+$", catalog or "") and re.match(r"^[\w-]+$", schema or "")):
+        return None
+    try:
+        whs = (call("GET", "/api/2.0/sql/warehouses", user_tok, quiet=True) or {}).get("warehouses") or []
+        whs.sort(key=lambda w: (w.get("state") != "RUNNING", w.get("name") or ""))
+        if not whs:
+            return None
+        r = call("POST", "/api/2.0/sql/statements", user_tok, quiet=True, json={
+            "warehouse_id": whs[0]["id"], "statement": "SHOW VOLUMES IN `%s`.`%s`" % (catalog, schema),
+            "wait_timeout": "30s", "on_wait_timeout": "CANCEL"})
+    except DbxError:
+        return None
+    if (r.get("status") or {}).get("state") != "SUCCEEDED":
+        return None
+    cols = [c.get("name") for c in ((r.get("manifest") or {}).get("schema") or {}).get("columns") or []]
+    at = cols.index("volume_name") if "volume_name" in cols else len(cols) - 1
+    rows = (r.get("result") or {}).get("data_array") or []
+    names = sorted({row[at] for row in rows if row and len(row) > at and row[at]})
+    return [_row("%s.%s.%s" % (catalog, schema, n), n) for n in names]
+
+
 def _row(value: str, label: str = "", detail: str = "") -> dict:
     return {"value": value, "label": label or value, "detail": (detail or "")[:160]}
 
@@ -608,9 +639,18 @@ def sources(kind: str, user_tok: str, catalog: str = "", schema: str = "") -> di
                         params={"catalog_name": catalog, "schema_name": schema})
             items = [_row(f["full_name"], f.get("name"), f.get("comment")) for f in d.get("functions") or []]
         elif kind == "volume":
-            d, by = act("GET", uc + "volumes", user_tok,
-                        params={"catalog_name": catalog, "schema_name": schema})
-            items = [_row(v["full_name"], v.get("name"), v.get("comment")) for v in d.get("volumes") or []]
+            try:
+                d = call("GET", uc + "volumes", user_tok, params={"catalog_name": catalog, "schema_name": schema}, quiet=True)
+                items = [_row(v["full_name"], v.get("name"), v.get("comment")) for v in d.get("volumes") or []]
+            except DbxError as exc:
+                if not _scope_refused(exc):
+                    raise
+                # A deployed portal's token cannot list volumes (no such Apps scope): ask SQL as the person.
+                found = _volumes_via_sql(catalog, schema, user_tok)
+                if found is None:
+                    d, by = act("GET", uc + "volumes", user_tok, params={"catalog_name": catalog, "schema_name": schema})
+                    found = [_row(v["full_name"], v.get("name"), v.get("comment")) for v in d.get("volumes") or []]
+                items = found
         elif kind == "warehouses":
             d, by = act("GET", "/api/2.0/sql/warehouses", user_tok)
             items = [_row(w["id"], w.get("name"), (w.get("size") or w.get("cluster_size") or "") + " " + (w.get("state") or "").lower())

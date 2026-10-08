@@ -244,6 +244,72 @@ def _download(path: str, tok: str) -> bytes:
     return r.content
 
 
+# --- finding ------------------------------------------------------------------
+
+MAX_LISTED = 300
+
+
+def _as_folder(where: str) -> str:
+    """'/Volumes/c/s/v[/sub]' or 'c.s.v[/sub]' -> '/Volumes/c/s/v[/sub]'."""
+    where = (where or "").strip().rstrip("/")
+    if where.startswith("/Volumes/"):
+        parts = where.split("/")
+        if len(parts) < 5 or any(p in ("..", ".") for p in parts):
+            raise DbxError("Give a folder like /Volumes/catalog/schema/folder or catalog.schema.folder.", 400)
+        return where
+    return folder_path(where)
+
+
+def find(where: str, tok: str, search: str = "", depth: int = 3) -> dict:
+    """The files really in a folder (and its sub-folders, a few levels down), with
+    their full paths. As the admin, so it shows what they can open. Learnt from the
+    first run with the ad book: without this the model guessed paths and said it had
+    "looked" in folders it could not list."""
+    root = _as_folder(where)
+    needle = (search or "").strip().lower()
+    found, folders, todo, more = [], [], [(root, 0)], False
+    while todo and len(found) < MAX_LISTED:
+        folder, level = todo.pop(0)
+        token = ""
+        for _ in range(20):
+            try:
+                r = http().get(host() + "/api/2.0/fs/directories" + quote(folder, safe="/"),
+                               headers={"Authorization": "Bearer " + tok},
+                               params={"page_size": 500, **({"page_token": token} if token else {})}, timeout=60)
+            except httpx.RequestError as exc:
+                raise DbxError("Could not reach the file store (%s)." % type(exc).__name__, 504) from exc
+            if r.status_code >= 400:
+                if folder == root:
+                    raise _refusal(r, folder + "/x", False)
+                break  # a sub-folder they cannot open: skip it
+            data = r.json() if r.content else {}
+            for e in data.get("contents") or []:
+                path = e.get("path") or ""
+                if e.get("is_directory"):
+                    folders.append(path)
+                    if level + 1 < depth:
+                        todo.append((path.rstrip("/"), level + 1))
+                    continue
+                name = posixpath.basename(path)
+                if needle and needle not in name.lower():
+                    continue
+                if len(found) >= MAX_LISTED:
+                    more = True
+                    break
+                found.append({"name": name, "path": path, "bytes": e.get("file_size"),
+                              "kind": TYPES.get(kind_of(name), "other"), "changed": e.get("last_modified")})
+            token = data.get("next_page_token") or ""
+            if not token or more:
+                break
+    out = {"folder": root, "files": found, "sub_folders": folders[:40]}
+    if more or todo:
+        out["note"] = "Only part of the folder is shown. Search by name to narrow it."
+    if not found:
+        out["note"] = ("No file matching %r here (sub-folders looked in too). Ask the admin where it is, or to attach it." % search
+                       if needle else "This folder has no files.")
+    return out
+
+
 # --- reading ------------------------------------------------------------------
 
 def _cell(v) -> str:

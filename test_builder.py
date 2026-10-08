@@ -228,6 +228,32 @@ def _():
     r = run(f, builder.sources, "uc_function", "USER", "c", "s")
     assert r["items"] == [] and "type the name" in r["note"] and "USE SCHEMA on c.s" in r["note"]
 
+@case("folders for a deployed portal: volumes refused for want of a scope are listed through SQL as the person")
+def _():
+    seen = []
+
+    def call(method, path, tok, **kw):
+        seen.append((method, path, tok))
+        if path.endswith("/volumes"):
+            raise DbxError("Provided OAuth token does not have required scopes: unity-catalog", 403)
+        if path == "/api/2.0/sql/warehouses":
+            return {"warehouses": [{"id": "w-stopped", "state": "STOPPED"}, {"id": "w-run", "state": "RUNNING"}]}
+        if path == "/api/2.0/sql/statements":
+            assert kw["json"]["warehouse_id"] == "w-run" and kw["json"]["statement"] == "SHOW VOLUMES IN `main`.`team`"
+            return {"status": {"state": "SUCCEEDED"}, "manifest": {"schema": {"columns": [{"name": "database"}, {"name": "volume_name"}]}},
+                    "result": {"data_array": [["team", "uploads"], ["team", "adbook"]]}}
+        raise AssertionError(path)
+    saved = builder.call
+    builder.call = call
+    try:
+        r = builder.sources("volume", "USER", "main", "team")
+    finally:
+        builder.call = saved
+    assert [i["value"] for i in r["items"]] == ["main.team.adbook", "main.team.uploads"], r
+    assert all(t == "USER" for _, _, t in seen)  # never the portal's own identity
+    assert builder._volumes_via_sql("main", "bad name;", "USER") is None
+
+
 @case("files: volumes must be catalog.schema.volume; extensions are normalised")
 def _():
     f = builder.clean_spec({"display_name": "x", "files": {

@@ -527,11 +527,15 @@ def volume_read(path: str) -> bytes:
     return r.content
 
 
-def volume_write(path: str, data: bytes) -> str:
-    """Save bytes as a file in one of this tool's write folders. Returns the path."""
+def volume_write(path: str, data: bytes, overwrite: bool = False) -> str:
+    """Save bytes as a file in one of this tool's write folders. Returns the path.
+    Never replaces an existing file unless overwrite=True: a saved plan or report is not
+    silently lost when a version number is worked out wrong."""
     p = _folder(path, tuple(_WRITE_FOLDERS))
-    r = httpx.put(_host() + "/api/2.0/fs/files" + p, params={{"overwrite": "true"}}, content=data,
+    r = httpx.put(_host() + "/api/2.0/fs/files" + p, params={{"overwrite": "true" if overwrite else "false"}}, content=data,
                   headers={{"Authorization": "Bearer " + _token()}}, timeout=120)
+    if r.status_code == 409 and not overwrite:
+        raise ValueError("A file already exists at %s. Save it under a new name (for example the next version)." % p)
     if r.status_code >= 400:
         raise ValueError("Could not save that file (HTTP %d). The tool needs write access to the folder." % r.status_code)
     return p

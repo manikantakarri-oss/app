@@ -59,6 +59,19 @@ export function FolderDialog({ initial, onSave, onClose }: { initial: string; on
   const [vol, sub0] = [initial.split("/")[0] || "", initial.split("/").slice(1).join("/")];
   const [volume, setVolume] = useState(vol);
   const [sub, setSub] = useState(initial ? sub0 : "assistant-files");
+  const [pasted, setPasted] = useState("");
+  // "/Volumes/c/s/v/a/b" or "c.s.v/a/b" -> folder c.s.v and sub-folder a/b.
+  function applyPasted(text: string) {
+    setPasted(text);
+    const t = text.trim().replace(/\/+$/, "");
+    const m = t.match(/^\/Volumes\/([\w-]+)\/([\w-]+)\/([\w-]+)((?:\/[^/]+)*)$/) || t.match(/^([\w-]+)\.([\w-]+)\.([\w-]+)((?:\/[^/]+)*)$/);
+    if (!m) {
+      setVolume("");
+      return;
+    }
+    setVolume(`${m[1]}.${m[2]}.${m[3]}`);
+    setSub((m[4] || "").replace(/^\//, ""));
+  }
   const bad = sub.trim() !== "" && (!/^[A-Za-z0-9_][A-Za-z0-9_ .-]{0,63}(\/[A-Za-z0-9_][A-Za-z0-9_ .-]{0,63}){0,3}$/.test(sub.trim()) || sub.includes(".."));
   const folder = volume ? volume + (sub.trim() ? "/" + sub.trim().replace(/^\/+|\/+$/g, "") : "") : "";
   return (
@@ -82,7 +95,26 @@ export function FolderDialog({ initial, onSave, onClose }: { initial: string; on
         Files you attach are saved here with your own permissions, so choose a folder you can save to. If the assistant will use the
         file (an ad book, a rate card), pick a folder the people using it can read.
       </p>
-      <VolumeField label="Folder" hint="" value={volume} suffix={sub.trim() ? "/" + sub.trim() : ""} onChange={setVolume} />
+      <label className="block">
+        <span className="text-[13px] font-semibold">Paste a folder path</span>
+        <input
+          className="field mt-1 font-mono !text-[13px]"
+          value={pasted}
+          onChange={(e) => applyPasted(e.target.value)}
+          placeholder="/Volumes/catalog/schema/folder/sub-folder   or   catalog.schema.folder"
+          spellCheck={false}
+          autoComplete="off"
+        />
+        {pasted && !volume ? (
+          <span className="mt-1 block text-[12.5px]" style={{ color: "var(--err)" }}>
+            That is not a folder path. It looks like /Volumes/catalog/schema/folder.
+          </span>
+        ) : null}
+      </label>
+      <p className="my-4 flex items-center gap-3 text-[12.5px] faint">
+        <span className="h-px flex-1" style={{ background: "var(--line)" }} /> or browse <span className="h-px flex-1" style={{ background: "var(--line)" }} />
+      </p>
+      <VolumeField label="Folder" hint="" value={volume} suffix={sub.trim() ? "/" + sub.trim() : ""} onChange={(v) => { setVolume(v); setPasted(""); }} />
       <label className="mt-4 block">
         <span className="text-[13px] font-medium muted">Sub-folder (optional)</span>
         <input className="field mt-1" value={sub} onChange={(e) => setSub(e.target.value)} placeholder="assistant-files" maxLength={200} />
