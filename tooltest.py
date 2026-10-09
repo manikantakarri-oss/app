@@ -137,6 +137,8 @@ def connect(slug: str, tok: str) -> Client:
     name = forge.app_name(slug)
     app = _app(name, tok)
     state, note = mcps._state(app, mcps._progress.get(name))
+    if state == "failed":
+        raise DbxError("The tool could not be installed: %s" % (note or "Databricks gave no reason."), 409)
     if state != "running":
         raise DbxError("The tool is not running yet (%s)." % (note or state.replace("_", " ")), 409)
     if not app.get("url"):

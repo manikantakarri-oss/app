@@ -488,6 +488,50 @@ print(json.dumps({"first": first, "again": again, "quota": quota, "uploads": see
     assert "Drive API is switched off" in got["api_off"]["error"] and "project=p" in got["api_off"]["error"], got
 
 
+@case("a deployment Databricks failed to copy is submitted again by itself (twice at most); a real fault is not")
+def _():
+    import mcps
+
+    item = tool()
+    name = forge.entry_for(item)["app_name"]
+    temp = "Error downloading source code. Error: error listing files: request timed out after 1m0s of inactivity"
+
+    def app(state, message="", ok=False):
+        dep = {"deployment_id": "d1", "status": {"state": state, "message": message}}
+        return {"name": name, "compute_status": {"state": "ACTIVE"}, "last_deployment_id": "d1", "active_deployment": dep,
+                **({"app_status": {"state": "RUNNING"}} if ok else {})}
+
+    def go(shown):
+        seen = {"polls": 0, "redeploys": 0}
+
+        def apps(tok):
+            seen["polls"] += 1
+            return {name: shown(seen)}, {}
+
+        def redeploy(entry, tok):
+            seen["redeploys"] += 1
+
+        saved = (mcps.install, mcps._apps, mcps.redeploy, mcps.grant_volumes, forge.time.sleep)
+        mcps.install, mcps._apps, mcps.redeploy = (lambda entry, who, tok, files=None: True), apps, redeploy
+        mcps.grant_volumes, forge.time.sleep = (lambda entries, vols, tok: []), (lambda s: None)
+        mcps._progress.pop(name, None)
+        try:
+            forge.install_app(item, {"user_name": "a@x.io"}, "T", "2026-10-09")
+        finally:
+            mcps.install, mcps._apps, mcps.redeploy, mcps.grant_volumes, forge.time.sleep = saved
+        return seen, dict(mcps._progress.get(name) or {})
+
+    # fails once with a temporary fault, then the second try works
+    seen, prog = go(lambda s: app("FAILED", temp) if s["redeploys"] == 0 else app("SUCCEEDED", ok=True))
+    assert seen["redeploys"] == 1 and prog["phase"] == "done", (seen, prog)
+    # keeps failing the same way: two more tries, then the reason is shown as Databricks gave it
+    seen, prog = go(lambda s: app("FAILED", temp))
+    assert seen["redeploys"] == 2 and prog["phase"] == "failed" and "timed out" in prog["message"], (seen, prog)
+    # something wrong with the tool's own files is not retried
+    seen, prog = go(lambda s: app("FAILED", "requirements.txt: no matching distribution found for nosuchpkg"))
+    assert seen["redeploys"] == 0 and prog["phase"] == "failed" and "nosuchpkg" in prog["message"], (seen, prog)
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:
