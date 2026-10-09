@@ -869,8 +869,11 @@ def designer_tooltest_plan(payload: dict = Body(...), x_forwarded_access_token: 
         raise HTTPException(404, "The assistant designer is switched off.")
     slug = _tool_slug(payload)
     item = forge.item_from_workspace(slug, tok)
-    tools = tooltest.connect(slug, tok).tools()
-    return tooltest.plan(item, tools, tooltest.facts_for(item, tok), tok, payload.get("models"))
+    client = tooltest.connect(slug, tok)
+    tools = client.tools()
+    facts = tooltest.facts_for(item, tok)
+    facts["answers"] = tooltest.discover(client, tools)  # real sheets, rows and ids for realistic calls
+    return tooltest.plan(item, tools, facts, tok, payload.get("models"))
 
 
 @app.post("/api/admin/designer/tool-test/run")

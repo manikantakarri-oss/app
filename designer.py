@@ -567,6 +567,16 @@ def verify(d: dict, tok: str, created: bool = False) -> list[str]:
         elif typ == "knowledge_assistant":
             checks.append(("The document assistant " + ref, knowledge.KAS + "/" + ref))
     problems = list(early)
+    if d.get("kind") == "supervisor" and d.get("display_name"):
+        # Names are unique in the workspace; found at build time it was a raw 409 after everything else
+        # (tools installed, tried out). Said here, the admin is asked for another name before approving.
+        try:
+            taken = {(a.get("display_name") or "").strip().lower() for a in builder.list_agents(tok)["agents"]}
+        except DbxError:
+            taken = set()  # cannot tell; the create step still says it in words
+        if d["display_name"].strip().lower() in taken:
+            problems.append("An assistant called %s already exists in this workspace. Ask the admin for another name "
+                            "(or whether to change that one in Build instead)." % d["display_name"])
     if installed_refs:
         try:
             apps, _ = mcps._apps(tok)
@@ -991,28 +1001,87 @@ CHAT_TOKENS = 12000
 CODE_TOKENS = 16000
 
 
+EDIT_PROMPT = (
+    "Your code did not pass these checks. Fix every one, changing nothing else. Reply ONLY with edits, each in exactly "
+    "this form (copy the SEARCH lines character for character from your code, including indentation, and make each one "
+    "match one place only):\n"
+    "<<<<<<< SEARCH\n(the lines to change)\n=======\n(what they become)\n>>>>>>> REPLACE")
+EDIT_RE = re.compile(r"<<<<<<< SEARCH\n(.*?)\n?=======\n(.*?)\n?>>>>>>> REPLACE", re.S)
+EDIT_TOKENS = 6000
+EDIT_ROUNDS = 4
+
+
+def apply_edits(code: str, reply: str) -> str | None:
+    """`code` with the model's SEARCH/REPLACE edits applied, or None if any edit does not match exactly one place."""
+    edits = EDIT_RE.findall(reply or "")
+    if not edits:
+        return None
+    for old, new in edits:
+        if not old.strip():
+            return None
+        if code.count(old) == 1:
+            code = code.replace(old, new)
+            continue
+        # The same lines with different trailing spaces still count; anything looser does not.
+        lines = [ln.rstrip() for ln in code.split("\n")]
+        want = [ln.rstrip() for ln in old.split("\n")]
+        hits = [i for i in range(len(lines) - len(want) + 1) if lines[i:i + len(want)] == want]
+        if len(hits) != 1:
+            return None
+        i = hits[0]
+        code = "\n".join(lines[:i] + new.split("\n") + lines[i + len(want):])
+    return code
+
+
 def generate_code(brief: dict, tok: str, use: dict, notes: list, step=lambda text: None) -> tuple[dict, list[str]]:
     """Have the code model write a tool from the brief, and check what it wrote the
-    same way the admin's approval will be checked. Up to three tries; each retry is
-    told exactly what was wrong. Returns (item, problems): problems is empty on success.
-    `step` hears where it is up to, for the screen."""
+    same way the admin's approval will be checked. Returns (item, problems): problems
+    is empty on success. `step` hears where it is up to, for the screen.
+
+    Seen live (2026-10-09, the ad-book planner): every retry rewrote the whole file, three
+    minutes each, and the same single refused line came back three times; 8.5 minutes, then
+    "could not be made safe". Now the first reply is the whole file and each correction is a
+    few SEARCH/REPLACE edits (seconds), told exactly which lines failed; a whole rewrite only
+    when the edits cannot be applied."""
     public = {k: brief.get(k) for k in ("slug", "name", "description", "abilities", "hosts", "secrets", "volumes")}
     if brief.get("file_notes"):
         # What the designer read in the files this tool works on: the real layout. Seen live: without it the
         # code was written blind and missed a two-row table header, so every value came back "missing".
         public["the_files_as_read"] = brief["file_notes"]
+    system = {"role": "system", "content": _code_prompt()}
     fix: list[str] = []
     item: dict = {}
-    for attempt in range(3):
-        step("Writing the code" if attempt == 0 else "Fixing what the checks found (try %d of 3)" % (attempt + 1))
-        msg = _ask("code", use, notes, [
-            {"role": "system", "content": _code_prompt()},
-            {"role": "user", "content": json.dumps({"tool": public, "fix_these_first": fix})},
-        ], None, tok, max_tokens=CODE_TOKENS)
-        item = forge.clean_item({**brief, "kind": "mcp", "code": _python_block(_text(msg))}) or {}
+    code = ""
+    rewrites = edits = 0
+    while edits < EDIT_ROUNDS + 1:
+        if not code:
+            if rewrites == 2:
+                break
+            rewrites += 1
+            step("Writing the code" if rewrites == 1 else "Writing the code again")
+            msg = _ask("code", use, notes, [system, {"role": "user", "content": json.dumps({"tool": public, "fix_these_first": fix})}],
+                       None, tok, max_tokens=CODE_TOKENS)
+            code = _python_block(_text(msg))
+        else:
+            edits += 1
+            if edits > EDIT_ROUNDS:
+                break
+            step("Fixing what the checks found (%d)" % edits)
+            msg = _ask("code", use, notes, [
+                system, {"role": "user", "content": json.dumps({"tool": public})},
+                {"role": "assistant", "content": "```python\n" + code + "\n```"},
+                {"role": "user", "content": EDIT_PROMPT + "\n\nProblems:\n- " + "\n- ".join(fix)}], None, tok, max_tokens=EDIT_TOKENS)
+            fixed = apply_edits(code, _text(msg))
+            if fixed is None:
+                log.info("designer: tool %s: the edits could not be applied; writing it again", brief.get("slug"))
+                code = ""
+                continue
+            code = fixed
+        item = forge.clean_item({**brief, "kind": "mcp", "code": code}) or {}
         fix = item.get("problems") or ["The code could not be read."]
         if not item.get("problems"):
             return item, []
+        log.info("designer: tool %s (%d lines) did not pass: %s", brief.get("slug"), len(code.splitlines()), " | ".join(fix)[:600])
     return item, fix
 
 
@@ -1054,7 +1123,7 @@ def _start_job(brief: dict, tok: str, use: dict, owner: str, notes: list | None 
         try:
             item, problems = generate_code(brief, tok, job_use, job_notes, step=lambda text: job.update(step=text))
             if problems:
-                job.update(state="failed", problems=problems[:6], step="Could not be made safe and correct after 3 tries")
+                job.update(state="failed", problems=problems[:6], step="Could not be made safe and correct")
             else:
                 job.update(state="done", item=item, step="Written and checked")
         except Exception as exc:  # noqa: BLE001 - reported on screen, never raised into a thread
@@ -1111,7 +1180,7 @@ def _design_new_tool(args: dict, draft: dict, tok: str, models: dict, notes: lis
             return draft, {"error": "Give the tool a slug of lowercase letters, digits and dashes."}
         started = _start_job(brief, tok, models, owner or "local", notes)
         if started["state"] == "failed":
-            return draft, {"error": "The code could not be made safe and correct after 3 tries.", "problems": started["problems"]}
+            return draft, {"error": "The code could not be made safe and correct.", "problems": started["problems"]}
         if started["state"] == "done":  # finished already (writing inline): add it now, as before
             item = started["item"]
             draft = clean_draft({**draft, "pending_tools": [p for p in draft.get("pending_tools") or [] if p["slug"] != slug]})

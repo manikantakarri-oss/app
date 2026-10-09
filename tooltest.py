@@ -237,7 +237,9 @@ PLAN_PROMPT = (
     "You write test calls for a small tool that was just installed. Reply with JSON only: "
     '{"tests":[{"ability":"...","arguments":{},"expect":"one plain sentence","expect_error":false}],'
     '"skipped":[{"ability":"...","why":"..."}]}. '
-    "For each ability that is read-only, write one or two realistic calls using the real file names and values in `facts`, "
+    "For each ability that is read-only, write one or two realistic calls using the real file names and values in `facts` "
+    "(`facts.answers` holds what some abilities really returned when called with no input: use the sheet names, row "
+    "numbers, ids and other values in it, so an ability that works on those values is tried on real ones), "
     "and one call that gives something deliberately wrong (a file that is not there, a value out of range) with "
     "expect_error true, because a good tool answers that with a clear refusal and never with a crash. "
     "Use only argument names from the ability's input schema. Any path must be inside a folder listed in `facts`, and you "
@@ -296,6 +298,31 @@ def clean_plan(raw, tools: list, item: dict) -> dict:
         if _readonly(t) and t.get("name") not in tested and not any(s["ability"] == t.get("name") for s in skipped):
             skip(t.get("name"), "No realistic call could be written for it.")
     return {"tests": tests[:MAX_TESTS], "skipped": skipped}
+
+
+def discover(client: Client, tools: list, limit: int = 2) -> dict:
+    """What the read-only abilities that need no input really return, for the planner to see.
+
+    Seen live (2026-10-09, the ad-book planner): shown only folder listings, the planner skipped every
+    realistic call of `calculate_plan` ("I did not invent sheet names or rows"), so the one ability
+    that did the sums was never tried, and a bug that dropped every line went through. Reading
+    abilities with no required input are called first (read-only, as in any test) and their answers
+    are given to the planner as facts, so it can name real sheets and rows."""
+    out: dict = {}
+    for t in tools:
+        if len(out) >= limit:
+            break
+        schema = t.get("inputSchema") or {}
+        if not _readonly(t) or schema.get("required"):
+            continue
+        try:
+            res = client.call(t.get("name"), {})
+        except DbxError:
+            continue
+        if res["is_error"] or res["rpc_error"]:
+            continue
+        out[t.get("name")] = res["text"][:6000]
+    return out
 
 
 def plan(item: dict, tools: list, facts: dict, tok: str, models: dict | None = None) -> dict:
@@ -402,6 +429,17 @@ def judge(test: dict, res: dict, tok: str = "", models: dict | None = None) -> d
         body = text
     if substance(body) == 0:
         return {"verdict": "look", "kind": "empty", "reason": "It answered, but with nothing in it."}
+    # Seen live: a realistic plan came back "ok" with every chosen line "left out" (an `N/A` text cell
+    # was taken for an error) and totals of 0. Still judged by rule, never by a model: a working answer
+    # that itself reports problems with what it was given deserves a human glance.
+    flagged: list = []
+    if isinstance(body, dict):
+        for k in ("problems", "errors", "rejected", "skipped_items"):
+            if isinstance(body.get(k), list):
+                flagged += [json.dumps(x, ensure_ascii=False)[:120] for x in body[k]]
+    if flagged:
+        return {"verdict": "look", "kind": "problems", "reason": "It answered, but reported %d problem%s with real input, "
+                "for example: %s" % (len(flagged), "" if len(flagged) == 1 else "s", flagged[0])}
     return {"verdict": "pass", "kind": "ok", "reason": "It answered with %s." % plain_answer(body)}
 
 
@@ -422,8 +460,10 @@ FIX_PROMPT = (
     "can: keep every ability's name and inputs exactly as they are, and keep the same folders, websites and settings. "
     "Think about why real files differ from tidy ones (merged cells, empty rows, header blocks above the table, numbers "
     "stored as text, error values such as #REF!) and make the code cope instead of crashing. Where input really is wrong "
-    "return {\"ok\": false, \"error\": \"a short plain reason\"} rather than raising. Reply with the complete corrected "
-    "code in one ```python block, then one last line starting `WHAT CHANGED:` that says, in plain words a non-engineer "
+    "return {\"ok\": false, \"error\": \"a short plain reason\"} rather than raising. Reply with only the edits that fix it, "
+    "each in exactly this form (copy the SEARCH lines character for character from the current code, including "
+    "indentation, each matching one place only):\n<<<<<<< SEARCH\n(the lines to change)\n=======\n(what they become)\n"
+    ">>>>>>> REPLACE\nthen one last line starting `WHAT CHANGED:` that says, in plain words a non-engineer "
     "understands, what was wrong and what you changed. If the code is actually fine and the test was at fault (it asked for a "
     "file that is not there, or for something the tool is not meant to do), do not change it: reply `NO CHANGE NEEDED: ` and "
     "the reason in plain words, with no code."
@@ -443,13 +483,18 @@ def propose_fix(item: dict, failures: list, tok: str, models: dict | None = None
         msg = designer._ask("code", use, notes, [
             {"role": "system", "content": designer._code_prompt() + FIX_PROMPT},
             {"role": "user", "content": json.dumps({"tool": public, "current_code": item["code"], "failures": fails, "fix_these_first": fix})},
-        ], None, tok, max_tokens=7000)
+        ], None, tok, max_tokens=designer.CODE_TOKENS)
         text = designer._text(msg)
         keep = re.search(r"NO CHANGE NEEDED:\s*(.+)", text)
-        if keep and "```" not in text:
+        if keep and "```" not in text and "<<<<<<< SEARCH" not in text:
             return {"code": item["code"], "what": " ".join(keep.group(1).split())[:400], "diff": [], "fingerprint": item["fingerprint"],
                     "problems": [], "no_change": True, "notice": " ".join(dict.fromkeys(notes))}
-        code = designer._python_block(text)
+        # Edits (seconds) are asked for; a whole corrected file is still taken if that is what came back.
+        edited = designer.apply_edits(item["code"], text) if "<<<<<<< SEARCH" in text else None
+        if "<<<<<<< SEARCH" in text and edited is None:
+            fix = ["Your edits did not match the current code exactly. Copy each SEARCH block character for character."]
+            continue
+        code = edited if edited is not None else designer._python_block(text)
         m = re.search(r"WHAT CHANGED:\s*(.+)", text)
         what = " ".join(m.group(1).split())[:400] if m else ""
         new_item = forge.clean_item({**item, "code": code}) or item

@@ -625,6 +625,66 @@ def _():
     assert ("volume", "main.sales.results", "WRITE_VOLUME") in grants(f)
 
 
+@case("the app list has no app_status any more: a newer deployment than the active one means it is still going in")
+def _():
+    base = {"name": "mcp-x", "compute_status": {"state": "ACTIVE"}}
+    going_in = {**base, "last_deployment_id": "d2", "active_deployment": {"deployment_id": "d1", "status": {"state": "SUCCEEDED"}}}
+    assert mcps._state(going_in, None)[0] == "deploying"
+    live = {**base, "last_deployment_id": "d2", "active_deployment": {"deployment_id": "d2", "status": {"state": "SUCCEEDED"}}}
+    assert mcps._state(live, None) == ("running", "")
+    assert mcps._state({**base, "last_deployment_id": "d1"}, None)[0] == "deploying"  # the first one, not shown yet
+    # the single-app read still has app_status, which is trusted first
+    assert mcps._state({**going_in, "app_status": {"state": "RUNNING"}}, None) == ("running", "")
+
+
+@case("grant_volumes on a deployed portal: no UC scope and a refused portal identity fall back to SQL GRANT as the admin")
+def _():
+    # Seen live (2026-10-08): the admin's token lacked the unity-catalog scope, the portal's identity did
+    # not manage the catalog, and every folder grant failed. The admin's `sql` scope can make the grant.
+    f = Fake(apps={"mcp-good": APP})
+    sql = []
+
+    def fake(method, path, token, **kw):
+        if "/unity-catalog/permissions/" in path:
+            f.calls.append((method, path, token, kw.get("json")))
+            if token == "USER":
+                raise DbxError("Provided OAuth token does not have required scopes: unity-catalog", 403)
+            raise DbxError("User does not have MANAGE on Catalog 'main'.", 403)
+        if path == "/api/2.0/sql/warehouses":
+            return {"warehouses": [{"id": "wh-stopped", "state": "STOPPED"}, {"id": "wh-run", "state": "RUNNING"}]}
+        if path == "/api/2.0/sql/statements":
+            sql.append((token, kw["json"]["warehouse_id"], kw["json"]["statement"]))
+            return {"status": {"state": "SUCCEEDED"}}
+        return f(method, path, token, **kw)
+    wire(fake, in_apps=True)
+    mcps._wh_cache.clear()
+    problems = mcps.grant_volumes(mcps.users_of_volumes([tool()]), VOLS, "USER")
+    assert problems == [], problems
+    assert {(t, w) for t, w, _ in sql} == {("USER", "wh-run")}, sql  # as the admin, on a running warehouse
+    assert sorted(s for _, _, s in sql) == sorted([
+        "GRANT USE CATALOG ON CATALOG `main` TO `sp-1`", "GRANT USE SCHEMA ON SCHEMA `main`.`sales` TO `sp-1`",
+        "GRANT READ VOLUME ON VOLUME `main`.`sales`.`uploads` TO `sp-1`",
+        "GRANT READ VOLUME ON VOLUME `main`.`sales`.`results` TO `sp-1`",
+        "GRANT WRITE VOLUME ON VOLUME `main`.`sales`.`results` TO `sp-1`"]), sql
+
+
+@case("grant_volumes: when SQL is refused too, the message keeps both reasons and the grant to make")
+def _():
+    def fake(method, path, token, **kw):
+        if "/unity-catalog/permissions/" in path:
+            raise DbxError("User does not have MANAGE on Catalog 'main'.", 403)
+        if path == "/api/2.0/sql/warehouses":
+            return {"warehouses": [{"id": "wh-run", "state": "RUNNING"}]}
+        if path == "/api/2.0/sql/statements":
+            return {"status": {"state": "FAILED", "error": {"message": "PERMISSION_DENIED: not an owner"}}}
+        return Fake(apps={"mcp-good": APP})(method, path, token, **kw)
+    wire(fake)
+    mcps._wh_cache.clear()
+    problems = mcps.grant_volumes(mcps.users_of_volumes([tool()]), VOLS, "USER")
+    assert problems and all("sp-1" in p for p in problems)
+    assert "MANAGE on Catalog" in problems[0] and "not an owner" in problems[0], problems[0]
+
+
 @case("grant_volumes: an app whose identity cannot be found is reported, not raised")
 def _():
     f = Fake(apps={"mcp-good": {**APP, "service_principal_client_id": ""}})

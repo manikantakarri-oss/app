@@ -121,12 +121,15 @@ export function ToolCheck({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clean]);
 
-  async function repair() {
+  // What the last repair was asked about (failures, or answers worth a look), so "Try another repair" asks the same.
+  const askedRef = useRef<ToolResult[]>([]);
+  async function repair(what: ToolResult[] = failed.length ? failed : askedRef.current) {
+    askedRef.current = what;
     setStage("fixing");
     setErr("");
     setRead(false);
     try {
-      const f = await api.toolTestFix(slug, failed, models);
+      const f = await api.toolTestFix(slug, what, models);
       if (!alive.current) return;
       setFix(f);
       setStage("reviewing");
@@ -255,7 +258,7 @@ export function ToolCheck({
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {round < MAX_REPAIRS ? (
-                <button type="button" className="btn btn-primary" onClick={repair}>
+                <button type="button" className="btn btn-primary" onClick={() => repair()}>
                   Fix it
                 </button>
               ) : null}
@@ -282,6 +285,11 @@ export function ToolCheck({
               <button type="button" className="btn btn-primary" onClick={onDone}>
                 Continue and build
               </button>
+              {looks.length && round < MAX_REPAIRS ? (
+                <button type="button" className="btn btn-quiet" onClick={() => repair(looks)}>
+                  Ask for a fix
+                </button>
+              ) : null}
               <button type="button" className="btn btn-quiet" onClick={() => setRunKey((k) => k + 1)}>
                 Try again
               </button>
@@ -329,7 +337,7 @@ export function ToolCheck({
             <div className="mt-3">
               <ErrorBox>The repair did not pass the safety checks: {fix.problems.slice(0, 2).join(" ")}</ErrorBox>
               <div className="mt-3 flex gap-2">
-                <button type="button" className="btn btn-primary" onClick={repair}>
+                <button type="button" className="btn btn-primary" onClick={() => repair(askedRef.current)}>
                   Try another repair
                 </button>
                 <button type="button" className="btn btn-quiet" onClick={() => setStage("report")}>

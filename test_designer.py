@@ -65,6 +65,7 @@ def install(model, sources=None, exists=None, models=None):
     designer._complete = model
     designer.builder.sources = sources or (lambda kind, tok, catalog="", schema="": {"items": [], "note": ""})
     designer._exists = exists or (lambda path, tok: "")
+    designer.builder.list_agents = lambda tok: {"agents": [], "acted_as": "you"}  # never the real workspace
 
 
 GENIE = {
@@ -148,6 +149,18 @@ def _():
         assert out == ["The folder c.s.locked could not be read (403 PERMISSION_DENIED)."], out
     finally:
         designer.call = real
+
+
+@case("a name another assistant already has is found before approving, not as a raw 409 at the end")
+def _():
+    install(Model())
+    designer.builder.list_agents = lambda tok: {"agents": [{"display_name": "Ad Book Planner"}], "acted_as": "you"}
+    d = {"kind": "supervisor", "display_name": "ad book planner ", "tools": []}
+    out = designer.verify(d, "T")
+    assert any("already exists" in p and "another name" in p for p in out), out
+    assert not any("already exists" in p for p in designer.verify({**d, "display_name": "Ad Book Planner 2"}, "T"))
+    designer.builder.list_agents = lambda tok: (_ for _ in ()).throw(DbxError("no scope", 403))
+    assert not any("already exists" in p for p in designer.verify(d, "T"))  # cannot tell: say nothing, the create step catches it
 
 
 @case("verify says when a warehouse is not in the list")
@@ -647,34 +660,66 @@ def _():
     assert out["draft"]["display_name"] == "Sneaky" and "new_tools" not in out["draft"]
 
 
-@case("a new tool is written by the code model, checked, and retried with the exact problems until it passes")
+# READER with one refused line at the top: a correction is an edit of that line, not a new file.
+ALMOST = READER.replace("import openpyxl\n", "import openpyxl\n\nSHEET = load_default()\n", 1)
+EDIT = "<<<<<<< SEARCH\nSHEET = load_default()\n=======\nSHEET = \"Sheet1\"\n>>>>>>> REPLACE"
+
+
+@case("a new tool is written once, and a refused line is corrected with an edit, not by writing it all again")
 def _():
     m = Model(
         reply(call("design_new_tool", BRIEF, "n1")),
-        block(BAD_CODE),     # first try from the code model: refused
-        block(READER),       # second try: fine
+        block(ALMOST),       # the whole file: one line refused
+        reply(text=EDIT),    # the correction: just that line
         reply(call("ask", {"question": "Added it. Anything else?"})))
     install(m)
     designer.mcps.secrets_present = lambda tok="": set()
     out = designer.turn([{"role": "user", "content": "hi"}], designed(), "T")
     tool = out["draft"]["new_tools"][0]
-    assert tool["slug"] == "rate-reader" and tool["problems"] == [] and "volume_read" in tool["code"]
+    assert tool["slug"] == "rate-reader" and tool["problems"] == [] and 'SHEET = "Sheet1"' in tool["code"], tool["problems"]
     assert tool["report"]["reads_files"] and tool["report"]["packages"] == ["openpyxl"]
     assert m.sent[1][1][0]["content"].startswith("You write the Python for one small tool")  # the code model's own instructions
-    first, retry = json.loads(m.sent[1][1][1]["content"]), json.loads(m.sent[2][1][1]["content"])
-    assert first["fix_these_first"] == [] and retry["fix_these_first"], retry  # the retry carried what was wrong
-    assert first["tool"]["slug"] == "rate-reader" and "code" not in first["tool"]
+    first = json.loads(m.sent[1][1][1]["content"])
+    assert first["fix_these_first"] == [] and first["tool"]["slug"] == "rate-reader" and "code" not in first["tool"]
+    fix = m.sent[2][1]
+    assert fix[2]["role"] == "assistant" and "load_default()" in fix[2]["content"]  # it is shown its own code
+    assert "SEARCH" in fix[3]["content"] and "`SHEET = load_default()`" in fix[3]["content"]  # and the line that failed
+
+
+@case("edits that do not match the code fall back to writing it again, with what was wrong")
+def _():
+    m = Model(reply(call("design_new_tool", BRIEF, "n1")), block(ALMOST),
+              reply(text="<<<<<<< SEARCH\nnot in the code\n=======\nx\n>>>>>>> REPLACE"),
+              block(READER), reply(call("ask", {"question": "ok"})))
+    install(m)
+    designer.mcps.secrets_present = lambda tok="": set()
+    out = designer.turn([{"role": "user", "content": "hi"}], designed(), "T")
+    assert out["draft"]["new_tools"][0]["problems"] == []
+    again = json.loads(m.sent[3][1][1]["content"])
+    assert again["fix_these_first"] and "load_default" in again["fix_these_first"][0]
+
+
+@case("apply_edits: exact or trailing-space matches only, and one place only")
+def _():
+    code = "a = 1\nb = 2   \nc = 3\n"
+    assert designer.apply_edits(code, "<<<<<<< SEARCH\nb = 2\n=======\nb = 5\n>>>>>>> REPLACE") == "a = 1\nb = 5   \nc = 3\n"
+    # the model dropped the trailing spaces it was shown: still the same lines
+    assert designer.apply_edits(code, "<<<<<<< SEARCH\nb = 2\nc = 3\n=======\nb = 5\nc = 3\n>>>>>>> REPLACE") == "a = 1\nb = 5\nc = 3\n"
+    assert designer.apply_edits(code, "no edits here") is None
+    assert designer.apply_edits("x = 1\nx = 1\n", "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE") is None
+    assert designer.apply_edits(code, "<<<<<<< SEARCH\n  b = 2\n=======\nb = 5\n>>>>>>> REPLACE") is None
 
 
 @case("a tool that never passes the checks is not added, and the model is told why")
 def _():
-    m = Model(reply(call("design_new_tool", BRIEF, "n1")), block(BAD_CODE), block(BAD_CODE), block(BAD_CODE),
+    m = Model(reply(call("design_new_tool", BRIEF, "n1")), block(BAD_CODE),
+              *[reply(text="I cannot fix that.")] * 1, block(BAD_CODE), reply(text="Still no."),
               reply(call("ask", {"question": "Sorry."})))
     install(m)
     out = designer.turn([{"role": "user", "content": "hi"}], designed(), "T")
     assert "new_tools" not in out["draft"]
-    t = told(m, 4, "n1")
-    assert "3 tries" in t["error"] and t["problems"]
+    t = told(m, 5, "n1")
+    assert "could not be made safe" in t["error"] and t["problems"]
 
 
 @case("a new tool cannot be given a connection setting that does not exist")

@@ -107,6 +107,19 @@ def _():
     assert f.methods("DELETE") == []
 
 
+@case("a name that is taken is said in words, not as Databricks' ALREADY_EXISTS JSON")
+def _():
+    f = Fake()
+    f.fail[("POST", "/supervisor-agents")] = DbxError(
+        'POST /api/2.1/supervisor-agents -> 409: {"error_code":"ALREADY_EXISTS","message":"ALREADY_EXISTS: Agent with name X already exists."}', 409)
+    try:
+        run(f, builder.create_agent, builder.clean_spec(SPEC), WHO, "USER")
+    except DbxError as exc:
+        assert exc.status == 409 and "already exists in this workspace" in str(exc) and "error_code" not in str(exc), str(exc)
+    else:
+        raise AssertionError("did not raise")
+
+
 @case("create is all-or-nothing: a rejected tool deletes the new agent")
 def _():
     f = Fake()

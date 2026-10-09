@@ -296,6 +296,43 @@ def _():
     assert "fails on merged cells" in " ".join(tooltest.propose_fix(BROKEN, FAIL, "T")["problems"])
 
 
+@case("a repair can come back as a few edits (seconds, not a whole new file), and edits that do not match are sent back")
+def _():
+    edit = ("<<<<<<< SEARCH\n    return {\"ok\": True, \"columns\": [c.column_letter for c in ws[1]]}\n=======\n"
+            "    return {\"ok\": True, \"columns\": [get_column_letter(c.column) for c in ws[1]]}\n>>>>>>> REPLACE\n"
+            "<<<<<<< SEARCH\nimport openpyxl\n=======\nimport openpyxl\nfrom openpyxl.utils import get_column_letter\n>>>>>>> REPLACE\n"
+            "WHAT CHANGED: merged cells have no column letter, so it is now worked out from the column number.")
+    m = td.Model(td.reply(text="<<<<<<< SEARCH\nnot there\n=======\nx\n>>>>>>> REPLACE\nWHAT CHANGED: x"), td.reply(text=edit))
+    td.install(m)
+    out = tooltest.propose_fix(BROKEN, FAIL, "T")
+    assert out["problems"] == [] and "get_column_letter(c.column)" in out["code"] and not out["no_change"], out["problems"]
+    assert out["what"].startswith("merged cells have no column letter")
+    retry = json.loads(m.sent[1][1][1]["content"])
+    assert "did not match" in retry["fix_these_first"][0]
+    assert "<<<<<<< SEARCH" in m.sent[0][1][0]["content"]  # edits are what it is asked for
+
+
+@case("before planning, read-only abilities that need no input are called, so tests can use real sheets and rows")
+def _():
+    tools = [{"name": "read_book", "annotations": {"readOnlyHint": True}, "inputSchema": {"properties": {"sheet": {"type": "string"}}}},
+             {"name": "price", "annotations": {"readOnlyHint": True}, "inputSchema": {"properties": {"rows": {}}, "required": ["rows"]}},
+             {"name": "save", "annotations": {"readOnlyHint": False}, "inputSchema": {"properties": {}}}]
+    fake = FakeHttp({"read_book": ok({"ok": True, "sheets": [{"sheet": "Brand Media", "rows": [11, 13]}]})}, tools=tools)
+    wire(fake)
+    got = tooltest.discover(tooltest.Client("https://t", "U").open(), tools)
+    assert list(got) == ["read_book"] and "Brand Media" in got["read_book"], got  # nothing that needs input, nothing that saves
+    called = [j["params"]["name"] for _, _, j in fake.log if j["method"] == "tools/call"]
+    assert called == ["read_book"], called
+
+
+@case("a working answer that itself reports problems with real input gets a look (seen live: every line 'left out')")
+def _():
+    v = verdict({"data": {"ok": True, "totals": {"net": 0.0}, "problems": [{"row": 17, "reason": "error cells ['J17']"}]}})
+    assert v["verdict"] == "look" and v["kind"] == "problems" and "J17" in v["reason"], v
+    assert verdict({"data": {"ok": True, "totals": {"net": 5.0}, "problems": []}})["verdict"] == "pass"
+    assert verdict({"text": "[1, 2]"})["verdict"] == "pass"  # a list answer (sent as text) is fine
+
+
 @case("the repair model may say the code is fine and the test was at fault")
 def _():
     m = td.Model(td.reply(text="NO CHANGE NEEDED: the test asked for a file that is not in the folder."))

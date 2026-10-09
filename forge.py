@@ -241,26 +241,52 @@ def create_function(item: dict, warehouse_id: str, tok: str) -> dict:
 
 # --- MCP servers: checking the code ------------------------------------------
 
+# Calls that build a fixed value and run nothing of the model's: allowed at the top level. Seen live
+# (2026-10-09, the ad-book planner): `_ERRORS = frozenset({"#REF!", ...})` was refused three times in a
+# row ("only fixed values are allowed" did not say what was wrong), eight and a half minutes in all.
+_PURE_CALLS = {"frozenset", "set", "tuple", "list", "dict", "Decimal", "Fraction", "timedelta", "date"}
+_PURE_ATTR_CALLS = {("re", "compile"), ("decimal", "Decimal"), ("fractions", "Fraction"), ("datetime", "timedelta"),
+                    ("datetime", "date")}
+# Names that may be subscripted at the top level: type aliases such as `Row = dict[str, Any]`.
+_TYPE_NAMES = {"dict", "list", "tuple", "set", "frozenset", "type", "Optional", "Union", "Literal", "Any", "Dict",
+               "List", "Tuple", "Set", "FrozenSet", "Callable", "Iterable", "Sequence", "Mapping", "TypedDict",
+               "str", "int", "float", "bool", "bytes", "object"}
+
+
 def _simple(node, names: set) -> bool:
     """A module-level value that does nothing when imported."""
     if isinstance(node, ast.Constant):
         return True
     if isinstance(node, ast.Name):
-        return node.id in names
+        return node.id in names or node.id in _TYPE_NAMES or node.id in ("None", "True", "False")
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return all(_simple(e, names) for e in node.elts)
-    if isinstance(node, ast.Dict):
-        return all(k is not None and _simple(k, names) for k in node.keys) and all(_simple(v, names) for v in node.values)
+        return all(_simple(e.value if isinstance(e, ast.Starred) else e, names) for e in node.elts)
+    if isinstance(node, ast.Dict):  # a None key is `**other`
+        return all(k is None or _simple(k, names) for k in node.keys) and all(_simple(v, names) for v in node.values)
     if isinstance(node, ast.UnaryOp):
         return _simple(node.operand, names)
     if isinstance(node, ast.BinOp):
         return _simple(node.left, names) and _simple(node.right, names)
+    if isinstance(node, ast.BoolOp):
+        return all(_simple(v, names) for v in node.values)
+    if isinstance(node, ast.Compare):
+        return _simple(node.left, names) and all(_simple(c, names) for c in node.comparators)
+    if isinstance(node, ast.IfExp):
+        return _simple(node.test, names) and _simple(node.body, names) and _simple(node.orelse, names)
+    if isinstance(node, ast.Subscript):  # a type alias, or a fixed value picked out of another
+        base = node.value
+        ok_base = ((isinstance(base, ast.Name) and (base.id in _TYPE_NAMES or base.id in names))
+                   or (isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and base.value.id == "typing"))
+        return ok_base and _simple(node.slice, names)
+    if isinstance(node, ast.Attribute):  # typing.Any, string.ascii_uppercase
+        return isinstance(node.value, ast.Name) and node.value.id in ("typing", "string", "decimal", "math")
     if isinstance(node, ast.JoinedStr):
         return False
-    if isinstance(node, ast.Call):  # re.compile("...") is the one call that is allowed
+    if isinstance(node, ast.Call):
         f = node.func
-        return (isinstance(f, ast.Attribute) and f.attr == "compile" and isinstance(f.value, ast.Name) and f.value.id == "re"
-                and all(_simple(a, names) for a in node.args) and all(_simple(k.value, names) for k in node.keywords))
+        ok = ((isinstance(f, ast.Name) and f.id in _PURE_CALLS)
+              or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and (f.value.id, f.attr) in _PURE_ATTR_CALLS))
+        return ok and all(_simple(a, names) for a in node.args) and all(_simple(k.value, names) for k in node.keywords)
     return False
 
 
@@ -317,13 +343,20 @@ def analyze(item: dict) -> dict:
             continue
         if isinstance(node, ast.FunctionDef):
             funcs[node.name] = node
+            if node.name in HELPERS | DRIVE_HELPERS:
+                problems.append("Line %d: %s is already provided; call it, do not define it." % (node.lineno, node.name))
         elif isinstance(node, ast.ClassDef):
             continue
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = node.value
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if value is None and isinstance(node, ast.AnnAssign):
+                continue  # a bare annotation, `x: int`
             if value is None or not _simple(value, consts) or not all(isinstance(t, ast.Name) for t in targets):
-                problems.append("Line %d: at the top level only fixed values are allowed; do the work inside functions." % node.lineno)
+                src = (ast.get_source_segment(code, node) or "").splitlines()[0][:100] if code else ""
+                problems.append("Line %d (`%s`): at the top level only fixed values are allowed (text, numbers, lists, dicts, "
+                                "sets, frozenset(...), re.compile(...), Decimal(...), type aliases). Anything that computes "
+                                "goes inside a function." % (node.lineno, src))
             else:
                 consts |= {t.id for t in targets}
         elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
@@ -345,6 +378,7 @@ def analyze(item: dict) -> dict:
         problems.append("Use ordinary functions, not async ones.")
 
     declared_hosts = {h.lower() for h in item.get("hosts") or []}
+    drive = uses_drive(code)
     allowed_env = set(report["settings"])
     declared_vols = {v["volume"] for v in item.get("volumes") or []}
     write_vols = {v["volume"] for v in item.get("volumes") or [] if v["access"] == "write"}
@@ -413,11 +447,25 @@ def analyze(item: dict) -> dict:
                     saw_read = True
                 if isinstance(path, ast.Constant) and isinstance(path.value, str):
                     _check_path(path.value, declared_vols, write_vols if f.id == "volume_write" else declared_vols, node.lineno, problems)
+            if isinstance(f, ast.Name) and f.id in DRIVE_HELPERS:
+                setting = node.args[0] if node.args else None
+                if not (isinstance(setting, ast.Constant) and isinstance(setting.value, str)
+                        and setting.value in (item.get("secrets") or [])):
+                    problems.append("Line %d: %s must name, as its first input, a connection setting this tool declares "
+                                    "(for example \"google-drive-key\")." % (node.lineno, f.id))
+                for h in DRIVE_HOSTS:
+                    if h not in report["hosts"]:
+                        report["hosts"].append(h)
+                report["uses_drive"] = True
+                if f.id == "drive_save":
+                    report["may_change_outside"] = True
             if isinstance(f, ast.Attribute) and f.attr in ("post", "put", "patch", "delete") and imported_httpx:
                 report["may_change_outside"] = True
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             for h in re.findall(r"https?://([A-Za-z0-9.-]+)", node.value):
                 h = h.lower()
+                if h in DRIVE_LINK_HOSTS and drive:
+                    continue  # a Drive folder link handed to the helper, which takes the id out of it
                 if h not in report["hosts"]:
                     report["hosts"].append(h)
                 if h not in declared_hosts:
@@ -553,6 +601,153 @@ def volume_list(folder: str) -> list:
 # ---- written by a model, read by an admin -------------------------------------
 '''
 
+# Added to the fixed part only when the model's code calls drive_list / drive_save. Written and
+# tested here once, because signing in to Google needs a signed token (RS256) that a model would
+# otherwise have to hand-roll, and there is no library for it on the model's list. The key is a
+# connection setting the admin saved through Connect: a service-account JSON key, or a user's
+# OAuth client id + secret + refresh token. Seen in Google's docs and commonly hit: a service
+# account has no storage of its own, so uploading into a folder in someone's "My Drive" fails
+# with storageQuotaExceeded; the folder must be in a Shared Drive. That case is said in words.
+_DRIVE = '''
+
+_DRIVE_API = "https://www.googleapis.com/drive/v3/files"
+_DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
+_DRIVE_TOKENS: dict = {{}}
+
+
+def _b64url(data: bytes) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _drive_token(setting: str) -> tuple:
+    """(access token, who it signs in as) for the Google key kept in a connection setting."""
+    import json
+    import time
+
+    env = "".join(c if c.isalnum() else "_" for c in setting).upper()
+    if env not in _DRIVE_SETTINGS:
+        raise ValueError("This tool may not use the setting %s." % setting)
+    cached = _DRIVE_TOKENS.get(env)
+    if cached and cached[2] > time.time() + 60:
+        return cached[0], cached[1]
+    raw = os.environ.get(env, "")
+    if not raw:
+        raise ValueError("The Google Drive connection %s is not set up here. An admin connects it in the portal." % setting)
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        raise ValueError("The Google Drive connection %s is not a JSON key file." % setting)
+    if info.get("private_key") and info.get("client_email"):
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        now = int(time.time())
+        aud = info.get("token_uri") or "https://oauth2.googleapis.com/token"
+        head = _b64url(json.dumps({{"alg": "RS256", "typ": "JWT"}}).encode())
+        body = _b64url(json.dumps({{"iss": info["client_email"], "scope": "https://www.googleapis.com/auth/drive",
+                                   "aud": aud, "iat": now, "exp": now + 3600}}).encode())
+        key = serialization.load_pem_private_key(info["private_key"].encode(), password=None)
+        sig = key.sign((head + "." + body).encode(), padding.PKCS1v15(), hashes.SHA256())
+        r = httpx.post(aud, data={{"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                                  "assertion": head + "." + body + "." + _b64url(sig)}}, timeout=30)
+        who = info["client_email"]
+    elif info.get("refresh_token") and info.get("client_id"):
+        r = httpx.post(info.get("token_uri") or "https://oauth2.googleapis.com/token", timeout=30, data={{
+            "grant_type": "refresh_token", "refresh_token": info["refresh_token"],
+            "client_id": info["client_id"], "client_secret": info.get("client_secret", "")}})
+        who = "the Google user who made the key"
+    else:
+        raise ValueError("The Google Drive connection %s is neither a service-account key nor an OAuth refresh token." % setting)
+    if r.status_code >= 400:
+        raise ValueError("Google refused the Drive connection %s (HTTP %d). The key may be revoked or wrong." % (setting, r.status_code))
+    tok = r.json()["access_token"]
+    _DRIVE_TOKENS[env] = (tok, who, time.time() + int(r.json().get("expires_in", 3600)))
+    return tok, who
+
+
+def _drive_folder(folder: str) -> str:
+    import re
+
+    m = re.search(r"/folders/([A-Za-z0-9_-]{{10,}})", folder or "") or re.match(r"^([A-Za-z0-9_-]{{10,}})$", (folder or "").strip())
+    if not m:
+        raise ValueError("Give a Google Drive folder link or id.")
+    return m.group(1)
+
+
+def _drive_error(r, who: str, folder: str) -> ValueError:
+    reason = ""
+    try:
+        reason = ((r.json().get("error") or {{}}).get("errors") or [{{}}])[0].get("reason", "")
+    except ValueError:
+        pass
+    if reason == "storageQuotaExceeded" or "storage quota" in r.text.lower():
+        return ValueError("Google Drive refused the upload: %s has no storage of its own. Put the folder in a Shared "
+                          "Drive and add %s to it, or use a key for a real Google user." % (who, who))
+    if r.status_code == 404:
+        return ValueError("Google Drive folder %s was not found, or it is not shared with %s." % (folder, who))
+    if r.status_code in (401, 403):
+        return ValueError("Google Drive refused access to folder %s for %s (HTTP %d, %s). Share the folder with it "
+                          "as an editor." % (folder, who, r.status_code, reason or "no reason given"))
+    return ValueError("Google Drive answered HTTP %d (%s)." % (r.status_code, reason or r.text[:120]))
+
+
+def drive_list(setting: str, folder: str) -> list:
+    """The files in a Google Drive folder: [{{"name", "id", "link"}}], newest first.
+    `setting` is the connection that holds the Google key; `folder` a folder link or id."""
+    fid = _drive_folder(folder)
+    tok, who = _drive_token(setting)
+    out, page = [], ""
+    for _ in range(20):
+        params = {{"q": "'%s' in parents and trashed = false" % fid, "pageSize": 1000, "orderBy": "createdTime desc",
+                  "fields": "nextPageToken, files(id, name, webViewLink)", "supportsAllDrives": "true",
+                  "includeItemsFromAllDrives": "true"}}
+        if page:
+            params["pageToken"] = page
+        r = httpx.get(_DRIVE_API, params=params, headers={{"Authorization": "Bearer " + tok}}, timeout=60)
+        if r.status_code >= 400:
+            raise _drive_error(r, who, fid)
+        j = r.json()
+        out += [{{"name": f.get("name"), "id": f.get("id"), "link": f.get("webViewLink")}} for f in j.get("files") or []]
+        page = j.get("nextPageToken") or ""
+        if not page:
+            break
+    return out
+
+
+def drive_save(setting: str, folder: str, name: str, data: bytes,
+               mime: str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") -> dict:
+    """Upload bytes as a new file in a Google Drive folder and return {{"name", "id", "link"}}.
+    Never replaces anything: if a file of that name is already there it refuses, so a saved
+    version is never lost; choose the next version's name instead."""
+    import json
+
+    fid = _drive_folder(folder)
+    name = str(name).strip()
+    if not name or "/" in name or len(name) > 200:
+        raise ValueError("Give the file a plain name.")
+    if any(f["name"] == name for f in drive_list(setting, fid)):
+        raise ValueError("A file called %s is already in that Drive folder. Save it as the next version." % name)
+    tok, who = _drive_token(setting)
+    meta = json.dumps({{"name": name, "parents": [fid]}}).encode()
+    boundary = "agentportal7f3a9c"
+    body = (b"--" + boundary.encode() + b"\\r\\nContent-Type: application/json; charset=UTF-8\\r\\n\\r\\n" + meta
+            + b"\\r\\n--" + boundary.encode() + b"\\r\\nContent-Type: " + mime.encode() + b"\\r\\n\\r\\n" + bytes(data)
+            + b"\\r\\n--" + boundary.encode() + b"--")
+    r = httpx.post(_DRIVE_UPLOAD, params={{"uploadType": "multipart", "supportsAllDrives": "true",
+                                          "fields": "id, name, webViewLink"}}, content=body, timeout=120,
+                   headers={{"Authorization": "Bearer " + tok, "Content-Type": "multipart/related; boundary=" + boundary}})
+    if r.status_code >= 400:
+        raise _drive_error(r, who, fid)
+    j = r.json()
+    return {{"name": j.get("name"), "id": j.get("id"), "link": j.get("webViewLink")}}
+'''
+
+DRIVE_HELPERS = {"drive_list", "drive_save"}
+DRIVE_HOSTS = ["oauth2.googleapis.com", "www.googleapis.com"]
+DRIVE_LINK_HOSTS = {"drive.google.com", "docs.google.com"}
+
 _FOOTER = '''
 
 # ---- end of model-written code ------------------------------------------------
@@ -561,6 +756,15 @@ _FOOTER = '''
 if __name__ == "__main__":
     mcp.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
 '''
+
+
+def uses_drive(code: str) -> bool:
+    """Does the model's code call the Google Drive helpers (so the fixed part must include them)?"""
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return False
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in DRIVE_HELPERS for n in ast.walk(tree))
 
 
 def _doc(text: str) -> str:
@@ -576,9 +780,14 @@ def assemble(item: dict, admin: str, date: str) -> dict:
         "mcp.tool(annotations={%r: %s, %r: %s})(%s)" % (
             "readOnlyHint", not a["changes_data"], "destructiveHint", False, a["name"])
         for a in item["abilities"])
-    server = (_HEADER.format(name=_doc(item["name"]), description=_doc(item["description"]), admin=_doc(admin or "an admin"),
-                             date=_doc(date), read=read, write=write, title=item["name"])
-              + item["code"].rstrip() + "\n" + _FOOTER.format(registrations=regs))
+    drive = uses_drive(item["code"])
+    header = _HEADER.format(name=_doc(item["name"]), description=_doc(item["description"]), admin=_doc(admin or "an admin"),
+                            date=_doc(date), read=read, write=write, title=item["name"])
+    if drive:  # before the marker, so it stays part of the fixed (not model-written) code
+        cut = header.index(BEGIN_MARK)
+        header = (header[:cut].rstrip("\n") + "\n\n_DRIVE_SETTINGS = %r\n" % sorted(env_name(s) for s in item["secrets"])
+                  + _DRIVE.format() + "\n\n" + header[cut:])
+    server = header + item["code"].rstrip() + "\n" + _FOOTER.format(registrations=regs)
     try:
         ast.parse(server)  # what is deployed must at least compile
     except SyntaxError as exc:
@@ -593,7 +802,8 @@ def assemble(item: dict, admin: str, date: str) -> dict:
     app = {"command": ["python", "server.py"]}
     if item["secrets"]:
         app["env"] = [{"name": env_name(s), "valueFrom": s} for s in item["secrets"]]
-    reqs = ["fastmcp>=2.3", "httpx>=0.27"] + [p for p in report["packages"] if p != "httpx"]
+    reqs = (["fastmcp>=2.3", "httpx>=0.27"] + (["cryptography>=42"] if drive else [])
+            + [p for p in report["packages"] if p != "httpx"])
     readme = (
         "# %s\n\n%s\n\nCreated by the Agent Portal's assistant designer (%s) and approved by %s.\n"
         "To keep it, copy this folder into the MCP catalog repository.\n\nAbilities:\n%s\n"
@@ -751,9 +961,16 @@ def install_app(item: dict, who: dict, tok: str, date: str) -> None:
                 raise DbxError("it was still not running after 20 minutes", 504)
             time.sleep(10)
         vols = volumes_of(item)
+        problems: list = []
         if entry["needs"]["volumes"]:
-            for problem in mcps.grant_volumes([entry], vols, tok):
+            # Until its folders are granted the tool is not ready: tried earlier it can only say
+            # "could not read that file". So the status stays "getting ready" through this.
+            mcps._progress[name] = {"phase": "copying", "message": "Giving it access to its folders.", "at": time.time()}
+            problems = mcps.grant_volumes([entry], vols, tok)
+            for problem in problems:
                 log.warning("new tool %s: %s", item["slug"], problem)
+        mcps._progress[name] = {"phase": "done", "at": time.time(),
+                                "message": ("Running, but its folder access is incomplete: " + " ".join(problems))[:400] if problems else ""}
         log.info("new tool %s is running as app %s", item["slug"], name)
     except DbxError as exc:
         mcps._progress[name] = {"phase": "failed", "message": str(exc)[:240], "at": time.time()}
@@ -768,6 +985,9 @@ def app_states(names: list[str], tok: str) -> dict:
     apps, _ = mcps._apps(tok)
     out = {}
     for n in names:
-        state, line = mcps._state(apps.get(n), mcps._progress.get(n))
+        prog = mcps._progress.get(n)
+        state, line = mcps._state(apps.get(n), prog)
+        if state == "running" and prog and prog.get("phase") == "done" and prog.get("message"):
+            line = prog["message"]  # it runs, but a folder grant was refused: say so before it is tried
         out[n] = {"state": state, "note": line}
     return out

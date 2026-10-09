@@ -386,7 +386,15 @@ def create_agent(spec: dict, who: dict, user_tok: str) -> dict:
     body = {"display_name": spec["display_name"], "description": spec["description"]}
     if spec["instructions"]:
         body["instructions"] = spec["instructions"]
-    agent, by = act("POST", AGENTS, user_tok, json=body)
+    try:
+        agent, by = act("POST", AGENTS, user_tok, json=body)
+    except DbxError as exc:
+        # Seen live (2026-10-09): the raw "ALREADY_EXISTS: Agent with name ... already exists" JSON
+        # reached the screen. Names are unique per workspace, including ones this admin cannot see.
+        if exc.status == 409 or "ALREADY_EXISTS" in str(exc):
+            raise DbxError("An assistant called “%s” already exists in this workspace. Give this one another "
+                           "name, or change that one instead." % spec["display_name"], 409)
+        raise
     aid = _agent_id(agent)
     if not aid:
         raise DbxError("Databricks created the agent but returned no id.", 502)

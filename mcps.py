@@ -356,6 +356,15 @@ def _state(app: dict | None, prog: dict | None) -> tuple[str, str]:
     # Submitted, but Databricks has not shown the deployment yet.
     if prog and prog["phase"] == "submitted" and now - prog["at"] < 120 and not app.get("active_deployment"):
         return "deploying", prog["message"]
+    # Seen live (2026-10-09): the app *list* no longer carries app_status or pending_deployment, only
+    # last_deployment_id beside active_deployment. A newer deployment than the active one is going in;
+    # counted as "running" here, a new tool was tried (and folders granted) before its code was live.
+    active = app.get("active_deployment") or {}
+    last = app.get("last_deployment_id") or ""
+    if not run and last and last != active.get("deployment_id", ""):
+        return "deploying", "Installing it."
+    if not run and comp == "ACTIVE" and ((active.get("status") or {}).get("state") == "SUCCEEDED"):
+        return "running", ""
     if not app.get("active_deployment"):
         return "not_deployed", ""
     # It has a deployment and its compute is on, but the status is one we do not
@@ -897,9 +906,62 @@ def _principal(name: str, user_tok: str) -> str:
     return app.get("service_principal_client_id") or ""
 
 
+_SQL_PRIV = {"USE_CATALOG": "USE CATALOG", "USE_SCHEMA": "USE SCHEMA", "READ_VOLUME": "READ VOLUME",
+             "WRITE_VOLUME": "WRITE VOLUME"}
+
+
 def _grant(kind: str, name: str, principal: str, privilege: str, user_tok: str) -> None:
-    act("PATCH", UC + kind + "/" + name, user_tok,
-        json={"changes": [{"principal": principal, "add": [privilege]}]})
+    """Give `principal` one privilege, as the admin.
+
+    Seen live (2026-10-08, deployed portal): the admin's Apps token has no scope for the UC
+    permissions API ("does not have required scopes: unity-catalog"; Apps offers no user scope
+    for it), so `act` retried as the portal's identity, which does not manage the admin's
+    catalog and was refused too. Every folder grant failed and the new tool could not read the
+    file it was built for. The same grant as a SQL statement goes through the admin's `sql`
+    scope, and Databricks still decides whether this admin may grant it."""
+    try:
+        act("PATCH", UC + kind + "/" + name, user_tok,
+            json={"changes": [{"principal": principal, "add": [privilege]}]})
+        return
+    except DbxError as exc:
+        if exc.status not in (401, 403) or privilege not in _SQL_PRIV:
+            raise
+        first = exc
+    if not (VOLUME_RE.match(name) or re.match(r"^[\w\-]+(\.[\w\-]+)?$", name)) or not re.match(r"^[\w\-.@]+$", principal):
+        raise first
+    ident = ".".join("`%s`" % p for p in name.split("."))
+    stmt = "GRANT %s ON %s %s TO `%s`" % (_SQL_PRIV[privilege], kind.upper(), ident, principal)
+    try:
+        _run_sql_as(stmt, user_tok)
+    except DbxError as exc:
+        raise DbxError("%s; as SQL: %s" % (str(first)[:120], str(exc)[:160]), exc.status or 403)
+    log.info("granted %s on %s %s to %s through SQL", privilege, kind, name, principal)
+
+
+_wh_cache: dict = {}
+
+
+def _run_sql_as(statement: str, tok: str) -> None:
+    """Run one statement as `tok` on a warehouse it may use (a running one first)."""
+    key = tok[-16:]
+    wh = _wh_cache.get(key)
+    if not wh:
+        whs = (call("GET", "/api/2.0/sql/warehouses", tok, quiet=True) or {}).get("warehouses") or []
+        if not whs:
+            raise DbxError("you can use no SQL warehouse to make the grant with", 403)
+        wh = next((w["id"] for w in whs if w.get("state") == "RUNNING"), whs[0]["id"])
+        _wh_cache[key] = wh
+    r = call("POST", "/api/2.0/sql/statements", tok, quiet=True, json={
+        "warehouse_id": wh, "statement": statement, "wait_timeout": "50s", "on_wait_timeout": "CONTINUE"})
+    for _ in range(30):
+        state = (r.get("status") or {}).get("state")
+        if state == "SUCCEEDED":
+            return
+        if state in ("FAILED", "CANCELED", "CLOSED"):
+            raise DbxError(((r.get("status") or {}).get("error") or {}).get("message") or state, 403)
+        time.sleep(2)
+        r = call("GET", "/api/2.0/sql/statements/" + str(r.get("statement_id")), tok, quiet=True)
+    raise DbxError("the grant was still running after a minute", 504)
 
 
 def grant_volumes(entries: list, volumes: dict, user_tok: str) -> list:

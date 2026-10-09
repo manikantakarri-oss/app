@@ -353,6 +353,136 @@ asyncio.run(main())
     assert got["paths"] == ["ok", "refused", "refused", "refused", "write-refused"], got
 
 
+DRIVE_CODE = '''
+import io
+
+import openpyxl
+
+FOLDER = "https://drive.google.com/drive/folders/1M90dZPFJjIbi51-nLotrfi_e9bDG9--i"
+
+
+def save_plan(name: str) -> dict:
+    """Save a one-cell plan to Drive as the next free version. name: the file name without the version."""
+    try:
+        taken = {f["name"] for f in drive_list("google-drive-key", FOLDER)}
+        v = 1
+        while "%s - v%d.xlsx" % (name, v) in taken:
+            v += 1
+        wb = openpyxl.Workbook()
+        wb.active["A1"] = name
+        buf = io.BytesIO()
+        wb.save(buf)
+        return {"ok": True, **drive_save("google-drive-key", FOLDER, "%s - v%d.xlsx" % (name, v), buf.getvalue())}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+'''
+
+
+def drive_tool(code=DRIVE_CODE, changes=True, secrets=("google-drive-key",)):
+    return forge.clean_item({"kind": "mcp", "slug": "plan-saver", "name": "Plan saver", "description": "Saves plans to Drive.",
+                             "abilities": [{"name": "save_plan", "description": "Save a plan", "changes_data": changes}],
+                             "hosts": [], "secrets": list(secrets), "volumes": [], "code": code})
+
+
+@case("Google Drive: the built-in helpers pass the checks, need a declared setting and a changes-data ability")
+def _():
+    t = drive_tool()
+    assert t["problems"] == [], t["problems"]
+    assert t["report"]["uses_drive"] and "www.googleapis.com" in t["report"]["hosts"], t["report"]
+    files = forge.assemble(t, "a@x.io", "2026-10-09")
+    server = files["server.py"].decode()
+    assert "def drive_save" in server and "_DRIVE_SETTINGS = ['GOOGLE_DRIVE_KEY']" in server
+    assert server.index("def drive_save") < server.index(forge.BEGIN_MARK), "the helper must sit in the fixed part"
+    assert forge.model_code_of(server).strip() == DRIVE_CODE.strip()
+    assert "cryptography" in files["requirements.txt"].decode()
+    # a tool that does not use Drive gets none of it
+    assert "drive_save" not in forge.assemble(tool(), "a@x.io", "2026-10-09")["server.py"].decode()
+    assert any("must name" in p for p in drive_tool(secrets=()).get("problems")), "an undeclared setting must be refused"
+    assert any("changing data" in p for p in drive_tool(changes=False)["problems"])
+    bad = DRIVE_CODE + "\n\ndef drive_save(a: str) -> dict:\n    \"\"\"x\"\"\"\n    return {}\n"
+    assert any("already provided" in p for p in drive_tool(code=bad)["problems"])
+
+
+@case("Google Drive: the real server signs in with a service-account key, picks the next version and never overwrites")
+def _():
+    py = os.environ.get("FORGE_PYTHON") or sys.executable
+    probe = subprocess.run([py, "-c", "import fastmcp, openpyxl, httpx, cryptography"], capture_output=True)
+    if probe.returncode != 0:
+        print("        (skipped: no Python with fastmcp, openpyxl, httpx and cryptography; set FORGE_PYTHON)")
+        return
+    files = forge.assemble(drive_tool(), "a@x.io", "2026-10-09")
+    with tempfile.TemporaryDirectory() as d:
+        for rel, data in files.items():
+            with open(os.path.join(d, rel), "wb") as f:
+                f.write(data)
+        script = r'''
+import base64, json, os, sys
+sys.path.insert(0, ".")
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+os.environ["GOOGLE_DRIVE_KEY"] = json.dumps({"type": "service_account", "client_email": "bot@p.iam.gserviceaccount.com",
+                                             "private_key": pem, "token_uri": "https://oauth2.googleapis.com/token"})
+import server
+
+class R:
+    def __init__(self, code, body):
+        self.status_code, self._b = code, body
+        self.text = json.dumps(body)
+    def json(self):
+        return self._b
+
+files = [{"name": "Acme - Spring - v1.xlsx", "id": "f1", "webViewLink": "https://drive/f1"}]
+seen = {"uploads": [], "quota": False}
+def unb64(s):
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+class FakeHttpx:
+    @staticmethod
+    def post(url, data=None, content=None, params=None, headers=None, timeout=None):
+        if url == "https://oauth2.googleapis.com/token":
+            head, body, sig = data["assertion"].split(".")
+            key.public_key().verify(unb64(sig), (head + "." + body).encode(), padding.PKCS1v15(), hashes.SHA256())
+            claims = json.loads(unb64(body))
+            assert claims["iss"] == "bot@p.iam.gserviceaccount.com" and claims["scope"].endswith("/auth/drive")
+            return R(200, {"access_token": "ya29.fake", "expires_in": 3600})
+        assert url.startswith("https://www.googleapis.com/upload/drive/v3/files") and headers["Authorization"] == "Bearer ya29.fake"
+        assert params["supportsAllDrives"] == "true"
+        meta = json.loads(content.split(b"\r\n\r\n", 2)[1].split(b"\r\n--")[0])
+        if seen["quota"]:
+            return R(403, {"error": {"errors": [{"reason": "storageQuotaExceeded"}]}})
+        seen["uploads"].append(meta)
+        files.insert(0, {"name": meta["name"], "id": "f2", "webViewLink": "https://drive/f2"})
+        return R(200, {"name": meta["name"], "id": "f2", "webViewLink": "https://drive/f2"})
+    @staticmethod
+    def get(url, params=None, headers=None, timeout=None):
+        assert "'1M90dZPFJjIbi51-nLotrfi_e9bDG9--i' in parents" in params["q"]
+        return R(200, {"files": files})
+server.httpx = FakeHttpx
+first = server.save_plan("Acme - Spring")
+again = None
+try:
+    server.drive_save("google-drive-key", "1M90dZPFJjIbi51-nLotrfi_e9bDG9--i", "Acme - Spring - v1.xlsx", b"x")
+except ValueError as e:
+    again = str(e)
+seen["quota"] = True
+quota = server.save_plan("Other")
+try:
+    server.drive_list("some-other-key", "1M90dZPFJjIbi51-nLotrfi_e9bDG9--i"); other = "allowed"
+except ValueError as e:
+    other = str(e)
+print(json.dumps({"first": first, "again": again, "quota": quota, "uploads": seen["uploads"], "other": other}))
+'''
+        r = subprocess.run([py, "-c", script], cwd=d, capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-800:]
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+    assert got["first"] == {"ok": True, "name": "Acme - Spring - v2.xlsx", "id": "f2", "link": "https://drive/f2"}, got
+    assert got["uploads"] == [{"name": "Acme - Spring - v2.xlsx", "parents": ["1M90dZPFJjIbi51-nLotrfi_e9bDG9--i"]}], got
+    assert "already in that Drive folder" in got["again"], got
+    assert got["quota"]["ok"] is False and "Shared Drive" in got["quota"]["error"], got
+    assert "may not use the setting" in got["other"], got
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:
