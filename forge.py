@@ -886,7 +886,9 @@ def item_from_workspace(slug: str, tok: str) -> dict:
     (the app's description carries its mark): the designer repairs its own tools, nobody else's."""
     if not mcps.SLUG_RE.match(slug or ""):
         raise DbxError("That is not a tool id.", 400)
-    app = call("GET", "/api/2.0/apps/" + app_name(slug), tok, quiet=True)
+    # act, not call: a deployed portal's user token has no apps scope (seen live, 2026-10-09: "403 ... does not have
+    # required scopes: apps", which stopped the tool check before it began), so the portal's identity reads it.
+    app, _ = mcps.act("GET", "/api/2.0/apps/" + app_name(slug), tok, quiet=True)
     if not (app.get("description") or "").startswith(GEN_MARK):
         raise DbxError("%s was not made by the assistant designer, so it cannot be tested or repaired here." % app_name(slug), 403)
     base = mcps.SOURCE_ROOT + "/" + slug

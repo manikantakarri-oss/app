@@ -358,9 +358,9 @@ def _():
 def _():
     files = forge.assemble(FITEM, "a@x.io", "2026-10-08")
     forge.mcps._export = lambda path, tok: files[path.rsplit("/", 1)[1]]
-    forge.call = lambda m, p, tok, **k: {"description": forge.GEN_MARK + " Reads sheets."}
+    forge.mcps.act = lambda m, p, tok, **k: ({"description": forge.GEN_MARK + " Reads sheets."}, "user")
     assert forge.item_from_workspace("sheet-reader", "T")["fingerprint"] == FITEM["fingerprint"]
-    forge.call = lambda m, p, tok, **k: {"description": "Someone's own tool"}
+    forge.mcps.act = lambda m, p, tok, **k: ({"description": "Someone's own tool"}, "user")
     for slug, status in (("sheet-reader", 403), ("../etc", 400)):
         try:
             forge.item_from_workspace(slug, "T")
@@ -374,7 +374,7 @@ def routes(item=None):
     portal, c = td.client(admin=True)
     files = forge.assemble(item or FITEM, "a@x.io", "2026-10-08")
     forge.mcps._export = lambda path, tok: files[path.rsplit("/", 1)[1]]
-    forge.call = lambda m, p, tok, **k: {"description": forge.GEN_MARK + " Reads sheets."}
+    forge.mcps.act = lambda m, p, tok, **k: ({"description": forge.GEN_MARK + " Reads sheets."}, "user")
     return portal, c
 
 
