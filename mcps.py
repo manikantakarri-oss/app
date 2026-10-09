@@ -347,6 +347,18 @@ def _state(app: dict | None, prog: dict | None) -> tuple[str, str]:
         return "stopped", "It is switched off."
     if run == "RUNNING" and comp != "ERROR":
         return "running", ""
+    # Seen live (2026-10-09): Databricks could not copy a new tool's files ("Failed to download source code ...
+    # request timed out") and the app list showed that deployment as the app's active one. Nothing here knew
+    # that is a failure, so the portal waited 20 minutes for an app that was never going to start. Not while a
+    # newer deployment is going in, and not in the first minute after one was submitted again.
+    dep = (app.get("active_deployment") or {})
+    dep_s = dep.get("status") or {}
+    last_id = app.get("last_deployment_id") or ""
+    again = bool(prog and prog["phase"] == "submitted" and now - prog["at"] < 60)
+    if dep_s.get("state") == "FAILED" and (not last_id or last_id == dep.get("deployment_id", "")):
+        if again:
+            return "deploying", "Installing it."
+        return "failed", (dep_s.get("message") or "The deployment did not finish.")[:240]
     if pend in ("FAILED", "CANCELLED"):
         return "failed", (pend_s.get("message") or "The deployment did not finish.")[:200]
     if pend == "IN_PROGRESS" or comp in ("STARTING", "UPDATING"):
@@ -640,6 +652,40 @@ def _ensure_active(name: str, user_tok: str) -> None:
         time.sleep(5)
 
 
+def _submit(name: str, base: str, user_tok: str) -> None:
+    """Ask Databricks to deploy the app from the files in `base`."""
+    for attempt in range(6):
+        try:
+            act("POST", "/api/2.0/apps/%s/deployments" % name, user_tok,
+                json={"source_code_path": base, "mode": "SNAPSHOT"})
+            return
+        except DbxError as exc:
+            # "not in RUNNING state": compute reported on a moment too early.
+            if exc.status == 400 and "RUNNING state" in str(exc) and attempt < 5:
+                time.sleep(10)
+                continue
+            raise
+
+
+DEPLOY_RETRIES = 2
+TRANSIENT = re.compile(r"download(?:ing)? source|timed out|timeout|temporar|connection (?:reset|refused)|\b50[234]\b|try again", re.I)
+
+
+def transient(message: str) -> bool:
+    """Does a failed deployment's message look like Databricks having a bad moment (so trying again is
+    sensible) and not like something wrong with the tool's own files?"""
+    return bool(TRANSIENT.search(message or ""))
+
+
+def redeploy(entry: dict, user_tok: str) -> None:
+    """Submit the same deployment again. The files are already in the workspace, so nothing is copied."""
+    name = entry["app_name"]
+    _progress[name] = {"phase": "copying", "message": "Trying the installation again.", "at": time.time()}
+    _ensure_active(name, user_tok)
+    _progress[name] = {"phase": "submitted", "message": "Installing it.", "at": time.time()}
+    _submit(name, SOURCE_ROOT + "/" + entry["slug"], user_tok)
+
+
 def run(entry: dict, user_tok: str, files: list | None = None) -> None:
     """Background: download the source (or take `files` already in hand, for a tool
     that is not in the catalog), copy it into the workspace, deploy it."""
@@ -671,17 +717,7 @@ def run(entry: dict, user_tok: str, files: list | None = None) -> None:
         _ensure_active(name, user_tok)
         log.info("MCP %s: submitting the deployment to app %s", slug, name)
         _progress[name] = {"phase": "submitted", "message": "Installing it.", "at": time.time()}
-        for attempt in range(6):
-            try:
-                act("POST", "/api/2.0/apps/%s/deployments" % name, user_tok,
-                    json={"source_code_path": base, "mode": "SNAPSHOT"})
-                break
-            except DbxError as exc:
-                # "not in RUNNING state": compute reported on a moment too early.
-                if exc.status == 400 and "RUNNING state" in str(exc) and attempt < 5:
-                    time.sleep(10)
-                    continue
-                raise
+        _submit(name, base, user_tok)
         log.info("MCP %s deployed to app %s (%d files)", slug, name, len(files))
     except DbxError as exc:
         _progress[name] = {"phase": "failed", "message": str(exc)[:240], "at": time.time()}

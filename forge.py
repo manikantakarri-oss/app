@@ -959,12 +959,21 @@ def install_app(item: dict, who: dict, tok: str, date: str) -> None:
         files = list(assemble(item, who.get("user_name") or "", date).items())
         mcps.install(entry, who, tok, files=files)
         deadline = time.time() + 20 * 60
+        retries = 0
         while True:
             apps, _ = mcps._apps(tok)
             state, line = mcps._state(apps.get(name), mcps._progress.get(name))
             if state == "running":
                 break
             if state == "failed":
+                # Databricks sometimes fails to copy the files in ("Failed to download source code ... timed out",
+                # seen live 2026-10-09). The files are fine, so say it again rather than make the admin do it.
+                if retries < mcps.DEPLOY_RETRIES and mcps.transient(line):
+                    retries += 1
+                    log.warning("new tool %s: the deployment failed (%s); trying again (%d of %d)", item["slug"], line[:120], retries, mcps.DEPLOY_RETRIES)
+                    mcps.redeploy(entry, tok)
+                    time.sleep(20)
+                    continue
                 raise DbxError(line or "the deployment failed", 502)
             if time.time() > deadline:
                 raise DbxError("it was still not running after 20 minutes", 504)

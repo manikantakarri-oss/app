@@ -1023,6 +1023,22 @@ def _():
     assert not f.of("POST", "/supervisor-agents/abc123/tools")
 
 
+@case("state: a deployment Databricks failed to copy is a failure; a newer one going in, or one just resubmitted, is not")
+def _():
+    msg = "Error downloading source code. Error: error listing files: request timed out after 1m0s of inactivity"
+    base = {"name": "mcp-x", "compute_status": {"state": "ACTIVE"}, "last_deployment_id": "d1",
+            "active_deployment": {"deployment_id": "d1", "status": {"state": "FAILED", "message": msg}}}
+    assert mcps._state(base, None) == ("failed", msg)
+    assert mcps._state({**base, "last_deployment_id": "d2"}, None)[0] == "deploying"      # a newer one is going in
+    assert mcps._state({**base, "app_status": {"state": "RUNNING"}}, None) == ("running", "")
+    again = {"phase": "submitted", "message": "Installing it.", "at": time.time()}
+    assert mcps._state(base, again)[0] == "deploying"                                       # submitted again a moment ago
+    old = {**again, "at": time.time() - 300}
+    assert mcps._state(base, old)[0] == "failed"                                            # and not for ever
+    assert mcps.transient(msg) and mcps.transient("The request timed out") and mcps.transient("HTTP 503")
+    assert not mcps.transient("requirements.txt: no matching distribution found for nosuchpkg")
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:
