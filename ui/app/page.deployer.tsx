@@ -9,7 +9,7 @@ import { ReleasesPage } from "@/components/deployer/Releases";
 import { SetupPage } from "@/components/deployer/SetupPage";
 import { ErrorBox, Spinner } from "@/components/bits";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { ArrowUpRightIcon, BuildingIcon, ChevronRightIcon, CloseIcon, MenuIcon, RocketIcon, ShieldIcon, TagIcon } from "@/components/icons";
+import { ArrowUpRightIcon, BuildingIcon, ChevronRightIcon, CloseIcon, MenuIcon, ShieldIcon, TagIcon } from "@/components/icons";
 import { initials } from "@/lib/people";
 
 /** The Portal Deployer's shell: the portal's own sidebar and top bar, with two
@@ -168,11 +168,11 @@ export default function DeployerPage() {
       >
         <div className="flex h-16 shrink-0 items-center gap-3 px-5">
           <button type="button" className="flex min-w-0 items-center gap-3" onClick={() => go({ page: "clients" })}>
-            <span className="side-mark" aria-hidden>
-              <RocketIcon size={20} />
+            <span className="side-mark has-logo" style={{ padding: 0, background: "transparent" }} aria-hidden>
+              <img src="/mediamint-logo.jpg" alt="" />
             </span>
             <span className="min-w-0 text-left leading-tight">
-              <span className="block text-[15px] font-semibold tracking-[-0.01em]">Portal Deployer</span>
+              <span className="block text-[15px] font-semibold tracking-[-0.01em]">MediaMint</span>
               <span className="block truncate text-[12px]" style={{ color: "var(--side-faint)" }}>
                 Agent Portal for every client
               </span>
@@ -224,7 +224,7 @@ export default function DeployerPage() {
             <MenuIcon />
           </button>
           <nav aria-label="You are here" className="flex min-w-0 items-center gap-2 text-sm">
-            <span className="hidden shrink-0 muted sm:inline">Portal Deployer</span>
+            <span className="hidden shrink-0 muted sm:inline">MediaMint</span>
             <span className="hidden faint sm:inline" aria-hidden>
               <ChevronRightIcon size={14} />
             </span>
@@ -328,10 +328,10 @@ function NavItem({ icon, label, active, count, alert, onClick }: { icon: ReactNo
 function Splash({ children }: { children: ReactNode }) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-4">
-      <span className="side-mark !h-12 !w-12 !rounded-2xl" aria-hidden>
-        <RocketIcon size={26} />
+      <span className="side-mark has-logo !h-12 !w-12 !rounded-2xl" style={{ padding: 0, background: "transparent" }} aria-hidden>
+        <img src="/mediamint-logo.jpg" alt="" />
       </span>
-      <p className="text-lg font-semibold tracking-[-0.01em]">Portal Deployer</p>
+      <p className="text-lg font-semibold tracking-[-0.01em]">MediaMint</p>
       {children}
     </main>
   );

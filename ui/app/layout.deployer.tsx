@@ -8,7 +8,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Portal Deployer",
+  title: "MediaMint",
+  icons: { icon: "/mediamint-logo.jpg" },
   description: "Deploy the Agent Portal to client workspaces.",
 };
 
