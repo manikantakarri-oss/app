@@ -457,6 +457,8 @@ class FakeHttpx:
     @staticmethod
     def get(url, params=None, headers=None, timeout=None):
         assert "'1M90dZPFJjIbi51-nLotrfi_e9bDG9--i' in parents" in params["q"]
+        if seen.get("api_off"):
+            return R(403, {"error": {"errors": [{"reason": "accessNotConfigured"}]}})
         return R(200, {"files": files})
 server.httpx = FakeHttpx
 first = server.save_plan("Acme - Spring")
@@ -471,7 +473,9 @@ try:
     server.drive_list("some-other-key", "1M90dZPFJjIbi51-nLotrfi_e9bDG9--i"); other = "allowed"
 except ValueError as e:
     other = str(e)
-print(json.dumps({"first": first, "again": again, "quota": quota, "uploads": seen["uploads"], "other": other}))
+seen["api_off"] = True
+api_off = server.save_plan("Third")
+print(json.dumps({"first": first, "again": again, "quota": quota, "uploads": seen["uploads"], "other": other, "api_off": api_off}))
 '''
         r = subprocess.run([py, "-c", script], cwd=d, capture_output=True, text=True, timeout=120)
         assert r.returncode == 0, r.stderr[-800:]
@@ -481,6 +485,7 @@ print(json.dumps({"first": first, "again": again, "quota": quota, "uploads": see
     assert "already in that Drive folder" in got["again"], got
     assert got["quota"]["ok"] is False and "Shared Drive" in got["quota"]["error"], got
     assert "may not use the setting" in got["other"], got
+    assert "Drive API is switched off" in got["api_off"]["error"] and "project=p" in got["api_off"]["error"], got
 
 
 def main() -> int:

@@ -682,6 +682,13 @@ def _drive_error(r, who: str, folder: str) -> ValueError:
         reason = ((r.json().get("error") or {{}}).get("errors") or [{{}}])[0].get("reason", "")
     except ValueError:
         pass
+    # Seen live (2026-10-09): a real key signed in fine and Drive answered 403 accessNotConfigured,
+    # because the Drive API was not switched on in the key's Google Cloud project.
+    if reason in ("accessNotConfigured", "SERVICE_DISABLED") or "has not been used in project" in r.text:
+        project = who.split("@")[-1].split(".")[0] if "@" in who else "the key's project"
+        return ValueError("The Google Drive API is switched off in the Google Cloud project of this key (%s). Turn it on "
+                          "at https://console.cloud.google.com/apis/library/drive.googleapis.com?project=%s , wait a few "
+                          "minutes, and try again." % (project, project))
     if reason == "storageQuotaExceeded" or "storage quota" in r.text.lower():
         return ValueError("Google Drive refused the upload: %s has no storage of its own. Put the folder in a Shared "
                           "Drive and add %s to it, or use a key for a real Google user." % (who, who))
