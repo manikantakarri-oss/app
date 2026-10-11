@@ -226,12 +226,14 @@ def _sign_files(files: list, endpoint: str, user: str) -> list:
     return out
 
 
-def _answered(out: dict, endpoint: str, who: dict, tok: str, payload: dict, history: list, background, uploads: int = 0) -> dict:
+def _answered(out: dict, endpoint: str, who: dict, tok: str, payload: dict, history: list, background, uploads: int = 0,
+              extra: dict | None = None) -> dict:
     """What every chat answer goes through: health record, signed downloads, a paused tool
     call turned into a decision for the person, and the saved conversation."""
     broken = events.tool_failure(out.get("reply") or "")
     events.note(
-        detail={"files": uploads, "known": True, "tools": (out.get("tools") or [])[:10], "files_back": len(out.get("attachments") or [])},
+        detail={"files": uploads, "known": True, "tools": (out.get("tools") or [])[:10], "files_back": len(out.get("attachments") or []),
+                **(extra or {})},
         **({"status": "tool_error", "error": broken} if broken else {}),
     )
     out["attachments"] = _sign_files(out.get("attachments") or [], endpoint, who["user_name"])
@@ -243,7 +245,7 @@ def _answered(out: dict, endpoint: str, who: dict, tok: str, payload: dict, hist
         state = {"e": endpoint, "u": who["user_name"], "pause": pause}
         out["approval"] = {"state": state, "sig": signer.mac(state),
                            "items": [toolpolicy.describe(a, tok) for a in pause["approvals"] if a.get("id") in pause["asked"]]}
-        events.note(detail={"waiting_for": [a.get("name") for a in pause["approvals"] if a.get("id") in pause["asked"]]})
+        events.note(detail={**(extra or {}), "waiting_for": [a.get("name") for a in pause["approvals"] if a.get("id") in pause["asked"]]})
         return out
 
     # Saved after the reply has gone out, and only for a successful exchange, so
@@ -285,7 +287,7 @@ def chat_decide(
     # The person's decision is the audit record, under their own identity; never the arguments.
     events.note(label=agent.get("display_name"), detail={"known": True, "approved": yes, "declined": no})
     out = chat.resume(endpoint, pause, decisions, tok, ask_person=_policy(agent, tok))
-    return _answered(out, endpoint, who, tok, payload, history, background)
+    return _answered(out, endpoint, who, tok, payload, history, background, extra={"approved": yes, "declined": no})
 
 
 def _save_chat(user: str, cid: str, endpoint: str, idx: int, question: str, names: list, out: dict):

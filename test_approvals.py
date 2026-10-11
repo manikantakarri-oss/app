@@ -166,7 +166,8 @@ def client(user="me@x.io"):
 def _():
     ep = Endpoint()
     wire(ep)
-    _, c = client()
+    portal, c = client()
+    portal_events = portal.events
     r = c.post("/api/chat", json={"endpoint": "mas-1", "history": [{"role": "user", "content": "finalise MP-1"}]})
     assert r.status_code == 200, r.text
     a = r.json()["approval"]
@@ -177,8 +178,15 @@ def _():
     tampered["approval"]["state"]["pause"]["asked"] = []
     assert c.post("/api/chat/decide", json=tampered).status_code == 400
     assert c.post("/api/chat/decide", json={**body, "endpoint": "mas-other"}).status_code == 400
-    r = c.post("/api/chat/decide", json=body)
+    seen = []
+    real = portal_events.finish
+    portal_events.finish = lambda rec, *a, **k: seen.append(dict(rec)) or real(rec, *a, **k)
+    try:
+        r = c.post("/api/chat/decide", json=body)
+    finally:
+        portal_events.finish = real
     assert r.status_code == 200 and "Finalised" in r.json()["reply"], r.text
+    assert seen[-1]["detail"]["approved"] == ["finalize_media_plan"] and seen[-1]["actor"] == "me@x.io", seen[-1]  # who decided what
     f = r.json()["attachments"][0]
     assert f["path"] == "/Volumes/c/s/out/MP-1_v1.xlsx" and f["sig"]
     _, other = client("someone@else.io")  # a decision is only good for the person it was made for
