@@ -81,7 +81,7 @@ Rules:
 ### 1. Agent catalog and access (`access.py`)
 - An agent is a serving endpoint with task `agent/*` (Responses, Chat). Endpoints tagged `portal=true` are also published. Embedding endpoints are excluded.
 - Users see only agents they hold `CAN_QUERY`/`CAN_MANAGE` on (directly or via a group). `GET /api/agents`, `GET /api/session` (identity, `is_admin`, auth mode).
-- Friendly names come from endpoint tags `display_name`, `blurb`; fallback is `_prettify`. Agent kinds (Multi-agent, Document expert, Agent, Chat model) are labelled for non-technical readers.
+- Friendly names come from endpoint tags `display_name`, `blurb`; then from Agent Bricks itself (`access.bricks_meta`: name, description and the agent id for its permission list); fallback is `_prettify`. Learnt live (2026-10-11): an assistant built straight in Databricks showed as "Agent 1cab65e2", because the user's Apps token has no `supervisor-agents` scope; the names are now read as the portal when the user's read is refused (names only, for endpoints the caller already sees; cached 60 s). `sync_agents.py --apply` still writes the tags for good. Agent kinds (Multi-agent, Document expert, Agent, Chat model) are labelled for non-technical readers.
 - Agent Bricks agents keep their real ACL at `/api/2.0/permissions/supervisor-agents/<agent_id>` (the `agent_id` tag), not on the endpoint. `perm_paths` handles both.
 
 ### 2. Chat (`chat.py`, `adapters.py`, `ui/components/Chat.tsx`)

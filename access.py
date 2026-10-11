@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import os
 import re
+import time
 
-from dbx import AGENT_TASK_PREFIX, PORTAL_TAG, QUERYABLE, DbxError, call
+from dbx import AGENT_TASK_PREFIX, PORTAL_TAG, QUERYABLE, DbxError, app_token, call
 
 ADMIN_GROUP = "admins"
 
@@ -82,30 +83,50 @@ BRICKS_APIS = (
 )
 
 
-def bricks_meta(tok: str, workspace_id: str = "") -> dict:
-    """endpoint_name -> {display_name, description} straight from Agent Bricks.
+_meta_cache: dict = {}
+META_TTL = 60
+
+
+def bricks_meta(tok: str, workspace_id: str = "", fallback_tok: str = "") -> dict:
+    """endpoint_name -> {display_name, description, agent_id} straight from Agent Bricks.
 
     Saves an admin from retyping a name Databricks already has, so a freshly
     built agent shows up in the portal already looking presentable. Best effort:
     if these APIs are unavailable the catalog just falls back to tags and then
     to a prettified endpoint name.
+
+    Seen live (2026-10-11): an assistant built straight in Databricks ("DataBeat Media
+    Planner") showed in a deployed portal as "Agent 1cab65e2". The user's Apps token has
+    no supervisor-agents / knowledge-assistants scope, so the names were never read.
+    A refused read is retried with `fallback_tok` (the portal's identity, which the
+    deployer shares every assistant with). Names are presentation, not access: only
+    endpoints the caller can already see are ever shown. Cached for a minute.
     """
+    key = (tok[-16:], fallback_tok[-16:], workspace_id)
+    hit = _meta_cache.get(key)
+    if hit and time.time() - hit[0] < META_TTL:
+        return hit[1]
     out: dict = {}
     headers = {"Accept": "application/json"}
     if workspace_id:
         headers["X-Databricks-Workspace-Id"] = workspace_id
-    for path, key in BRICKS_APIS:
-        try:
-            data = call("GET", path, tok, headers=headers, quiet=True)
-        except DbxError:
-            continue
-        for a in data.get(key) or []:
+    for path, field in BRICKS_APIS:
+        data = None
+        for t in dict.fromkeys(x for x in (tok, fallback_tok) if x):
+            try:
+                data = call("GET", path, t, headers=headers, quiet=True)
+                break
+            except DbxError:
+                continue
+        for a in (data or {}).get(field) or []:
             ep = a.get("endpoint_name")
             if ep:
                 out[ep] = {
                     "display_name": a.get("display_name") or "",
                     "description": a.get("description") or "",
+                    "agent_id": str(a.get("supervisor_agent_id") or a.get("knowledge_assistant_id") or a.get("id") or ""),
                 }
+    _meta_cache[key] = (time.time(), out)
     return out
 
 
@@ -136,12 +157,20 @@ def _shape(ep: dict, meta: dict | None = None) -> dict:
         # Agent Bricks agents keep their governing permission list at the
         # agent level, not on the serving endpoint. Synced in by sync_agents.py
         # because the app cannot discover it (no grantable scope).
-        "agent_id": (tags.get("agent_id") or "").strip(),
+        "agent_id": (tags.get("agent_id") or "").strip() or (built.get("agent_id") if kind == "supervisor" else ""),
         "upload_volume": tags.get("upload_volume") or "",
         "output_volume": tags.get("output_volume") or "",
         "accepts": [a.strip().lower() for a in accepts.split(",") if a.strip()],
         "supports_files": bool(tags.get("upload_volume")),
     }
+
+
+def _portal_token() -> str:
+    """The portal's own token for reading names, or "" if it cannot be had."""
+    try:
+        return app_token()
+    except Exception:  # noqa: BLE001 - names are best effort
+        return ""
 
 
 def all_agents(tok: str, meta_tok: str = "") -> list:
@@ -165,7 +194,7 @@ def all_agents(tok: str, meta_tok: str = "") -> list:
         if task.startswith(AGENT_TASK_PREFIX) or published:
             eps.append(e)
     eps.sort(key=lambda e: e.get("creation_timestamp") or 0, reverse=True)
-    meta = bricks_meta(meta_tok or tok, os.environ.get("DATABRICKS_WORKSPACE_ID", ""))
+    meta = bricks_meta(meta_tok or tok, os.environ.get("DATABRICKS_WORKSPACE_ID", ""), _portal_token())
     return [_shape(e, meta) for e in eps]
 
 

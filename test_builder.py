@@ -367,6 +367,37 @@ def _():
     assert not [c for c in f.calls if "/permissions/serving-endpoints/" in c[1]]
 
 
+@case("an assistant built outside the portal shows its Databricks name, read as the portal when the user's token has no scope")
+def _():
+    import access
+    seen = []
+
+    def fake(method, path, tok, **kw):
+        seen.append((path, tok))
+        if path == "/api/2.0/serving-endpoints":
+            return {"endpoints": [{"name": "mas-1cab65e2-endpoint", "id": "e1", "task": "agent/v1/responses", "tags": [],
+                                   "state": {"ready": "READY"}}]}
+        if tok == "USER" and path.startswith("/api/2.1/"):
+            raise DbxError("Provided OAuth token does not have required scopes: supervisor-agents", 403)
+        if path == "/api/2.1/supervisor-agents":
+            return {"supervisor_agents": [{"endpoint_name": "mas-1cab65e2-endpoint", "display_name": "DataBeat Media Planner",
+                                           "description": "Turns briefs into plans.", "supervisor_agent_id": "1cab65e2-x"}]}
+        return {}
+    saved = access.call, access.app_token
+    access.call, access.app_token = fake, (lambda: "APP")
+    access._meta_cache.clear()
+    try:
+        a = access.all_agents("USER", "USER")[0]
+    finally:
+        access.call, access.app_token = saved
+    assert a["display_name"] == "DataBeat Media Planner" and a["blurb"] == "Turns briefs into plans.", a
+    assert a["agent_id"] == "1cab65e2-x", a  # so the Access page reads the agent's own permission list too
+    assert ("/api/2.1/supervisor-agents", "APP") in seen
+    # an explicit tag still wins
+    assert access._shape({"name": "mas-1", "tags": [{"key": "display_name", "value": "Mine"}], "task": "agent/v1/responses"},
+                         {"mas-1": {"display_name": "Theirs"}})["display_name"] == "Mine"
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:
