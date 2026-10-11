@@ -160,6 +160,8 @@ def _shape(ep: dict, meta: dict | None = None) -> dict:
         "agent_id": (tags.get("agent_id") or "").strip() or (built.get("agent_id") if kind == "supervisor" else ""),
         "upload_volume": tags.get("upload_volume") or "",
         "output_volume": tags.get("output_volume") or "",
+        # Which of its tool calls wait for the person: changes (default) | all | auto. See toolpolicy.
+        "tool_approval": (tags.get("tool_approval") or "").strip().lower(),
         "accepts": [a.strip().lower() for a in accepts.split(",") if a.strip()],
         "supports_files": bool(tags.get("upload_volume")),
     }
@@ -578,7 +580,7 @@ def set_group_members(group_id: str, user_names: list, app_tok: str) -> dict:
     return {"group_id": group_id, "members": user_names}
 
 
-META_TAGS = ("display_name", "blurb", "upload_volume", "output_volume", "accepts", "agent_id", PORTAL_TAG)
+META_TAGS = ("display_name", "blurb", "upload_volume", "output_volume", "accepts", "agent_id", "tool_approval", PORTAL_TAG)
 
 
 def set_meta(endpoint_name: str, values: dict, app_tok: str) -> dict:

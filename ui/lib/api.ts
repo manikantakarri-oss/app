@@ -14,6 +14,7 @@ export type Agent = {
   state: string;
   upload_volume: string;
   output_volume: string;
+  tool_approval?: string;
   accepts: string[];
   supports_files: boolean;
   access_reason?: string;
@@ -410,15 +411,31 @@ export type SavedMessage = {
   text: string;
   tools?: string[];
   citations?: { label: string; url: string }[];
-  attachments?: { name: string; path: string }[];
+  attachments?: FileRef[];
   files?: string[];
 };
+
+/** A file an agent made. `sig` is the portal's permit to download it (see /api/download). */
+export type FileRef = { name: string; path: string; sig?: string };
+
+/** One tool call waiting for the person, as the tool itself describes it. */
+export type ApprovalItem = {
+  id: string;
+  tool: string;
+  server: string;
+  description: string;
+  read_only: boolean;
+  arguments: Record<string, unknown>;
+};
+/** An answer paused until the person decides; `state` and `sig` go back unchanged. */
+export type Approval = { state: unknown; sig: string; items: ApprovalItem[] };
 
 export type Reply = {
   reply: string;
   tools: string[];
   citations: { label: string; url: string }[];
-  attachments: { name: string; path: string }[];
+  attachments: FileRef[];
+  approval?: Approval;
   warning?: string;
 };
 
@@ -470,6 +487,13 @@ export const api = {
     conversation_id?: string,
     file_names?: string[]
   ) => request<Reply>("/api/chat", { endpoint, history, files, conversation_id, file_names }),
+  chatDecide: (
+    endpoint: string,
+    history: { role: string; content: string }[],
+    approval: Approval,
+    decisions: Record<string, boolean>,
+    conversation_id?: string
+  ) => request<Reply>("/api/chat/decide", { endpoint, history, approval, decisions, conversation_id }),
   chats: (endpoint: string) =>
     request<{ enabled: boolean; chats: SavedChat[] }>(
       `/api/chats?endpoint=${encodeURIComponent(endpoint)}`
@@ -721,6 +745,6 @@ export async function upload(endpoint: string, file: File) {
 // A plain GET link, not a fetch wrapper: letting the browser navigate lets it
 // honour the backend's Content-Disposition header and show its own native
 // download UI, rather than the app re-implementing a save-file flow.
-export function downloadUrl(endpoint: string, path: string) {
-  return "/api/download?" + new URLSearchParams({ endpoint, path }).toString();
+export function downloadUrl(endpoint: string, path: string, sig?: string) {
+  return "/api/download?" + new URLSearchParams({ endpoint, path, ...(sig ? { sig } : {}) }).toString();
 }

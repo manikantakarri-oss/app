@@ -311,6 +311,7 @@ function Appearance({
   const [vol, setVol] = useState(agent.upload_volume);
   const [outVol, setOutVol] = useState(agent.output_volume);
   const [accepts, setAccepts] = useState((agent.accepts || []).join(", "));
+  const [approve, setApprove] = useState(agent.tool_approval || "changes");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -326,6 +327,7 @@ function Appearance({
         upload_volume: vol,
         output_volume: outVol,
         accepts,
+        tool_approval: approve === "changes" ? "" : approve,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 4000);
@@ -368,6 +370,22 @@ function Appearance({
             placeholder="catalog.schema.volume"
             value={outVol}
             onChange={(e) => setOutVol(e.target.value)}
+          />
+        </Row>
+        <Row
+          label="Ask people before it acts"
+          hint="When the assistant uses a tool that saves, sends or changes something, the person chatting approves it first. Looking things up never needs approval."
+        >
+          <Select
+            ariaLabel="When to ask for approval"
+            value={approve}
+            onChange={setApprove}
+            disabled={readOnly}
+            options={[
+              { value: "changes", label: "Before anything that changes something", detail: "Recommended" },
+              { value: "all", label: "Before every tool it uses", detail: "Every step waits for a click" },
+              { value: "auto", label: "Never ask", detail: "Tools run straight away, as before" },
+            ]}
           />
         </Row>
         <Row label="File types allowed" hint="Leave blank to allow any file. For example: xlsx, csv">

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Agent, api, downloadUrl, Reply, SavedChat, upload } from "@/lib/api";
+import { Agent, api, Approval, ApprovalItem, downloadUrl, FileRef, Reply, SavedChat, upload } from "@/lib/api";
 import { ErrorBox } from "./bits";
 import { ChatHistory } from "./ChatHistory";
 import {
@@ -22,8 +22,12 @@ type Turn = {
   text: string;
   tools?: string[];
   citations?: { label: string; url: string }[];
-  attachments?: { name: string; path: string }[];
+  attachments?: FileRef[];
   files?: string[];
+  /** A tool call waiting for the person; `sent` is the history it was asked with. */
+  approval?: Approval;
+  sent?: { role: string; content: string }[];
+  decided?: "approved" | "declined";
 };
 
 /** What the last question was, so a failed one can be sent again unchanged. */
@@ -168,7 +172,7 @@ export function Chat({
   // failed attempt never poisons the next one.
   const history = () =>
     turns
-      .filter((t) => t.role !== "error")
+      .filter((t) => t.role !== "error" && !t.approval)
       .map((t) => ({ role: t.role, content: t.text }));
 
   async function run(a: Attempt, retry: boolean) {
@@ -192,16 +196,7 @@ export function Chat({
     setBusy(true);
     try {
       const out: Reply = await api.chat(agent.name, messages, a.files, cid, a.shown);
-      setTurns((t) => [
-        ...t,
-        {
-          role: "assistant",
-          text: out.reply,
-          tools: out.tools,
-          citations: out.citations,
-          attachments: out.attachments,
-        },
-      ]);
+      setTurns((t) => [...t, replyTurn(out, messages)]);
       // A new or continued chat appears in the list straight away. The server
       // saves in the background, so re-reading the list here could miss it.
       if (historyEnabled) {
@@ -215,6 +210,25 @@ export function Chat({
         };
         setSaved((l) => [item, ...(l || []).filter((c) => c.id !== cid)]);
       }
+    } catch (e: any) {
+      setTurns((t) => [...t, { role: "error", text: e.message }]);
+    } finally {
+      setBusy(false);
+      inputRef.current?.focus();
+    }
+  }
+
+  // The person approved or declined what an answer was waiting on: the same answer carries on.
+  async function decide(index: number, yes: boolean) {
+    const turn = turns[index];
+    if (!turn?.approval || turn.decided || busy) return;
+    setTurns((t) => t.map((x, i) => (i === index ? { ...x, decided: yes ? "approved" : "declined" } : x)));
+    stickRef.current = true;
+    setBusy(true);
+    try {
+      const decisions = Object.fromEntries(turn.approval.items.map((it) => [it.id, yes]));
+      const out = await api.chatDecide(agent.name, turn.sent || [], turn.approval, decisions, conversationId || undefined);
+      setTurns((t) => [...t, replyTurn(out, turn.sent || [])]);
     } catch (e: any) {
       setTurns((t) => [...t, { role: "error", text: e.message }]);
     } finally {
@@ -288,7 +302,9 @@ export function Chat({
   }
 
   const accepts = (agent.accepts || []).map((a) => "." + a.replace(/^\./, ""));
-  const canSend = !busy && (!!draft.trim() || pending.length > 0);
+  // While an answer waits for a decision, the next question would leave it hanging.
+  const waiting = turns.some((t) => t.approval && !t.decided);
+  const canSend = !busy && !waiting && (!!draft.trim() || pending.length > 0);
   const empty = turns.length === 0 && !busy;
 
   // The same input serves both layouts: centred under the greeting on a fresh
@@ -516,6 +532,7 @@ export function Chat({
                     key={i}
                     turn={t}
                     agent={agent}
+                    onDecide={t.approval && !t.decided && !busy ? (yes) => decide(i, yes) : undefined}
                     onRetry={
                       t.role === "error" && i === turns.length - 1 && attempt && !busy
                         ? () => run(attempt, true)
@@ -563,14 +580,27 @@ function Avatar() {
   );
 }
 
+function replyTurn(out: Reply, sent: { role: string; content: string }[]): Turn {
+  return {
+    role: "assistant",
+    text: out.reply,
+    tools: out.tools,
+    citations: out.citations,
+    attachments: out.attachments,
+    ...(out.approval ? { approval: out.approval, sent } : {}),
+  };
+}
+
 function Message({
   turn,
   agent,
   onRetry,
+  onDecide,
 }: {
   turn: Turn;
   agent: Agent;
   onRetry?: () => void;
+  onDecide?: (yes: boolean) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -674,7 +704,7 @@ function Message({
               {turn.attachments.length > 1 ? "Your files are ready" : "Your file is ready"}
             </p>
             {turn.attachments.map((f, i) =>
-              agent.output_volume && f.path ? (
+              (f.sig || agent.output_volume) && f.path ? (
                 <FileLink key={i} endpoint={agent.name} file={f} />
               ) : (
                 <div key={i} className="mt-1.5">
@@ -685,14 +715,15 @@ function Message({
                     {f.path || f.name}
                   </code>
                   <p className="mt-1 text-xs faint">
-                    Not downloadable: this agent has no results folder set. An admin can set one
-                    on the Access page.
+                    This file cannot be downloaded from here. It is in Databricks at the path above.
                   </p>
                 </div>
               )
             )}
           </div>
         ) : null}
+
+        {turn.approval ? <ApprovalCard approval={turn.approval} decided={turn.decided} onDecide={onDecide} /> : null}
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
           <button
@@ -716,7 +747,7 @@ function Message({
 /** A generated file. Checks the response before saving, so a refusal (not in the
  *  results folder, no READ VOLUME, file not there) is shown here in words rather
  *  than as a raw error page. */
-function FileLink({ endpoint, file }: { endpoint: string; file: { name: string; path: string } }) {
+function FileLink({ endpoint, file }: { endpoint: string; file: FileRef }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -725,7 +756,7 @@ function FileLink({ endpoint, file }: { endpoint: string; file: { name: string; 
     setBusy(true);
     setErr("");
     try {
-      const res = await fetch(downloadUrl(endpoint, file.path));
+      const res = await fetch(downloadUrl(endpoint, file.path, file.sig));
       if (!res.ok) {
         const text = await res.text();
         let msg = "";
@@ -755,7 +786,7 @@ function FileLink({ endpoint, file }: { endpoint: string; file: { name: string; 
   return (
     <div className="mt-1.5">
       <a
-        href={downloadUrl(endpoint, file.path)}
+        href={downloadUrl(endpoint, file.path, file.sig)}
         onClick={get}
         className="flex w-fit items-center gap-2 rounded-xl px-3 py-2 text-sm transition hover:bg-[var(--bubble)]"
         style={{ border: "1px solid var(--line)" }}
@@ -769,5 +800,102 @@ function FileLink({ endpoint, file }: { endpoint: string; file: { name: string; 
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** "finalize_media_plan" -> "Finalize media plan". */
+function toolLabel(name: string) {
+  const words = name.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "A tool";
+}
+
+/** The first sentence or two of a tool's own description, whole (never cut mid-sentence). */
+function summary(text: string) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const parts = flat.match(/[^.!?]+[.!?]+(\s|$)/g) || [flat];
+  let out = "";
+  for (const p of parts) {
+    if (out && (out + p).length > 220) break;
+    out += p;
+  }
+  return out.trim() || flat.slice(0, 220);
+}
+
+function argText(v: unknown) {
+  if (v === null || v === undefined || v === "") return "(empty)";
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+
+/** A tool call that changes something, waiting for the person to approve or decline it.
+ *  The tool's own description says what it does; what it was given is listed under it. */
+function ApprovalCard({
+  approval,
+  decided,
+  onDecide,
+}: {
+  approval: Approval;
+  decided?: "approved" | "declined";
+  onDecide?: (yes: boolean) => void;
+}) {
+  const many = approval.items.length > 1;
+  return (
+    <div className="card mt-3 p-4" role="group" aria-label="Waiting for your approval">
+      <p className="text-sm font-semibold">
+        {decided === "approved"
+          ? "You approved this"
+          : decided === "declined"
+            ? "You declined this"
+            : many
+              ? "The assistant wants to do these. Approve?"
+              : "The assistant wants to do this. Approve?"}
+      </p>
+      <ul className="mt-2 space-y-3">
+        {approval.items.map((it) => (
+          <ApprovalRow key={it.id} item={it} />
+        ))}
+      </ul>
+      {!decided ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className="btn btn-primary" disabled={!onDecide} onClick={() => onDecide?.(true)}>
+            <CheckIcon size={16} /> {many ? "Approve all" : "Approve"}
+          </button>
+          <button type="button" className="btn btn-quiet" disabled={!onDecide} onClick={() => onDecide?.(false)}>
+            Decline
+          </button>
+        </div>
+      ) : null}
+      <p className="mt-3 text-xs faint">
+        Nothing is done until you decide. Your decision is recorded under your name.
+      </p>
+    </div>
+  );
+}
+
+function ApprovalRow({ item }: { item: ApprovalItem }) {
+  const args = Object.entries(item.arguments || {});
+  const shown = args.slice(0, 8);
+  const rest = args.slice(8);
+  const rows = (list: [string, unknown][]) => (
+    <dl className="mt-1 grid grid-cols-1 gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+      {list.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="faint break-words">{k.replace(/_/g, " ")}</dt>
+          <dd className="break-words [overflow-wrap:anywhere]">{argText(v).slice(0, 600)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+  return (
+    <li className="min-w-0">
+      <p className="text-[15px] font-medium break-words">{toolLabel(item.tool)}</p>
+      {item.description ? <p className="mt-0.5 text-sm muted break-words">{summary(item.description)}</p> : null}
+      {shown.length ? rows(shown) : null}
+      {rest.length ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs faint">{rest.length} more</summary>
+          {rows(rest)}
+        </details>
+      ) : null}
+    </li>
   );
 }

@@ -37,6 +37,8 @@ import dashboard
 import designer
 import events
 import files as filestore
+import signer
+import toolpolicy
 import forge
 import llm
 import logbuf
@@ -198,13 +200,51 @@ def send(
     # something about the request, and stays out of per-assistant reliability.
     events.note(label=agent.get("display_name"), detail={"files": len(uploads), "known": True})
     output_dir = filestore.output_dir_path(agent["output_volume"]) if agent.get("output_volume") else ""
-    out = chat.ask(endpoint, agent["task"], history, tok, files=uploads, output_dir=output_dir)
-    # A reply can arrive fine while a tool inside it failed; count that too.
+    out = chat.ask(endpoint, agent["task"], history, tok, files=uploads, output_dir=output_dir,
+                   ask_person=_policy(agent, tok))
+    return _answered(out, endpoint, who, tok, payload, history, background, len(uploads))
+
+
+def _policy(agent: dict, tok: str):
+    """Which tool calls of this assistant wait for the person (see toolpolicy)."""
+    mode = toolpolicy.mode_of(agent.get("tool_approval") or "")
+    return lambda request: toolpolicy.needs_person(request, mode, tok)
+
+
+DOWNLOAD_TTL = 30 * 24 * 3600
+
+
+def _sign_files(files: list, endpoint: str, user: str) -> list:
+    """Each file an agent named gets a permit for this person and assistant, so it can be
+    downloaded without an admin first declaring the agent's folder (see /api/download)."""
+    out = []
+    for f in files or []:
+        path = str(f.get("path") or "") if isinstance(f, dict) else ""
+        if path.startswith("/Volumes/") and ".." not in path.split("/") and "//" not in path:
+            f = dict(f, sig=signer.permit({"e": endpoint, "p": f["path"], "u": user}, DOWNLOAD_TTL))
+        out.append(f)
+    return out
+
+
+def _answered(out: dict, endpoint: str, who: dict, tok: str, payload: dict, history: list, background, uploads: int = 0) -> dict:
+    """What every chat answer goes through: health record, signed downloads, a paused tool
+    call turned into a decision for the person, and the saved conversation."""
     broken = events.tool_failure(out.get("reply") or "")
     events.note(
-        detail={"files": len(uploads), "known": True, "tools": (out.get("tools") or [])[:10], "files_back": len(out.get("attachments") or [])},
+        detail={"files": uploads, "known": True, "tools": (out.get("tools") or [])[:10], "files_back": len(out.get("attachments") or [])},
         **({"status": "tool_error", "error": broken} if broken else {}),
     )
+    out["attachments"] = _sign_files(out.get("attachments") or [], endpoint, who["user_name"])
+    pause = out.pop("pause", None)
+    if pause:
+        # The browser holds the paused answer (the portal keeps nothing); signed for this person
+        # and assistant so it cannot be swapped for another. What they decide comes back to
+        # /api/chat/decide. Not saved yet: the exchange is not finished.
+        state = {"e": endpoint, "u": who["user_name"], "pause": pause}
+        out["approval"] = {"state": state, "sig": signer.mac(state),
+                           "items": [toolpolicy.describe(a, tok) for a in pause["approvals"] if a.get("id") in pause["asked"]]}
+        events.note(detail={"waiting_for": [a.get("name") for a in pause["approvals"] if a.get("id") in pause["asked"]]})
+        return out
 
     # Saved after the reply has gone out, and only for a successful exchange, so
     # history never slows a chat and never holds a failed attempt.
@@ -216,6 +256,36 @@ def send(
             str(history[-1].get("content") or ""), names, out,
         )
     return out
+
+
+@app.post("/api/chat/decide")
+def chat_decide(
+    background: BackgroundTasks,
+    payload: dict = Body(...),
+    x_forwarded_access_token: str = Header(None),
+):
+    """The person approved or declined the tool calls an answer was waiting on; carry on.
+
+    The state is the one /api/chat signed for this person and assistant. The tool calls
+    still run under the person's own token, so Databricks decides what they may do."""
+    endpoint = (payload.get("endpoint") or "").strip()
+    history = payload.get("history") or []
+    approval = payload.get("approval") if isinstance(payload.get("approval"), dict) else {}
+    state = approval.get("state") if isinstance(approval.get("state"), dict) else {}
+    who, tok = _who(x_forwarded_access_token)
+    if not signer.check(state, approval.get("sig") or "") or state.get("e") != endpoint or state.get("u") != who["user_name"]:
+        raise HTTPException(400, "That decision is out of date. Ask the assistant again.")
+    decisions = {str(k): bool(v) for k, v in (payload.get("decisions") or {}).items()}
+    pause = state["pause"]
+    named = {a.get("id"): a.get("name") for a in pause.get("approvals") or []}
+    events.note(action="asked", target=endpoint)
+    agent = _allowed_agent(who, endpoint, tok)
+    yes = [named[i] for i in pause.get("asked") or [] if decisions.get(i)]
+    no = [named[i] for i in pause.get("asked") or [] if not decisions.get(i)]
+    # The person's decision is the audit record, under their own identity; never the arguments.
+    events.note(label=agent.get("display_name"), detail={"known": True, "approved": yes, "declined": no})
+    out = chat.resume(endpoint, pause, decisions, tok, ask_person=_policy(agent, tok))
+    return _answered(out, endpoint, who, tok, payload, history, background)
 
 
 def _save_chat(user: str, cid: str, endpoint: str, idx: int, question: str, names: list, out: dict):
@@ -249,6 +319,9 @@ def chat_open(cid: str, x_forwarded_access_token: str = Header(None)):
     messages = chats.get_chat(who["user_name"], cid)
     if not messages:
         raise HTTPException(404, "no such conversation")
+    for m in messages:  # fresh download permits for files in a reopened conversation
+        if m.get("attachments") and m.get("endpoint"):
+            m["attachments"] = _sign_files(m["attachments"], m["endpoint"], who["user_name"])
     return {"messages": messages}
 
 
@@ -291,17 +364,25 @@ async def upload(
 def download(
     endpoint: str,
     path: str,
+    sig: str = "",
     x_forwarded_access_token: str = Header(None),
 ):
-    """Fetch a file an agent generated, as the signed-in user."""
+    """Fetch a file an agent generated, as the signed-in user.
+
+    Allowed when the file is one this agent named to this person in a reply (`sig`, a permit
+    the chat route signed), or inside the folders an admin declared for it (`output_volume`).
+    Either way it is read with the person's own token, so Unity Catalog decides."""
     who, tok = _who(x_forwarded_access_token)
     events.note(action="downloaded", target=endpoint.strip(), detail={"name": path.rsplit("/", 1)[-1]})
     agent = _allowed_agent(who, endpoint.strip(), tok)
     events.note(label=agent.get("display_name"))
-    if not agent.get("output_volume"):
-        raise HTTPException(400, "This agent does not produce downloadable files.")
-    if not filestore.in_volume(path, agent["output_volume"]):
-        raise HTTPException(403, "That file is not in this agent's output location.")
+    p = signer.read(sig) if sig else None
+    named = bool(p) and p.get("e") == endpoint.strip() and p.get("p") == path and p.get("u") == who["user_name"]
+    if not named:
+        if not agent.get("output_volume"):
+            raise HTTPException(400, "This agent does not produce downloadable files.")
+        if not filestore.in_volume(path, agent["output_volume"]):
+            raise HTTPException(403, "That file is not in this agent's output location.")
 
     blob = filestore.download(path, tok)
     name = path.rsplit("/", 1)[-1] or "download"

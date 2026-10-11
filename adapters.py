@@ -100,7 +100,11 @@ def pending_approvals(data) -> list:
     ]
 
 
-def build_approval_replay(history_input: list, prior_output: list, approvals: list) -> list:
+DECLINED = ("The person using the assistant declined this action. Do not try it again in any form; tell them it "
+            "was not done and ask what they would like instead.")
+
+
+def build_approval_replay(history_input: list, prior_output: list, approvals: list, decisions: dict | None = None) -> list:
     """The `input` for the follow-up call that actually runs the tool(s).
 
     Verified by hand against this workspace: the endpoint is stateless
@@ -121,18 +125,29 @@ def build_approval_replay(history_input: list, prior_output: list, approvals: li
     parallel tool calls.
     """
     wanted = {a.get("id") for a in approvals if a.get("id")}
+    # `decisions`: what a person chose for the requests they were asked about (id -> bool).
+    # Anything not in it was a read-only tool the portal approved by itself.
+    ok = lambda rid: bool((decisions or {}).get(rid, True))  # noqa: E731
     replay = list(history_input)
+
+    def answer(rid):
+        a = {"type": "mcp_approval_response", "approval_request_id": rid, "approve": ok(rid)}
+        if not a["approve"]:
+            # Seen live (2026-10-11): declined with no reason, the agent took it for a format error and asked
+            # to run the same tool again. With this reason it says it was not done and asks what to do instead.
+            a["reason"] = DECLINED
+        return a
     placed: set = set()
     for item in prior_output:
         replay.append(item)
         rid = item.get("id") if isinstance(item, dict) and item.get("type") == "mcp_approval_request" else None
         if rid in wanted and rid not in placed:
-            replay.append({"type": "mcp_approval_response", "approval_request_id": rid, "approve": True})
+            replay.append(answer(rid))
             placed.add(rid)
     for a in approvals:  # a request that was not in the output (should not happen) still gets answered
         rid = a.get("id")
         if rid and rid not in placed:
-            replay.append({"type": "mcp_approval_response", "approval_request_id": rid, "approve": True})
+            replay.append(answer(rid))
             placed.add(rid)
     return replay
 

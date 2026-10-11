@@ -137,7 +137,7 @@ def get_chat(user: str, cid: str) -> list:
     ensure_table()
     rows = store.run(
         # A retry or a second open tab can write the same position twice; keep the latest.
-        "SELECT idx, role, content, meta FROM " + QUALIFIED + " "
+        "SELECT idx, role, content, meta, endpoint FROM " + QUALIFIED + " "
         "WHERE user_name = :u AND conversation_id = :cid "
         "QUALIFY ROW_NUMBER() OVER (PARTITION BY idx ORDER BY created_at DESC) = 1 ORDER BY idx",
         [_p("u", user), _p("cid", cid)],
@@ -148,7 +148,8 @@ def get_chat(user: str, cid: str) -> list:
             meta = json.loads(r[3]) if r[3] else {}
         except json.JSONDecodeError:
             meta = {}
-        out.append({"role": r[1], "text": r[2] or "", **{k: meta[k] for k in ("tools", "citations", "attachments", "files") if k in meta}})
+        out.append({"role": r[1], "text": r[2] or "", "endpoint": (r[4] if len(r) > 4 else "") or "",
+                    **{k: meta[k] for k in ("tools", "citations", "attachments", "files") if k in meta}})
     return out
 
 

@@ -94,18 +94,29 @@ STOPPED_NOTE = ("\n\n_The assistant stopped part-way: it needed more steps than 
                 "Ask it to continue._")
 
 
-def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str) -> dict:
-    """Re-POST with every pending mcp_approval_request auto-approved.
+def _resolve_approvals(endpoint: str, payload: dict, data: dict, user_tok: str, ask_person=None,
+                       tools: list | None = None) -> dict:
+    """Re-POST with pending mcp_approval_requests answered.
 
     Only meaningful for the Responses API (`input`/`output`); other shapes
     never produce an mcp_approval_request and pending_approvals() is a no-op
     for them.
+
+    `ask_person(request) -> bool` says which requests a person must decide (see
+    toolpolicy). If any does, nothing is answered: the reply comes back with `_pause`
+    (everything needed to carry on, which `resume` takes), because all requests in one
+    reply must be answered together. Without it every request is approved, as before.
     """
-    tools: list = []
+    tools = list(tools or [])
     for _ in range(MAX_APPROVAL_ROUNDS):
         approvals = adapters.pending_approvals(data)
         if not approvals:
             return dict(data, _tools=tools)
+        asked = [a for a in approvals if ask_person and ask_person(a)]
+        if asked:
+            return dict(data, _tools=tools, _pause={"input": payload.get("input") or [], "output": data.get("output") or [],
+                                                    "approvals": approvals, "asked": [a.get("id") for a in asked],
+                                                    "tools": tools})
         tools += [a.get("name") for a in approvals if a.get("name")]
         payload = {
             "input": adapters.build_approval_replay(payload.get("input") or [], data.get("output") or [], approvals)
@@ -128,8 +139,10 @@ def ask(
     user_tok: str,
     files: list | None = None,
     output_dir: str = "",
+    ask_person=None,
 ) -> dict:
-    """Send a conversation to an agent and return a normalised reply."""
+    """Send a conversation to an agent and return a normalised reply. With `ask_person`,
+    a reply may instead come back with `pause` (a tool call waiting for a person)."""
     history = list(history or [])
     if files:
         # Agents cannot see a browser upload; they read the volume. Naming the
@@ -174,14 +187,42 @@ def ask(
 
     data = _body(resp)
     if data is not None and adapters.pending_approvals(data):
-        data = _resolve_approvals(endpoint, payload, data, user_tok)
-        out = adapters.parse(data)
-        # Each round only returns its own step; name every tool that ran.
-        out["tools"] = list(dict.fromkeys(list(data.get("_tools") or []) + list(out.get("tools") or [])))
-        if data.get("_stopped"):
-            out["reply"] = (out["reply"] or "").rstrip() + STOPPED_NOTE
-    else:
-        out = _read(resp)
+        return _finish(endpoint, payload, data, user_tok, ask_person)
+    out = _read(resp)
     if not out["reply"] and not out["attachments"]:
         raise DbxError("the agent completed but returned no text", 502)
     return out
+
+
+def _finish(endpoint: str, payload: dict, data: dict, user_tok: str, ask_person=None, tools: list | None = None) -> dict:
+    data = _resolve_approvals(endpoint, payload, data, user_tok, ask_person, tools)
+    out = adapters.parse(data)
+    # Each round only returns its own step; name every tool that ran.
+    out["tools"] = list(dict.fromkeys(list(data.get("_tools") or []) + list(out.get("tools") or [])))
+    if data.get("_pause"):
+        # Waiting for a person: whatever the assistant said so far, and what to carry on from.
+        out["pause"] = data["_pause"]
+        return out
+    if data.get("_stopped"):
+        out["reply"] = (out["reply"] or "").rstrip() + STOPPED_NOTE
+    if not out["reply"] and not out["attachments"]:
+        raise DbxError("the agent completed but returned no text", 502)
+    return out
+
+
+def resume(endpoint: str, pause: dict, decisions: dict, user_tok: str, ask_person=None) -> dict:
+    """Carry on an answer that waited for a person: the asked requests are answered as they
+    decided (id -> True/False), the others approved, and the conversation continues (and may
+    pause again for the next tool that changes something)."""
+    asked = set(pause.get("asked") or [])
+    chosen = {rid: bool(decisions.get(rid)) for rid in asked}  # anything not decided is declined
+    payload = {"input": adapters.build_approval_replay(pause.get("input") or [], pause.get("output") or [],
+                                                       pause.get("approvals") or [], chosen)}
+    resp = _post(endpoint, payload, user_tok)
+    if resp.status_code >= 400:
+        raise DbxError("carrying on after your decision failed: " + _detail(resp.text, resp.text[:400]), resp.status_code)
+    data = _body(resp)
+    if data is None:
+        return _read(resp)
+    ran = [a.get("name") for a in pause.get("approvals") or [] if a.get("name") and chosen.get(a.get("id"), True)]
+    return _finish(endpoint, payload, data, user_tok, ask_person, list(pause.get("tools") or []) + ran)
