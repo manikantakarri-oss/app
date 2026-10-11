@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useCallback, useEffect, useState } from "react";
+import { MEDIAMINT_LOGO } from "@/lib/mediamintLogo";
 import { Client, dapi, DeploySession, Release, Setup } from "@/lib/deployer";
 import { ClientsPage } from "@/components/deployer/Clients";
 import { ClientPage } from "@/components/deployer/ClientPage";
@@ -169,7 +170,7 @@ export default function DeployerPage() {
         <div className="flex h-16 shrink-0 items-center gap-3 px-5">
           <button type="button" className="flex min-w-0 items-center gap-3" onClick={() => go({ page: "clients" })}>
             <span className="side-mark has-logo" style={{ padding: 0, background: "transparent" }} aria-hidden>
-              <img src="/mediamint-logo.jpg" alt="" />
+              <img src={MEDIAMINT_LOGO} alt="" />
             </span>
             <span className="min-w-0 text-left leading-tight">
               <span className="block text-[15px] font-semibold tracking-[-0.01em]">MediaMint</span>
@@ -329,7 +330,7 @@ function Splash({ children }: { children: ReactNode }) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-4">
       <span className="side-mark has-logo !h-12 !w-12 !rounded-2xl" style={{ padding: 0, background: "transparent" }} aria-hidden>
-        <img src="/mediamint-logo.jpg" alt="" />
+        <img src={MEDIAMINT_LOGO} alt="" />
       </span>
       <p className="text-lg font-semibold tracking-[-0.01em]">MediaMint</p>
       {children}

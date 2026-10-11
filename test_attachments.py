@@ -340,6 +340,18 @@ def _():
     assert c.get("/api/admin/designer/connections?names=drive-key,nope", headers=H).json() == {"connections": {"drive-key": True, "nope": False}}
 
 
+@case("an agent may declare several output folders: downloads from any of them, never outside, saving to the first")
+def _():
+    import files
+    tag = "dbm.core.output, dbm.core.sandbox_output"
+    assert files.in_volume("/Volumes/dbm/core/sandbox_output/SANDBOX-1.xlsx", tag)
+    assert files.in_volume("/Volumes/dbm/core/output/MP-1_v1.pptx", tag)
+    assert not files.in_volume("/Volumes/dbm/core/other/x.xlsx", tag)
+    assert not files.in_volume("/Volumes/dbm/core/output/../secret/x", tag)
+    assert files.output_dir_path(tag) == "/Volumes/dbm/core/output/output"
+    assert files.output_dir_path("a.b.c") == "/Volumes/a/b/c/output" and files.in_volume("/Volumes/a/b/c/x", "a.b.c")
+
+
 def main() -> int:
     passed = failed = 0
     for name, fn in CASES:

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { MEDIAMINT_LOGO } from "@/lib/mediamintLogo";
 
 // The Portal Deployer's root layout (built with `npm run build:deployer`).
 // Same font, styles and theme boot as the portal's layout.tsx (and the same
@@ -9,7 +10,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 
 export const metadata: Metadata = {
   title: "MediaMint",
-  icons: { icon: "/mediamint-logo.jpg" },
+  icons: { icon: MEDIAMINT_LOGO },
   description: "Deploy the Agent Portal to client workspaces.",
 };
 

@@ -53,6 +53,14 @@ def volume_path(volume: str, filename: str) -> str:
     return _volume_root(volume, "upload") + "/uploads/" + stamp + "-" + _clean(filename)
 
 
+def output_volumes(tag: str) -> list[str]:
+    """The folders an agent writes files to. The tag may name several, comma-separated:
+    seen live (2026-10-11), an agent built in Databricks writes final plans to one volume
+    and sandbox prototypes to another, and only one could be declared. The first is where
+    agents are told to save; downloads are allowed from any of them."""
+    return [v.strip() for v in (tag or "").split(",") if v.strip()]
+
+
 def output_dir_path(volume: str) -> str:
     """The directory a generating agent should be told to write its output to.
 
@@ -60,7 +68,7 @@ def output_dir_path(volume: str) -> str:
     configure both the same way; the portal owns the `/output` subfolder
     convention, matching `/uploads` on the input side.
     """
-    return _volume_root(volume, "output") + "/output"
+    return _volume_root(output_volumes(volume)[0] if output_volumes(volume) else volume, "output") + "/output"
 
 
 def in_volume(path: str, volume: str) -> bool:
@@ -73,12 +81,15 @@ def in_volume(path: str, volume: str) -> bool:
     but the check keeps the portal from being the thing that offers the
     browsing UI for volumes the agent was never meant to expose.
     """
-    try:
-        root = _volume_root(volume, "output")
-    except DbxError:
-        return False
     p = posixpath.normpath((path or "").strip())
-    return p == root or p.startswith(root + "/")
+    for v in output_volumes(volume):
+        try:
+            root = _volume_root(v, "output")
+        except DbxError:
+            continue
+        if p == root or p.startswith(root + "/"):
+            return True
+    return False
 
 
 def upload(volume: str, filename: str, blob: bytes, user_tok: str) -> dict:

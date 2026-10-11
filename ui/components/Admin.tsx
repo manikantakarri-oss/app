@@ -361,7 +361,7 @@ function Appearance({
         </Row>
         <Row
           label="Where files it makes are saved"
-          hint="Only if it creates files people should download. Only files here can be downloaded. Write it as catalog.schema.volume."
+          hint="Only if it creates files people should download. Only files here can be downloaded. Write it as catalog.schema.volume; if it saves to more than one folder, separate them with commas."
         >
           <input
             className="field"

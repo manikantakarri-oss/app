@@ -100,7 +100,7 @@ Rules:
 ### 4. File-driven agents (`files.py`)
 - Tag `upload_volume` (`catalog.schema.volume`) enables **Attach a file**; tag `accepts` (e.g. `xlsx, csv`) restricts types, enforced client and server. Max 100 MB.
 - `POST /api/upload` writes to the UC volume **with the user's token**; the path is named in the turn so the agent reads it with its volume tool.
-- Tag `output_volume` lets agents hand back generated files; `GET /api/download` is limited to paths inside that volume (`filestore.in_volume`).
+- Tag `output_volume` lets agents hand back generated files; `GET /api/download` is limited to paths inside that volume (`filestore.in_volume`). It may name several volumes, comma-separated (`filestore.output_volumes`): the first is where agents are told to save, downloads come from any of them. Seen live: an agent built in Databricks writes final plans and sandbox prototypes to two volumes. People still need READ VOLUME (+ USE CATALOG/SCHEMA) on them; the portal cannot grant that.
 - `sync_agents.py` auto-derives `upload_volume` from an agent's own `volume` tool.
 
 ### 5. Foundation models: removed
