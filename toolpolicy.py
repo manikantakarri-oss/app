@@ -10,7 +10,8 @@ Now each request is checked against the tool's own declaration: MCP tools publis
 DataBeat Media Planner's 31 tools: lookups read-only, saving / approving / finalising not).
 A read-only tool runs at once; anything else waits for the person in the chat. Works for
 any agent with no code per agent. Per assistant, the endpoint tag `tool_approval` can say
-`auto` (never ask, the old behaviour), `all` (ask for every tool) or `changes` (default).
+`auto` (never ask, the default), `all` (ask for every tool) or `changes` (ask only for tools
+that change something).
 A tool whose declaration cannot be read is treated as one that changes things: asking once
 too often is better than running something unseen.
 """
@@ -25,13 +26,14 @@ from dbx import DbxError, app_token
 log = logging.getLogger("portal.toolpolicy")
 
 MODES = ("changes", "all", "auto")
+DEFAULT = "auto"  # no tag = the old behaviour; an assistant opts in to being asked with `changes` or `all`
 TTL = 300
 _cache: dict = {}  # server label -> (time, {tool: {"read_only": bool, "description": str}} | None)
 
 
 def mode_of(tag: str) -> str:
     t = (tag or "").strip().lower()
-    return t if t in MODES else "changes"
+    return t if t in MODES else DEFAULT
 
 
 def tools_of(server: str, user_tok: str) -> dict | None:

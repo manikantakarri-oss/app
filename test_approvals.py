@@ -114,7 +114,7 @@ def _():
     ep = Endpoint()
     wire(ep)
     assert ask("all")["pause"]["asked"] == ["R1"]
-    assert toolpolicy.mode_of("AUTO") == "auto" and toolpolicy.mode_of("") == "changes" and toolpolicy.mode_of("nonsense") == "changes"
+    assert toolpolicy.mode_of("AUTO") == "auto" and toolpolicy.mode_of("changes") == "changes" and toolpolicy.mode_of("") == "auto" and toolpolicy.mode_of("nonsense") == "auto"
 
 
 @case("a tool whose declaration cannot be read is asked about, not run unseen")
@@ -145,7 +145,7 @@ def _():
 
 # --- the routes ------------------------------------------------------------------
 
-AGENT = {"name": "mas-1", "task": "agent/v1/responses", "display_name": "Planner", "output_volume": "", "tool_approval": "",
+AGENT = {"name": "mas-1", "task": "agent/v1/responses", "display_name": "Planner", "output_volume": "", "tool_approval": "changes",
          "ready": True}
 
 

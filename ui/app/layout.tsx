@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { PORTAL_LOGO } from "@/lib/portalLogo";
 
 // Self-hosted at build time by next/font, so the portal needs no request to
 // Google at runtime - it has to work inside a locked-down workspace.
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Agent Portal",
+  title: "Mediamint Agent Builder",
+  icons: { icon: PORTAL_LOGO },
   description: "Ask your team's AI assistants a question.",
 };
 

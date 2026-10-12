@@ -115,7 +115,7 @@ export function ClientsPage({
       <PageHead
         eyebrow="Deploy"
         title="Clients"
-        text="Every client workspace running the Agent Portal: the version it is on, how it is doing, and what was deployed last."
+        text="Every client workspace running the Mediamint Agent Builder: the version it is on, how it is doing, and what was deployed last."
         actions={
           <button type="button" className="btn btn-primary" onClick={onAdd}>
             <PlusIcon size={16} />

@@ -175,7 +175,7 @@ export default function DeployerPage() {
             <span className="min-w-0 text-left leading-tight">
               <span className="block text-[15px] font-semibold tracking-[-0.01em]">MediaMint</span>
               <span className="block truncate text-[12px]" style={{ color: "var(--side-faint)" }}>
-                Agent Portal for every client
+                Agent Builder for every client
               </span>
             </span>
           </button>

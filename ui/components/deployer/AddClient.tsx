@@ -7,6 +7,7 @@ import { ErrorBox, Select, Spinner } from "@/components/bits";
 import { CheckIcon, CloseIcon } from "@/components/icons";
 import { CopyButton, Field, hostLabel, latestStable } from "./parts";
 import { Brand, BrandingEditor } from "./Branding";
+import { PORTAL_NAME } from "@/lib/portalLogo";
 import { ToolsChoice, ToolsPicker } from "./Tools";
 
 const slugOf = (s: string) =>
@@ -16,7 +17,7 @@ const slugOf = (s: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 39);
 
-const ASK = `Hi! To set up the Agent Portal in your Databricks workspace, we need a service principal (a login for the installer). It takes about 5 minutes:
+const ASK = `Hi! To set up the Mediamint Agent Builder in your Databricks workspace, we need a service principal (a login for the installer). It takes about 5 minutes:
 
 1. Settings > Identity and access > Service principals > Add service principal > Add new. Name it: agent-portal-deployer
 2. Settings > Identity and access > Groups > admins > Add members > agent-portal-deployer
@@ -374,7 +375,7 @@ export function AddClient({
                 <span className="inline-flex flex-wrap items-center gap-2">
                   {brand.logo ? <img src={brand.logo} alt="" className="h-6 w-6 rounded bg-white object-contain p-0.5" style={{ border: "1px solid var(--line)" }} /> : null}
                   {brand.color ? <span className="inline-block h-4 w-4 rounded-full" style={{ background: brand.color }} aria-hidden /> : null}
-                  <span>{brand.name.trim() || "Agent Portal"}</span>
+                  <span>{brand.name.trim() || PORTAL_NAME}</span>
                 </span>
               ) : (
                 <span className="faint">Default look</span>

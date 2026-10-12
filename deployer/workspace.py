@@ -65,7 +65,7 @@ def ensure_app(api: Api, name: str, scopes: list[str], say) -> tuple[dict, bool]
     created = False
     if app is None:
         say("Creating the app %s" % name)
-        api.call("POST", APPS, json={"name": name, "description": "Agent Portal: your team's AI assistants",
+        api.call("POST", APPS, json={"name": name, "description": "Mediamint Agent Builder: your team's AI assistants",
                                      "user_api_scopes": scopes})
         created = True
     return wait_active(api, name, say), created

@@ -23,13 +23,13 @@ import {
   MenuIcon,
   PulseIcon,
   SearchIcon,
-  SparkleIcon,
   UserIcon,
   UsersIcon,
   WandIcon,
 } from "@/components/icons";
 import { initials, nameOf } from "@/lib/people";
 import { applyBrand } from "@/lib/brand";
+import { PORTAL_LOGO, PORTAL_NAME } from "@/lib/portalLogo";
 
 /** Every section: one place each, in the order people need them. Workspace is
  *  for everyone; Manage is for admins and replaces the old tabbed admin console
@@ -104,21 +104,19 @@ export default function Page() {
 
   // The client's branding: colours (cached for the next visit's first
   // paint), the tab title and the browser icon.
-  const brandName = session?.brand?.name || "Agent Portal";
-  const brandLogo = session?.brand?.logo || "";
+  const brandName = session?.brand?.name || PORTAL_NAME;
+  const brandLogo = session?.brand?.logo || PORTAL_LOGO;
   useEffect(() => {
     if (!session) return;
     applyBrand(session.brand?.color || "");
     document.title = brandName;
-    if (brandLogo) {
-      let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
-      if (!link) {
-        link = document.createElement("link");
-        link.rel = "icon";
-        document.head.appendChild(link);
-      }
-      link.href = brandLogo;
+    let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
     }
+    link.href = brandLogo;
   }, [session, brandName, brandLogo]);
 
   useEffect(() => {
@@ -530,19 +528,13 @@ function PageHead({ eyebrow, title, text }: { eyebrow: string; title: string; te
   );
 }
 
-/** The brand tile: the client's logo when they have one, else the portal's mark. */
+/** The brand tile: the client's logo when they have one, else the MediaMint logo. */
 function BrandMark({ logo, big }: { logo?: string; big?: boolean }) {
   const size = big ? "!h-12 !w-12 !rounded-2xl" : "";
-  if (logo) {
-    return (
-      <span className={`side-mark has-logo ${size}`} aria-hidden>
-        <img src={logo} alt="" />
-      </span>
-    );
-  }
+  const own = logo && logo !== PORTAL_LOGO; // a client's logo is framed on white; ours fills the tile
   return (
-    <span className={`side-mark ${size}`} aria-hidden>
-      <SparkleIcon size={big ? 26 : 20} />
+    <span className={`side-mark has-logo ${size}`} style={own ? undefined : { padding: 0, background: "transparent" }} aria-hidden>
+      <img src={logo || PORTAL_LOGO} alt="" />
     </span>
   );
 }
@@ -550,10 +542,8 @@ function BrandMark({ logo, big }: { logo?: string; big?: boolean }) {
 function Splash({ children }: { children: ReactNode }) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-4">
-      <span className="side-mark !h-12 !w-12 !rounded-2xl" aria-hidden>
-        <SparkleIcon size={26} />
-      </span>
-      <p className="text-lg font-semibold tracking-[-0.01em]">Agent Portal</p>
+      <BrandMark big />
+      <p className="text-lg font-semibold tracking-[-0.01em]">{PORTAL_NAME}</p>
       {children}
     </main>
   );

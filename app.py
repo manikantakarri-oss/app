@@ -53,7 +53,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # plain files and FastAPI serves them.
 WEB = os.path.join(HERE, "web")
 
-app = FastAPI(title="Agent Portal", docs_url="/api/docs")
+app = FastAPI(title="Mediamint Agent Builder", docs_url="/api/docs")
 
 
 # stdout/stderr from a Databricks App land in the app's Logs tab (and

@@ -311,7 +311,7 @@ function Appearance({
   const [vol, setVol] = useState(agent.upload_volume);
   const [outVol, setOutVol] = useState(agent.output_volume);
   const [accepts, setAccepts] = useState((agent.accepts || []).join(", "));
-  const [approve, setApprove] = useState(agent.tool_approval || "changes");
+  const [approve, setApprove] = useState(agent.tool_approval || "auto");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -327,7 +327,7 @@ function Appearance({
         upload_volume: vol,
         output_volume: outVol,
         accepts,
-        tool_approval: approve === "changes" ? "" : approve,
+        tool_approval: approve === "auto" ? "" : approve,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 4000);
@@ -382,9 +382,9 @@ function Appearance({
             onChange={setApprove}
             disabled={readOnly}
             options={[
-              { value: "changes", label: "Before anything that changes something", detail: "Recommended" },
+              { value: "auto", label: "Never ask", detail: "Tools run straight away" },
+              { value: "changes", label: "Before anything that changes something", detail: "Looking things up never waits" },
               { value: "all", label: "Before every tool it uses", detail: "Every step waits for a click" },
-              { value: "auto", label: "Never ask", detail: "Tools run straight away, as before" },
             ]}
           />
         </Row>

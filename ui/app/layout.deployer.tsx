@@ -11,7 +11,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 export const metadata: Metadata = {
   title: "MediaMint",
   icons: { icon: MEDIAMINT_LOGO },
-  description: "Deploy the Agent Portal to client workspaces.",
+  description: "Deploy the Mediamint Agent Builder to client workspaces.",
 };
 
 const BOOT = `(function(){try{

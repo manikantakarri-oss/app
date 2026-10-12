@@ -2,7 +2,8 @@
 
 import { useRef, useState } from "react";
 import { colourNotes, dominantColour, HEX_RE, palette } from "@/lib/brand";
-import { CloseIcon, SparkleIcon, UploadIcon } from "@/components/icons";
+import { CloseIcon, UploadIcon } from "@/components/icons";
+import { PORTAL_LOGO, PORTAL_NAME } from "@/lib/portalLogo";
 import { Field } from "./parts";
 
 export type Brand = { name: string; color: string; logo: string };
@@ -128,8 +129,8 @@ export function BrandingEditor({ value, onChange, stacked }: { value: Brand; onC
           ) : null}
         </div>
 
-        <Field label="Portal name" hint="Shown in the menu and the browser tab. Empty keeps Agent Portal.">
-          <input className="field" value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} maxLength={40} placeholder="Agent Portal" />
+        <Field label="Portal name" hint="Shown in the menu and the browser tab. Empty keeps {PORTAL_NAME}.">
+          <input className="field" value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} maxLength={40} placeholder={PORTAL_NAME} />
         </Field>
 
         <div>
@@ -205,7 +206,7 @@ const THEMES = {
 function Preview({ brand, theme }: { brand: Brand; theme: "light" | "dark" }) {
   const t = THEMES[theme];
   const p = palette(HEX_RE.test(brand.color) ? brand.color : DEFAULT, theme);
-  const name = brand.name.trim() || "Agent Portal";
+  const name = brand.name.trim() || PORTAL_NAME;
   return (
     <div className="overflow-hidden rounded-xl" style={{ background: t.page, border: `1px solid ${t.line}`, color: t.ink }} aria-label={`${theme} preview`}>
       <div className="flex">
@@ -213,9 +214,9 @@ function Preview({ brand, theme }: { brand: Brand; theme: "light" | "dark" }) {
           <div className="mb-2 flex items-center gap-1.5">
             <span
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md"
-              style={brand.logo ? { background: "#fff", boxShadow: `0 0 0 1px ${t.line}` } : { background: `linear-gradient(135deg, ${p["--mark-from"]}, ${p["--mark-to"]})`, color: "#fff" }}
+              style={brand.logo ? { background: "#fff", boxShadow: `0 0 0 1px ${t.line}` } : undefined}
             >
-              {brand.logo ? <img src={brand.logo} alt="" className="h-full w-full object-contain p-[2px]" /> : <SparkleIcon size={12} />}
+              {brand.logo ? <img src={brand.logo} alt="" className="h-full w-full object-contain p-[2px]" /> : <img src={PORTAL_LOGO} alt="" className="h-full w-full object-cover" />}
             </span>
             <span className="truncate text-[11px] font-semibold">{name}</span>
           </div>
